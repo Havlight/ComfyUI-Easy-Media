@@ -261,7 +261,7 @@ def _h3_continuity_mode(value: Any) -> str:
     normalized = str(value or "shot").lower()
     if normalized == "context_test":
         return "context"
-    return normalized if normalized in {"context", "context_swap"} else "shot"
+    return normalized if normalized in {"context", "context_swap", "restart_bridge"} else "shot"
 
 
 def h3_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
@@ -858,6 +858,8 @@ def clear_h3_project_segments_from(
                 "context_latent_low",
                 "anchor_latent",
                 "anchor_latent_low",
+                "last_frame",
+                "bridge_file",
             ):
                 filename = generation.get(key)
                 if not filename:
@@ -885,7 +887,7 @@ def clear_h3_project_segments_from(
         raise RuntimeError(f"Failed to clear project segments: {error}") from error
 
     artifact_pattern = re.compile(
-        r"^\.?(?:video|audio|locked_audio|latent|context_latent|context_latent_low|anchor_latent|anchor_latent_low|staging_video)_"
+        r"^\.?(?:video|audio|locked_audio|latent|context_latent|context_latent_low|anchor_latent|anchor_latent_low|staging_video|last_frame|bridge|staging_bridge)_"
         r"(\d+)(?:_|\.)"
     )
     for path in project_dir.iterdir():
@@ -962,7 +964,7 @@ def delete_h3_project_video(project_name: str, segment_index: int, file_path: st
     if not generation_keys:
         raise ValueError("Video does not belong to this project segment")
 
-    artifact_keys = ("video", "locked_audio", "latent", "context_latent", "context_latent_low")
+    artifact_keys = ("video", "locked_audio", "latent", "context_latent", "context_latent_low", "last_frame", "bridge_file")
     artifacts: set[Path] = set()
     for key in generation_keys:
         for field in artifact_keys:
@@ -1136,11 +1138,18 @@ def _h3_project_data(
             if not isinstance(candidate_frame_count, int) or candidate_frame_count <= 0:
                 duration = media_info.get("duration")
                 candidate_frame_count = max(1, round(float(duration) * fps)) if duration else 1
+            bridge = candidate.get("bridge")
+            if isinstance(bridge, dict):
+                try:
+                    _project_child_path(project_dir, bridge.get("file", ""))
+                except FileNotFoundError:
+                    bridge = None
             video_files.append({
                 "file_path": candidate_path,
                 "file_name": candidate_source.name,
                 "media_revision": str(candidate_source.stat().st_mtime_ns),
                 "source_frame_count": candidate_frame_count,
+                "bridge": bridge,
                 "continuity_mode": _h3_continuity_mode(candidate.get(
                     "continuity_mode",
                     segment.get("continuity_mode", "shot"),
@@ -1179,6 +1188,7 @@ def _h3_project_data(
             "source_frame_count": active_file["source_frame_count"],
             "updated_at": float(segment.get("updated_at", 0) or 0),
             "continuity_mode": active_file["continuity_mode"],
+            "bridge": active_file.get("bridge"),
             "audio_locked": task_segment.get("audio_locked") is True,
             "enabled": True,
             "video_files": video_files,
@@ -1244,6 +1254,7 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
         ]
 
     timeline_segments: list[dict[str, Any]] = []
+    bridge_overlays: list[dict[str, Any]] = []
     cursor = 0
     for clip in requested_clips:
         if not isinstance(clip, dict) or clip.get("enabled") is False:
@@ -1299,11 +1310,24 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             raise ValueError(f"H3 project segment {index} has invalid trim frames") from error
         duration = source_end - source_start
         source_path = output_dir / selected_file["file_path"]
+        if selected_file.get("continuity_mode") == "restart_bridge":
+            from .h3_bridge import bridge_overlay
+            if not timeline_segments or timeline_segments[-1].get("segment_index") != index - 1:
+                raise ValueError("Restart Bridge needs its original preceding segment in the combine timeline")
+            overlay = bridge_overlay(h3_project_directory(project_name), selected_file.get("bridge"),
+                                     timeline_segments[-1], {"source": str(source_path),
+                                     "source_start_frame": source_start, "start_frame": cursor,
+                                     "end_frame": cursor + duration})
+            if bridge_overlays and overlay["start_frame"] < bridge_overlays[-1]["end_frame"]:
+                raise ValueError("Restart Bridge replacement ranges overlap")
+            bridge_overlays.append(overlay)
         timeline_segments.append({
             "source": str(source_path),
             "start_frame": cursor,
             "end_frame": cursor + duration,
             "source_start_frame": source_start,
+            "source_end_frame": source_end,
+            "segment_index": index,
             "audio_locked": source_clip.get("audio_locked") is True,
             **(
                 {
@@ -1327,7 +1351,7 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
         raise ValueError("H3 project width and height must be greater than zero")
 
     temporary = merge_video_track_with_ffmpeg(
-        timeline_segments,
+        timeline_segments + bridge_overlays,
         cursor,
         frame_rate,
         width,
@@ -1668,6 +1692,7 @@ def prepare_multitrack_project_task_info(
 ) -> dict[str, Any]:
     """Attach already-loaded project references to one task's runtime context."""
     task_info = dict(tracks_info)
+    task_info["_h3_project_runtime"] = True
     muted_sources: set[tuple[str, str]] = set()
     task = task_entry.get("task", {}) if isinstance(task_entry, dict) else {}
     content = task.get("content", {}) if isinstance(task, dict) else {}

@@ -1980,6 +1980,160 @@ def test_multitrack_task_output_crops_deferred_media_by_task_index():
     assert second.values[6][0].get_components().images[:, 0, 0, 0].tolist() == [4.0, 5.0, 6.0, 7.0]
 
 
+@pytest.mark.parametrize("muted", [False, True])
+def test_bridge_task_output_crops_deferred_motion_and_locked_audio_with_source_offset(muted):
+    from utils.h3_bridge import bridge_tracks_info
+
+    module = _load_basic_module()
+    source_audio = {"waveform": torch.arange(960, dtype=torch.float32).reshape(1, 1, -1), "sample_rate": 24}
+    frames = torch.arange(960, dtype=torch.float32).view(-1, 1, 1, 1).expand(-1, 2, 2, 3)
+    source_video = _FakeVideo(_VideoComponents(frames, source_audio, Fraction(24)))
+    module._resolve_multitrack_video = lambda *args: source_video
+    info = {"media_loading": "deferred", "format": "MiniMax", "width": 2, "height": 2, "frame_rate": 24,
+            "tracks": [
+                {"type": "task", "segments": [
+                    {"start_frame": 0, "end_frame": 120, "content": {"images": []}},
+                    {"start_frame": 120, "end_frame": 240, "content": {"task_mode": "ref", "images": []}},
+                ]},
+                {"type": "video", "audio_locked": True, "muted": muted, "segments": [
+                    {"start_frame": 24, "end_frame": 960, "origin_start_frame": 12,
+                     "content": {"media_type": "video", "source_type": "input", "file_path": "motion.mp4",
+                                 "shared_reference": True}},
+                ]},
+            ]}
+    result = module.MultiTrackTaskOutput.execute(bridge_tracks_info(info, 1), task_index=0)
+    components = result.values[6][0].get_components()
+    # Timeline frames 67..173 map to source frames 55..161 after the source offset.
+    assert components.images[:, 0, 0, 0].tolist() == list(range(55, 162))
+    if muted:
+        assert result.values[8] is None
+        assert torch.count_nonzero(components.audio["waveform"]) == 0
+    else:
+        assert result.values[8]["waveform"].flatten().tolist() == list(range(55, 162))
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_bridge_task_output_bounds_eager_and_shared_references(shared):
+    from utils.h3_bridge import bridge_tracks_info
+
+    module = _load_basic_module()
+    audio = {"waveform": torch.arange(960, dtype=torch.float32).reshape(1, 1, -1), "sample_rate": 24}
+    video = _FakeVideo(_VideoComponents(torch.zeros(960, 2, 2, 3), None, Fraction(24)))
+    info = {"format": "MiniMax", "width": 2, "height": 2, "frame_rate": 24, "tracks": [
+        {"type": "task", "segments": [
+            {"start_frame": 0, "end_frame": 120, "content": {"images": []}},
+            {"start_frame": 120, "end_frame": 240, "content": {"task_mode": "ref", "images": []}},
+        ]},
+        *[{"type": kind, "media_index": 0, "audio_locked": not shared, "segments": [
+            {"start_frame": 0, "end_frame": 960, "content": {
+                "media_type": kind, "shared_reference": shared, "shared_media_index": 0,
+            }},
+        ]} for kind in ("audio", "video")],
+    ]}
+    result = module.MultiTrackTaskOutput.execute(
+        [bridge_tracks_info(info, 1)], audio=[audio], video=[video], task_index=[0],
+    )
+    start = 0 if shared else 67
+    assert video.trim_calls == [(start / 24, 107 / 24, False)]
+    if shared:
+        assert result.values[5][0]["waveform"].flatten().tolist() == list(range(107))
+    else:
+        assert result.values[5] == [None]
+        assert result.values[8]["waveform"].flatten().tolist() == list(range(67, 174))
+
+
+@pytest.mark.parametrize("loading", ["eager", "deferred"])
+@pytest.mark.parametrize("shared_lock", [False, True])
+def test_bridge_audio_matches_project_lock_and_keeps_three_reference_slots(loading, shared_lock):
+    from utils.h3_bridge import bridge_tracks_info
+
+    module = _load_basic_module()
+    project = sys.modules["easy_media.utils.h3_project"]
+    audios = [
+        {"waveform": torch.arange(960, dtype=torch.float32).reshape(1, 1, -1), "sample_rate": 24},
+        *[{"waveform": torch.full((1, 1, 960), float(index)), "sample_rate": 24} for index in range(1, 4)],
+    ]
+    resolve_audio = lambda content, *args: audios[content["shared_media_index"]]
+    module._resolve_multitrack_audio = resolve_audio
+    project._resolve_multitrack_audio = resolve_audio
+    info = {"format": "MiniMax", "media_loading": loading, "width": 32, "height": 32,
+            "frame_rate": 24, "media": {"audio": audios}, "tracks": [
+        {"type": "task", "segments": [
+            {"start_frame": 0, "end_frame": 120, "content": {"images": []}},
+            {"start_frame": 120, "end_frame": 240, "content": {"task_mode": "ref", "images": []}},
+        ]},
+        *[{"type": "audio", "media_index": index, "audio_locked": index == 0, "segments": [
+            {"start_frame": 0, "end_frame": 960, "content": {
+                "media_type": "audio", "file_path": f"audio{index}.wav", "shared_media_index": index,
+                "shared_reference": shared_lock if index == 0 else True,
+            }},
+        ]} for index in range(4)],
+    ]}
+    _, _, shared_audio, shared_video, full_locked = project.prepare_multitrack_project_media(info)
+    expected_refs, _, expected_lock = project.crop_multitrack_project_media(
+        shared_audio, shared_video, full_locked, 67, 107, 24,
+    )
+    result = module.MultiTrackTaskOutput.execute(bridge_tracks_info(info, 1), task_index=0)
+    assert len(result.values[5]) == len(expected_refs) == 3
+    for actual, expected in zip(result.values[5], expected_refs):
+        assert torch.equal(actual["waveform"], expected["waveform"])
+    assert torch.equal(result.values[8]["waveform"], expected_lock["waveform"])
+    assert result.values[8]["waveform"].flatten().tolist() == list(range(67, 174))
+    info["tracks"][1]["muted"] = True
+    muted = module.MultiTrackTaskOutput.execute(bridge_tracks_info(info, 1), task_index=0)
+    assert muted.values[8] is None
+    assert len(muted.values[5]) == 3
+
+
+@pytest.mark.parametrize("loading", ["eager", "deferred"])
+@pytest.mark.parametrize("kind", ["audio", "video"])
+def test_bridge_shared_reference_order_matches_project_with_duplicate_sources(loading, kind):
+    module = _load_basic_module()
+    project = sys.modules["easy_media.utils.h3_project"]
+    audios = [
+        {"waveform": torch.full((1, 1, 240), value), "sample_rate": 24}
+        for value in (1.0, 2.0)
+    ]
+    videos = [
+        _FakeVideo(_VideoComponents(torch.full((240, 2, 2, 3), value), None, Fraction(24)))
+        for value in (1.0, 2.0)
+    ]
+    items = audios if kind == "audio" else videos
+    resolve = lambda content, *_: items[content["shared_media_index"]]
+    setattr(module, f"_resolve_multitrack_{kind}", resolve)
+    setattr(project, f"_resolve_multitrack_{kind}", resolve)
+    prompt = f"Use {kind}2"
+    info = {"format": "MiniMax", "media_loading": loading, "width": 2, "height": 2,
+            "frame_rate": 24, "timeline_total_length": 240, "media": {kind: items}, "tracks": [
+        {"type": "task", "segments": [
+            {"start_frame": 0, "end_frame": 120, "content": {"images": []}},
+            {"start_frame": 120, "end_frame": 240, "content": {
+                "task_mode": "ref", "images": [], "user_prompt": prompt,
+            }},
+        ]},
+        *[{"type": kind, "segments": [{"start_frame": 0, "end_frame": 240, "content": {
+            "media_type": kind, "source_type": "input", "file_path": f"source{index}",
+            "shared_media_index": index, "shared_reference": True,
+        }}]} for index in (0, 0, 1)],
+    ]}
+    base, images, audio, video, _ = project.prepare_multitrack_project_media(info)
+    task_info = project.prepare_multitrack_project_task_info(base, images, audio, video)
+    main = module.MultiTrackTaskOutput.execute(task_info, task_index=1)
+    bridge = module.MultiTrackTaskOutput.execute({**info, "_h3_bridge_runtime": True}, task_index=1)
+    ordinary = module.MultiTrackTaskOutput.execute(info, task_index=1)
+    output_index = 5 if kind == "audio" else 6
+
+    def values(output):
+        return [
+            (item["waveform"] if kind == "audio" else item.get_components().images).mean().item()
+            for item in output.values[output_index]
+        ]
+
+    assert values(main) == values(bridge) == [1.0, 2.0]
+    assert main.values[1] == bridge.values[1] == prompt
+    assert values(ordinary) == [1.0, 1.0, 2.0]
+
+
 def test_multitrack_task_output_passes_task_window_to_deferred_file_video_merge():
     module = _load_basic_module()
     source_video = _FakeVideo(

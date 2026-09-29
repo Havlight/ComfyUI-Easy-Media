@@ -74,8 +74,13 @@ The new **continuity mode** determines how a task follows the previous segment. 
 | **Shot (`shot`)** | Generates independently, without inheriting motion or audio context from the previous segment | New shots, scene changes, and deliberate cuts |
 | **Context (`context`)** | Uses the tail of the previous result's audio/video latent to continue motion and sound | Continuous action, long takes, and ongoing audio |
 | **Character Swap Context (`context_swap`)** | Uses disposable tapered noise on the previous video context in both sampling passes while preserving its audio | Character or appearance replacement that should retain the previous motion |
+| **Restart Bridge (`restart_bridge`)** | Generates a new Shot, then regenerates a short window across the preceding boundary | Reset inherited context while smoothing the join |
 
 The first segment starts in Shot mode. Set subsequent segments individually or select multiple tasks to change them together. For example, “Shot → Context → Context → Shot” creates three connected segments followed by a new shot. This setting affects **generation**, rather than adding a crossfade during assembly. Context does not guarantee seamless continuity across arbitrary scene or prompt changes.
+
+**Previous tail frame** is a separate toggle above the image panel for segments after the first. It adds a movable reference card, works with every continuity mode, and follows the selected task mode's normal image behavior. Project resolves it from the preceding segment's selected completed version; the final frame is saved as `last_frame_<segment>_<version>.png` beside its latent. Existing versions extract this image from their saved video when first needed. Keep clean character references first unless you intentionally want the generated frame in `image1`.
+
+Restart Bridge supports 24 fps video projects with Single, Dual, and SelfLift. It performs an additional full-resolution sampling pass using 39 frozen frames on each side, replacing 14 frames before the boundary and 15 after it (29 frames, about 1.21 seconds). The preceding and current segments need at least 53 and 54 frames respectively. Native ComfyUI H3 mask support and a complete sampling schedule are required. The combine node overlays the bridge without changing duration or original audio; its segment previews still show the original videos. Changing a source version or trimming the join requires regenerating that boundary. Visual smoothness depends on the two endpoints and is not guaranteed.
 
 #### 2. MultiTrack Project: Encoding, Sampling, and Segment Loops
 

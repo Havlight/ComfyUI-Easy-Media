@@ -2,7 +2,7 @@ export type MultiTrackType = 'task' | 'video' | 'audio' | 'subtitle'
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
-export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_swap'
+export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_swap' | 'restart_bridge'
 
 export type MultiTrackRefImageSize = 'match' | 'max'
 
@@ -10,7 +10,7 @@ export type MultiTrackUserPromptVariant = 'a' | 'b'
 
 export type MultiTrackMediaType = 'image' | 'audio' | 'video' | 'subtitle' | 'none'
 
-export type MultiTrackSourceType = 'preset' | 'input' | 'output' | 'local' | 'url' | 'slot'
+export type MultiTrackSourceType = 'preset' | 'input' | 'output' | 'local' | 'url' | 'slot' | 'previous_frame'
 
 export interface MultiTrackPanoramaView {
   version: 1
