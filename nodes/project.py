@@ -286,7 +286,7 @@ def _timed_h3_project_graph(
             and node["class_type"] not in persistent_media_types
         ):
             node.setdefault("_meta", {})[SEGMENT_META] = segment_nodes[node_id]
-            if node["class_type"] == "easy h3ProjectArtifact":
+            if node["class_type"] in {"easy h3ProjectArtifact", "easy h3ProjectBridge"}:
                 node["_meta"][BOUNDARY_META] = True
         if node["class_type"] not in timed_types:
             continue

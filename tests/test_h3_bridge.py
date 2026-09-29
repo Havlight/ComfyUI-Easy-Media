@@ -299,6 +299,7 @@ def test_restart_and_previous_image_stay_independent_of_context_chain(monkeypatc
     nodes = result.expand
     bridges = [node for node in nodes.values() if node["class_type"] == "easy h3ProjectBridge"]
     assert len(bridges) == 1
+    assert bridges[0]["_meta"].get("easy_media_segment_saved") is True
     assert bridges[0]["inputs"]["segment_index"] == 1
     assert bridges[0]["inputs"]["sigmas"] is not None
     bridge_sigmas = nodes[bridges[0]["inputs"]["sigmas"][0]]
