@@ -2919,6 +2919,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
         duration_frames = end_frame - start_frame
         frame_rate = float(info.get("frame_rate", 24))
         is_minimax = info.get("format") == "MiniMax"
+        bridge_window = is_minimax and info.get("_h3_bridge_runtime") is True
         next_task_start = None
         if (
             is_minimax
@@ -2929,6 +2930,9 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 start_frame,
                 _multitrack_frame_value(task_entries[task_entry_index + 1].get("start_frame")),
             )
+        if bridge_window:
+            # A bridge has one task, but its references end at the bridge window.
+            next_task_start = end_frame
         media_duration_frames = (
             next_task_start - start_frame if next_task_start is not None else None
         )
@@ -2980,6 +2984,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 if isinstance(item, torch.Tensor)
             ]
             selected_image_indexes: set[int] = set()
+            previous_frame_count = 0
             selected_shared_image_identities: set[tuple[str, str]] = set()
             marker_image_frames: list[int] = []
             deferred_images = _multitrack_media_is_deferred(info, "image")
@@ -2992,6 +2997,11 @@ class MultiTrackTaskOutput(io.ComfyNode):
                     if not isinstance(image_info, dict):
                         continue
                     if multitrack_is_muted_image(image_info):
+                        continue
+                    if image_info.get("source_type") == "previous_frame":
+                        if not info.get("_h3_project_runtime"):
+                            raise ValueError("Previous-frame images require MultiTrack Project execution")
+                        previous_frame_count += 1
                         continue
                     shared_identity = (
                         multitrack_media_identity(image_info)
@@ -3063,6 +3073,8 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 if item is not None
             ]
             deferred_shared_video_cache: dict[tuple, object] = {}
+            shared_audio_identities: set[tuple[str, str]] = set()
+            shared_video_identities: set[tuple[str, str]] = set()
             has_video = bool(selected_video)
             global_volume_db = audio_volume_db(info)
             global_muted = audio_is_muted(info)
@@ -3131,10 +3143,20 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 if not isinstance(track, dict):
                     continue
                 media_index = _track_output_index(track)
-                shared_segment = _shared_reference_segment(track) if not output_full_timeline else None
+                # Match Project preparation: a locked track follows the timeline,
+                # even when it is also shared; locked audio is not a reference.
+                bridge_locked_track = bridge_window and track.get("audio_locked") is True
+                shared_segment = (
+                    _shared_reference_segment(track)
+                    if not output_full_timeline and not bridge_locked_track else None
+                )
                 if shared_segment is not None:
                     shared_content = shared_segment.get("content", {})
+                    # Bridge references use the same source deduplication as Project.
+                    shared_identity = multitrack_media_identity(shared_content) if bridge_window else None
                     if track.get("type") == "audio":
+                        if shared_identity is not None and shared_identity in shared_audio_identities:
+                            continue
                         shared_audio: dict | None = None
                         if deferred_audio:
                             resolved_audio = _resolve_multitrack_audio(shared_content, None)
@@ -3156,10 +3178,16 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             ):
                                 shared_audio = audio_items[shared_media_index]
                         if shared_audio is not None:
+                            if bridge_window:
+                                shared_audio = _trim_track_audio(shared_audio, 0, duration_frames, frame_rate)
                             selected_audio.append(shared_audio)
+                            if shared_identity is not None:
+                                shared_audio_identities.add(shared_identity)
                         continue
 
                     if track.get("type") == "video":
+                        if shared_identity is not None and shared_identity in shared_video_identities:
+                            continue
                         shared_video = None
                         if deferred_video:
                             shared_video = _resolve_multitrack_video(shared_content, None)
@@ -3176,8 +3204,14 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             shared_media_index = _shared_reference_output_index(shared_segment)
                             if shared_media_index is not None and 0 <= shared_media_index < len(video_items):
                                 shared_video = video_items[shared_media_index]
+                        if shared_video is not None and bridge_window:
+                            shared_video = shared_video.as_trimmed(
+                                start_time=0.0, duration=duration_frames / frame_rate, strict_duration=False,
+                            )
                         if shared_video is not None:
                             selected_video.append(shared_video)
+                            if shared_identity is not None:
+                                shared_video_identities.add(shared_identity)
                             has_video = True
                         continue
                 track_media_duration_frames = media_duration_frames
@@ -3239,7 +3273,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             resolved_audio = _resolve_multitrack_audio(local_content, None)
                             if resolved_audio is not None:
                                 resolved_audio_segments.append((local_segment, resolved_audio))
-                        if not is_minimax or resolved_audio_segments:
+                        if (not is_minimax or resolved_audio_segments) and not bridge_locked_track:
                             selected_audio.append(_merge_audio_track(
                                 resolved_audio_segments,
                                 local_duration,
@@ -3314,7 +3348,8 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             track_media_duration_frames if is_minimax else duration_frames,
                             frame_rate,
                         )
-                        selected_audio.append(task_audio)
+                        if not bridge_locked_track:
+                            selected_audio.append(task_audio)
                         if locked_audio_track and locked_audio_priority < 2:
                             locked_audio = task_audio
                             locked_audio_priority = 2
@@ -3356,7 +3391,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
 
             media_progress.update_absolute(2)
 
-        task_type = _multitrack_task_type(task, len(selected_images), has_video)
+        task_type = _multitrack_task_type(task, len(selected_images) + previous_frame_count, has_video)
         prompt = _selected_multitrack_user_prompt(content)
         system_prompt, api_prompt, json_mode = build_prompt_request(
             task_type,

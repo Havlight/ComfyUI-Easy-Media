@@ -11,6 +11,7 @@ import { useElementWidth } from '@/hooks/use-element-width'
 import { usePauseMediaOnPageExit } from '@/hooks/use-pause-media-on-page-exit'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
 import { LocaleContext, translate } from '@/lib/i18n'
+import { isProjectBridgeReady } from '@/lib/project-bridge'
 import { addMediaRevision, mediaContentToViewUrl } from '@/lib/media-url'
 import { formatMultiTrackTime } from '@/lib/multitrack-utils'
 import { cn } from '@/lib/utils'
@@ -204,6 +205,7 @@ function selectProjectVideoFile(clip: ProjectClip, file: ProjectVideoFile): Proj
     source_end_frame: Math.max(sourceStartFrame + 1, Math.min(clip.source_end_frame, sourceFrameCount)),
     source_frame_count: sourceFrameCount,
     continuity_mode: file.continuity_mode ?? clip.continuity_mode,
+    bridge: file.bridge,
   }
 }
 
@@ -918,11 +920,18 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                             {t('projectVideoCombine.clipContinuity', {
                               mode: t(clip.continuity_mode === 'shot'
                                 ? 'projectVideoCombine.continuityShot'
+                                : clip.continuity_mode === 'restart_bridge'
+                                  ? 'projectVideoCombine.continuityRestartBridge'
                                 : clip.continuity_mode === 'context_swap'
                                   ? 'projectVideoCombine.continuityContextSwap'
                                   : 'projectVideoCombine.continuityContext'),
                             })}
                           </span>
+                          {clip.continuity_mode === 'restart_bridge' && (
+                            <span className="text-[9px] text-muted-foreground">
+                              {t(isProjectBridgeReady(clip, data.clips) ? 'projectVideoCombine.bridgeReady' : 'projectVideoCombine.bridgeRequired')}
+                            </span>
+                          )}
                         </div>
                       )
                       const selectedPaths = selectedFilePaths(clip)

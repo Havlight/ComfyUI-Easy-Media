@@ -144,6 +144,12 @@ describe('TaskSegmentEditor', () => {
     fireEvent.click(continuitySelect)
     fireEvent.click(screen.getByRole('option', { name: 'Swap Context' }))
     expect(onContentChange).toHaveBeenCalledWith({ continuity_mode: 'context_swap' })
+    fireEvent.click(continuitySelect)
+    fireEvent.click(screen.getByRole('option', { name: 'Restart Bridge' }))
+    expect(onContentChange).toHaveBeenCalledWith({ continuity_mode: 'restart_bridge' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous tail frame' }))
+    expect(onContentChange).toHaveBeenCalledWith({ images: [expect.objectContaining({ source_type: 'previous_frame' })] })
 
     rerender(
       <TaskSegmentEditor
@@ -154,6 +160,7 @@ describe('TaskSegmentEditor', () => {
       />,
     )
     expect(screen.queryByRole('combobox', { name: 'Continuity mode' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Previous tail frame' })).toBeNull()
 
     rerender(
       <TaskSegmentEditor

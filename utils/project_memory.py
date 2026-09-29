@@ -58,27 +58,30 @@ def _evict_outputs(cache: Any, retired: set[str]) -> int:
     return removed
 
 
-def _release_stale_execution_cache(execution_list: Any, evicted: set[str]) -> int:
-    """Drop references to evicted producers held by downstream execution caches.
+def _release_stale_execution_cache(execution_list: Any, owner: str, evicted: set[str]) -> int:
+    """Drop unused output-node references held by the parent project cache.
 
     Expansion nodes are added before any segment executes.  ComfyUI therefore
     keeps a cache entry for every expanded ``OUTPUT_NODE`` in the parent
     project node's ``execution_cache`` until that parent finally resolves.  A
     saved video segment no longer needs those entries, but a full decoded video
     can otherwise stay alive for the rest of the loop.
+
+    Nested expansions still need their return links, which are absent from the
+    static node inputs. Let ComfyUI release those caches when consumers finish.
     """
     if not evicted:
         return 0
     execution_cache = getattr(execution_list, "execution_cache", None)
     if not isinstance(execution_cache, dict):
         return 0
+    links = execution_cache.get(owner)
+    if not isinstance(links, dict):
+        return 0
     released = 0
-    for links in list(execution_cache.values()):
-        if not isinstance(links, dict):
-            continue
-        for producer_id in evicted:
-            if links.pop(producer_id, None) is not None:
-                released += 1
+    for producer_id in evicted:
+        if links.pop(producer_id, None) is not None:
+            released += 1
     return released
 
 
@@ -113,7 +116,7 @@ def _release_saved_outputs(execution_list: Any, owner: str, state: dict[str, Any
                 protected.add(value[0])
     evicted = retired - protected
     removed = _evict_outputs(execution_list.output_cache, evicted)
-    removed += _release_stale_execution_cache(execution_list, evicted)
+    removed += _release_stale_execution_cache(execution_list, owner, evicted)
     return removed
 
 

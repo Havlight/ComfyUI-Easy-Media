@@ -69,6 +69,9 @@
     "continuityShot": "分镜",
     "continuityContext": "上下文",
     "continuityContextSwap": "上下文(替换)",
+    "continuityRestartBridge": "重启桥接",
+    "bridgeReady": "桥接已生成",
+    "bridgeRequired": "桥接需重新生成",
     "emptyPreview": "请刷新项目以预览已生成的视频片段。",
     "refreshFailed": "项目刷新失败",
     "combineFailed": "项目合并失败",
@@ -122,6 +125,9 @@
     "taskLabel": "片段 {n} {mode}"
   },
   "multitrack": {
+    "previousFrame": "上一段尾帧",
+    "previousFrameTooltip": "使用 Project 上一段最终成品的最后一帧。可拖动图片调整位置，与接续方式独立。",
+    "previousFramePlaceholder": "上一段最后一帧 · Project 执行时取得",
     "audio": "音频",
     "globalAudio": "总音频",
     "audioSettings": "音频设置",
@@ -305,6 +311,7 @@
     "timelineZoom": "时间线缩放"
   },
   "multitrackContinuityModes": {
+    "restart_bridge": "重启桥接",
     "shot": "分镜",
     "context": "上下文",
     "context_swap": "上下文(主体替换)"
