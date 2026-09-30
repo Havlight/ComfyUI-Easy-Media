@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import h3_bridge as bridge
 from test_minimax_node import (
-    _load_minimax_node, _h3_project_inputs, _h3_sampling_mode, _NestedTensor,
+    _load_minimax_node, _h3_project_inputs, _h3_sampling_mode, _MiniMaxH3Model, _NestedTensor,
 )
 
 
@@ -284,6 +284,48 @@ def test_dual_resume_still_has_full_bridge_schedule(monkeypatch, tmp_path):
     assert previous["inputs"]["resume"] is True
     starts = [node for node in nodes.values() if node["class_type"] == "easy h3SegmentSamplingStart"]
     assert [node["inputs"]["sampling_pass"] for node in starts] == ["second"]
+
+
+@pytest.mark.parametrize("mode", ["dual", "selflift"])
+@pytest.mark.parametrize("linked", [False, True])
+def test_bridge_uses_the_final_stage_model_with_its_lora_patches(monkeypatch, mode, linked):
+    module = _load_minimax_node(monkeypatch)
+    second_model = _MiniMaxH3Model()
+    second_model.patches = {"second_model_lora": object()}
+    inputs = _h3_project_inputs(sampling_mode=_h3_sampling_mode(
+        mode, upscale_by=[1.0],
+        model_loader_2nd=[["second-loader", 0]] if linked else [{"model": second_model}],
+    ))
+    first_loader = inputs["model_loader"][0]
+    if linked:
+        inputs["model_loader"] = [["first-loader", 0]]
+    inputs["tracks_info"][0]["tracks"][0]["segments"].append({
+        "start_frame": 120, "end_frame": 240,
+        "content": {"task_mode": "ref", "continuity_mode": "restart_bridge"},
+    })
+    nodes = module.EasyMultiTrackProject.execute(**inputs).expand
+    replacement = next(node["inputs"] for node in nodes.values()
+                       if node["class_type"] == "easy h3ProjectBridge")
+    if linked:
+        prepare_id, prepare = next((node_id, node) for node_id, node in nodes.items()
+                                   if node_id.endswith("project_model_prepare"))
+        assert prepare["inputs"]["model_loader_2nd"] == ["second-loader", 0]
+        assert replacement["model"] == [prepare_id, 3]
+        assert replacement["clip"] == [prepare_id, 4]
+        assert replacement["vae"] == [prepare_id, 5]
+        assert replacement["audio_vae"] == [prepare_id, 6]
+    else:
+        # Forward the patched object itself, not an unpatched reload of its base.
+        assert replacement["model"] is second_model
+        for name in ("clip", "vae", "audio_vae"):
+            assert replacement[name] is first_loader[name]
+    if mode == "selflift":
+        final_model = next(node["inputs"]["highres_model"] for node in nodes.values()
+                           if node["class_type"] == "easy minimaxH3SelfLiftSampler")
+    else:
+        final_model = [node["inputs"]["model"] for node in nodes.values()
+                       if node["class_type"] == "BasicGuider"][-1]
+    assert replacement["model"] == final_model
 
 
 @pytest.mark.parametrize("mode", ["single", "dual", "selflift"])

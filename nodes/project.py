@@ -2315,10 +2315,13 @@ class EasyMultiTrackProject(io.ComfyNode):
             previous_artifact = artifact.out(0)
             last_project_output = artifact.out(0)
             if continuity_mode == "restart_bridge" and completed_sampling_pass != "first":
+                # Match the delivered frames' final model, including second-loader
+                # LoRA patches, while keeping the bridge's full sampling schedule.
                 bridge = graph.node(
                     "easy h3ProjectBridge", id=f"bridge_{task_index}",
                     project_name=safe_project_name, segment_index=task_index, tracks_info=info,
-                    model=model, clip=clip, vae=vae, audio_vae=audio_vae,
+                    model=second_model if (run_second_pass or is_selflift) else model,
+                    clip=clip, vae=vae, audio_vae=audio_vae,
                     sampler=bridge_sampler, sigmas=bridge_sigmas, seed=first_pass_seed,
                     width=target_width, height=target_height, enabled_tiling=tiling_enabled,
                     tile_count=tile_count, previous=artifact.out(0),
