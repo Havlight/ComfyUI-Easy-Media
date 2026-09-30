@@ -2383,7 +2383,7 @@ class EasyMultiTrackProjectVideoCombine(io.ComfyNode):
         auto_combine = data.get("auto_combine", True) is not False
         safe_name = safe_h3_project_name(project_name)
         if safe_h3_project_name(data.get("project_name")) != safe_name:
-            data = {"project_name": safe_name, "clips": []}
+            data = {"project_name": safe_name, "clips": [], "use_bridge": data.get("use_bridge", True)}
         try:
             from server import PromptServer
 

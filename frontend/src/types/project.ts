@@ -41,6 +41,7 @@ export interface ProjectData {
   frame_rate: number
   clips: ProjectClip[]
   auto_combine: boolean
+  use_bridge: boolean
   updated_at?: number
 }
 
@@ -51,4 +52,5 @@ export const DEFAULT_PROJECT_DATA: ProjectData = {
   frame_rate: 24,
   clips: [],
   auto_combine: true,
+  use_bridge: true,
 }

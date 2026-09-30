@@ -1226,6 +1226,7 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             raise ValueError(f"project_data is not valid JSON: {error}") from error
     if requested is not None and not isinstance(requested, dict):
         raise TypeError("project_data must be a dictionary or JSON object")
+    use_bridge = not isinstance(requested, dict) or requested.get("use_bridge", True) is not False
 
     fresh_by_index = {clip["index"]: clip for clip in fresh_data["clips"]}
     requested_clips = requested.get("clips") if isinstance(requested, dict) else None
@@ -1310,17 +1311,21 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             raise ValueError(f"H3 project segment {index} has invalid trim frames") from error
         duration = source_end - source_start
         source_path = output_dir / selected_file["file_path"]
-        if selected_file.get("continuity_mode") == "restart_bridge":
+        if use_bridge and selected_file.get("continuity_mode") == "restart_bridge":
             from .h3_bridge import bridge_overlay
-            if not timeline_segments or timeline_segments[-1].get("segment_index") != index - 1:
-                raise ValueError("Restart Bridge needs its original preceding segment in the combine timeline")
-            overlay = bridge_overlay(h3_project_directory(project_name), selected_file.get("bridge"),
-                                     timeline_segments[-1], {"source": str(source_path),
-                                     "source_start_frame": source_start, "start_frame": cursor,
-                                     "end_frame": cursor + duration})
-            if bridge_overlays and overlay["start_frame"] < bridge_overlays[-1]["end_frame"]:
-                raise ValueError("Restart Bridge replacement ranges overlap")
-            bridge_overlays.append(overlay)
+            try:
+                if not timeline_segments or timeline_segments[-1].get("segment_index") != index - 1:
+                    raise ValueError("the original preceding segment is not adjacent")
+                overlay = bridge_overlay(h3_project_directory(project_name), selected_file.get("bridge"),
+                                         timeline_segments[-1], {"source": str(source_path),
+                                         "source_start_frame": source_start, "start_frame": cursor,
+                                         "end_frame": cursor + duration})
+                if bridge_overlays and overlay["start_frame"] < bridge_overlays[-1]["end_frame"]:
+                    raise ValueError("replacement ranges overlap")
+            except (ValueError, FileNotFoundError) as error:
+                logger.warning("[Easy Media][Combine] Segment %s: using original clips; %s", index + 1, error)
+            else:
+                bridge_overlays.append(overlay)
         timeline_segments.append({
             "source": str(source_path),
             "start_frame": cursor,
