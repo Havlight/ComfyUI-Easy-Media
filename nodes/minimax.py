@@ -2445,7 +2445,7 @@ class EasyH3ProjectArtifact(io.ComfyNode):
                 TYPE_TRACKS_INFO.Input("tracks_info"),
                 io.Combo.Input(
                     "continuity_mode",
-                    options=["shot", "context", "context_drift", "context_swap"],
+                    options=["shot", "context", "context_drift", "context_swap", "restart_bridge"],
                     default="shot",
                 ),
                 io.Combo.Input(
@@ -2498,9 +2498,9 @@ class EasyH3ProjectArtifact(io.ComfyNode):
         if sampling_pass not in {"single", "first", "second"}:
             raise ValueError("sampling_pass must be 'single', 'first', or 'second'")
         continuity_mode = str(continuity_mode).lower()
-        if continuity_mode not in {"shot", "context", "context_drift", "context_swap"}:
+        if continuity_mode not in {"shot", "context", "context_drift", "context_swap", "restart_bridge"}:
             raise ValueError(
-                "continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'"
+                "continuity_mode must be 'shot', 'context', 'context_drift', 'context_swap', or 'restart_bridge'"
             )
         if continuity_mode == "context_swap":
             continuity_mode = "context_drift"
@@ -2639,6 +2639,9 @@ class EasyH3ProjectArtifact(io.ComfyNode):
             generation_manifest["last_frame"] = tail_path.name
         elif tail_path.exists():
             tail_path.unlink()
+        stale_bridge = project_dir / f"bridge_{int(segment_index)}_{generation}.mp4"
+        if stale_bridge.exists():
+            stale_bridge.unlink()
         if previous_frame_source:
             generation_manifest["previous_frame_source"] = json.loads(previous_frame_source)
         task_mode: str | None = None

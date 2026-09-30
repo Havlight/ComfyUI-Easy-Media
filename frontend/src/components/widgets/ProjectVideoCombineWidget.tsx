@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, Loader2, Maximize2, Minimize2, Pause, Play, RefreshCw, Trash2, Volume2, VolumeX, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -9,8 +9,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useCanvasScale } from '@/hooks/use-canvas-scale'
 import { useElementWidth } from '@/hooks/use-element-width'
 import { usePauseMediaOnPageExit } from '@/hooks/use-pause-media-on-page-exit'
+import { useBridgePreview } from '@/hooks/use-bridge-preview'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
 import { LocaleContext, translate } from '@/lib/i18n'
+import { projectBridgeOverlays } from '@/lib/project-bridge'
 import { addMediaRevision, mediaContentToViewUrl } from '@/lib/media-url'
 import { formatMultiTrackTime } from '@/lib/multitrack-utils'
 import { cn } from '@/lib/utils'
@@ -47,6 +49,7 @@ function ensureProjectData(value: unknown): ProjectData {
     frame_rate: Number.isFinite(data.frame_rate) && Number(data.frame_rate) > 0 ? Number(data.frame_rate) : 24,
     clips: Array.isArray(data.clips) ? data.clips : [],
     auto_combine: data.auto_combine !== false,
+    use_bridge: data.use_bridge !== false,
     updated_at: data.updated_at,
   }
 }
@@ -163,7 +166,7 @@ function errorMessage(payload: unknown, fallback: string): string {
   return fallback
 }
 
-function projectClipUrl(clip: ProjectClip): string | null {
+function projectClipUrl(clip: Pick<ProjectClip, 'file_path' | 'media_revision'>): string | null {
   const url = mediaContentToViewUrl({ source_type: 'output', file_path: clip.file_path })
   return url ? addMediaRevision(url, clip.media_revision) : null
 }
@@ -204,6 +207,7 @@ function selectProjectVideoFile(clip: ProjectClip, file: ProjectVideoFile): Proj
     source_end_frame: Math.max(sourceStartFrame + 1, Math.min(clip.source_end_frame, sourceFrameCount)),
     source_frame_count: sourceFrameCount,
     continuity_mode: file.continuity_mode ?? clip.continuity_mode,
+    bridge: file.bridge,
   }
 }
 
@@ -243,6 +247,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
   const timelineWidth = Math.max(1, useElementWidth(timelineContainerRef))
   const scaledTimelineWidth = timelineWidth * zoom
   const total = totalFrames(data.clips)
+  const bridgeOverlays = useMemo(() => data.use_bridge ? projectBridgeOverlays(data.clips) : [], [data.clips, data.use_bridge])
   const active = clipAtFrame(data.clips, Math.min(currentFrame, Math.max(0, total - 1)))
   const activeUrl = active ? projectClipUrl(active.clip) : null
   const enabledClips = data.clips.filter((clip) => clip.enabled !== false)
@@ -272,6 +277,13 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     ? activeSelectedFiles.map(projectVideoFileUrl)
     : []
   const isComparing = compareUrls.length === 2 && compareUrls.every(Boolean)
+  const previewBridge = !isComparing ? bridgeOverlays.find((overlay) => currentFrame < overlay.end) : undefined
+  const bridgeVisible = !!previewBridge && currentFrame >= previewBridge.start
+  const bridgeUrl = previewBridge ? projectClipUrl({ file_path: previewBridge.file_path,
+    media_revision: String(data.updated_at ?? '') }) : null
+  const bridgePreview = useBridgePreview(bridgeUrl,
+    previewBridge ? Math.max(0, currentFrame - previewBridge.start) / data.frame_rate : 0,
+    isPlaying && bridgeVisible)
 
   function selectClip(clip: ProjectClip) {
     seek(clipStartFrame(data.clips, clip.id))
@@ -342,19 +354,19 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
       setCurrentFrame(0)
       setSelectedClipId(null)
       setPreviewFilePaths({})
-      onChange({ ...DEFAULT_PROJECT_DATA, project_name: projectName, auto_combine: data.auto_combine })
+      onChange({ ...DEFAULT_PROJECT_DATA, project_name: projectName, auto_combine: data.auto_combine, use_bridge: data.use_bridge })
     }
     try {
       const response = await app.api.fetchApi(`/easy-media/project?project_name=${encodeURIComponent(projectName)}`)
       const payload: unknown = await response.json()
       if (!response.ok && response.status === 404 && projectName === 'default') {
         if (requestId !== refreshRequestRef.current) return
-        onChange({ ...DEFAULT_PROJECT_DATA, project_name: 'default', auto_combine: data.auto_combine })
+        onChange({ ...DEFAULT_PROJECT_DATA, project_name: 'default', auto_combine: latestDataRef.current.auto_combine, use_bridge: latestDataRef.current.use_bridge })
         return
       }
       if (!response.ok) throw new Error(errorMessage(payload, t('projectVideoCombine.refreshFailed')))
       if (requestId !== refreshRequestRef.current) return
-      onChange({ ...ensureProjectData(payload), auto_combine: data.auto_combine })
+      onChange({ ...ensureProjectData(payload), auto_combine: latestDataRef.current.auto_combine, use_bridge: latestDataRef.current.use_bridge })
     } catch (error) {
       if (showError && requestId === refreshRequestRef.current) {
         app.extensionManager.toast.add({
@@ -367,7 +379,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     } finally {
       if (requestId === refreshRequestRef.current) setIsRefreshing(false)
     }
-  }, [app, data.auto_combine, data.project_name, onChange, t])
+  }, [app, data.auto_combine, data.use_bridge, data.project_name, onChange, t])
 
   const loadProjects = useCallback(async () => {
     try {
@@ -520,7 +532,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
       setProjects((names) => projectName === 'default'
         ? names
         : names.filter((name) => name !== projectName))
-      onChange({ ...DEFAULT_PROJECT_DATA, project_name: 'default', auto_combine: data.auto_combine })
+      onChange({ ...DEFAULT_PROJECT_DATA, project_name: 'default', auto_combine: latestDataRef.current.auto_combine, use_bridge: latestDataRef.current.use_bridge })
       app.extensionManager.toast.add({
         severity: 'success',
         summary: t('projectVideoCombine.deleteProjectSuccess'),
@@ -652,8 +664,10 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
         setSelectedClipId(clipAtFrame(data.clips, 0)?.clip.id ?? null)
         setPlaybackNonce((nonce) => nonce + 1)
       } else if (nextFrame !== currentFrameRef.current) {
+        const previousBridge = bridgeOverlays.find((overlay) => currentFrameRef.current >= overlay.start && currentFrameRef.current < overlay.end)
+        const nextBridge = bridgeOverlays.find((overlay) => nextFrame >= overlay.start && nextFrame < overlay.end)
         currentFrameRef.current = nextFrame
-        if (now - playbackUiUpdatedAtRef.current >= PLAYBACK_UI_UPDATE_INTERVAL_MS) {
+        if (previousBridge !== nextBridge || now - playbackUiUpdatedAtRef.current >= PLAYBACK_UI_UPDATE_INTERVAL_MS) {
           playbackUiUpdatedAtRef.current = now
           setCurrentFrame(nextFrame)
         }
@@ -666,7 +680,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
       if (playbackRafRef.current !== null) cancelAnimationFrame(playbackRafRef.current)
       playbackRafRef.current = null
     }
-  }, [data.clips, data.frame_rate, isPlaying, total])
+  }, [bridgeOverlays, data.clips, data.frame_rate, isPlaying, total])
 
   useEffect(() => {
     const video = active ? videoRefs.current.get(active.clip.id) : undefined
@@ -796,7 +810,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     <LocaleContext.Provider value={locale}>
       <TooltipProvider>
         <div className="flex h-full min-h-[520px] w-full flex-col overflow-hidden rounded-md border border-border bg-background text-foreground">
-          <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-2">
+          <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-border px-2 py-1">
             <div className="flex items-center gap-1">
               <Select disabled={deletingFilePath !== null} value={data.project_name || 'default'} onOpenChange={(open) => { if (open) void loadProjects() }} onValueChange={(name) => void refreshProject(name)}>
                 <SelectTrigger className="h-7 w-32 text-xs" aria-label={t('projectVideoCombine.selectProject')}><SelectValue /></SelectTrigger>
@@ -818,6 +832,12 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                 <Checkbox checked={data.auto_combine} onCheckedChange={(checked) => onChange({ ...data, auto_combine: checked === true })} />
                 {t('projectVideoCombine.autoCombine')}
               </label>
+              {tooltip(t('projectVideoCombine.useBridgeHint'), (
+                <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+                  <Checkbox checked={data.use_bridge} onCheckedChange={(checked) => onChange({ ...data, use_bridge: checked === true })} />
+                  {t('projectVideoCombine.useBridge')}
+                </label>
+              ))}
               <Button type="button" size="sm" className="h-7 gap-1.5 text-xs" disabled={isCombining || deletingFilePath !== null || data.clips.length === 0} onClick={() => void combineProject()}>
                 {isCombining ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
                 {t('projectVideoCombine.combine')}
@@ -868,6 +888,21 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                 />
               ))
             ) : <div className="text-xs text-muted-foreground">{t('projectVideoCombine.emptyPreview')}</div>}
+            {bridgeUrl && (
+              <video
+                key={bridgeUrl}
+                ref={bridgePreview.videoRef}
+                src={bridgeUrl}
+                preload="auto"
+                playsInline
+                muted
+                onLoadedMetadata={bridgePreview.sync}
+                onError={bridgePreview.onError}
+                data-project-bridge-preview
+                aria-hidden={!bridgeVisible || bridgePreview.failed}
+                className={`pointer-events-none absolute inset-0 h-full w-full object-contain p-3 ${bridgeVisible && !bridgePreview.failed ? 'bg-black' : 'opacity-0'}`}
+              />
+            )}
           </div>
 
           <div className="grid h-9 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-y border-border px-1 text-[10px]">
@@ -918,11 +953,18 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                             {t('projectVideoCombine.clipContinuity', {
                               mode: t(clip.continuity_mode === 'shot'
                                 ? 'projectVideoCombine.continuityShot'
+                                : clip.continuity_mode === 'restart_bridge'
+                                  ? 'projectVideoCombine.continuityRestartBridge'
                                 : clip.continuity_mode === 'context_drift' || clip.continuity_mode === 'context_swap'
                                   ? 'projectVideoCombine.continuityContextDrift'
                                   : 'projectVideoCombine.continuityContext'),
                             })}
                           </span>
+                          {clip.continuity_mode === 'restart_bridge' && (
+                            <span className="text-[9px] text-muted-foreground">
+                              {t(bridgeOverlays.some((overlay) => overlay.clipId === clip.id) ? 'projectVideoCombine.bridgeReady' : 'projectVideoCombine.bridgeOriginal')}
+                            </span>
+                          )}
                         </div>
                       )
                       const selectedPaths = selectedFilePaths(clip)

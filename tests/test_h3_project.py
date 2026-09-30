@@ -529,7 +529,7 @@ def test_delete_video_saves_remaining_generation_and_preserves_other_segments(mo
     monkeypatch.setattr("utils.video.ffprobe_info", lambda _path: {"frame_count": 120})
     manifest_path = project_dir / "project.json"
     manifest = json.loads(manifest_path.read_text())
-    for key, filename in (("last_frame", "last_frame_0_1.png"),):
+    for key, filename in (("last_frame", "last_frame_0_1.png"), ("bridge_file", "bridge_0_1.mp4")):
         manifest["segments"]["0"]["generations"]["1"][key] = filename
         (project_dir / filename).write_bytes(b"version artifact")
     manifest["segments"]["0"]["generations"]["2"] = {"video": "video_0_2.mp4"}
@@ -545,6 +545,7 @@ def test_delete_video_saves_remaining_generation_and_preserves_other_segments(mo
     assert not (project_dir / "video_0_1.mp4").exists()
     assert not (project_dir / "locked_audio_0_1.wav").exists()
     assert not (project_dir / "last_frame_0_1.png").exists()
+    assert not (project_dir / "bridge_0_1.mp4").exists()
     assert (project_dir / "video_0_2.mp4").read_bytes() == b"remaining"
     assert result["clips"][0]["file_name"] == "video_0_2.mp4"
     assert result == load_h3_project_data("demo")
@@ -752,6 +753,61 @@ def test_load_h3_project_data_uses_active_generation_continuity_mode(monkeypatch
     assert data["clips"][0]["continuity_mode"] == "context_drift"
     assert data["clips"][0]["video_files"][0]["continuity_mode"] == "shot"
     assert data["clips"][0]["video_files"][1]["continuity_mode"] == "context_drift"
+
+
+@pytest.mark.parametrize("case", ["valid", "partial", "disabled", "missing", "deleted", "stale", "trimmed", "nonadjacent"])
+def test_combine_uses_available_bridges_and_falls_back_to_original_clips(monkeypatch, tmp_path, case):
+    project_dir = _write_render_project(tmp_path)
+    manifest_path = project_dir / "project.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    record = manifest["segments"]["1"]["generations"]["1"]
+    record["continuity_mode"] = "restart_bridge"
+    record["bridge"] = {
+        side: {"video": f"video_{index}_1.mp4", "revision": str((project_dir / f"video_{index}_1.mp4").stat().st_mtime_ns)}
+        for side, index in (("left", 0), ("right", 1))
+    }
+    record["bridge"].update(file="bridge_1_1.mp4", left_frame_count=120, right_frame_count=120, before=14, after=15)
+    if case == "missing":
+        record.pop("bridge")
+    if case == "stale":
+        record["bridge"]["left"]["revision"] = "old"
+    if case != "deleted":
+        (project_dir / "bridge_1_1.mp4").write_bytes(b"bridge")
+    if case == "partial":
+        (project_dir / "video_2_1.mp4").write_bytes(b"interrupted-before-bridge")
+        manifest["segments"]["2"] = {"active_generation": 1, "generations": {"1": {
+            "video": "video_2_1.mp4", "continuity_mode": "restart_bridge",
+        }}}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr("utils.h3_project.folder_paths.get_output_directory", lambda: str(tmp_path))
+    monkeypatch.setattr("utils.video.ffprobe_info", lambda _path: {"frame_count": 120})
+    captured = {}
+
+    def merge(segments, total_length, *_args):
+        captured.update(segments=segments, total_length=total_length)
+        return str(tmp_path / "combined.mp4")
+
+    monkeypatch.setattr("utils.video.merge_video_track_with_ffmpeg", merge)
+    data = load_h3_project_data("demo")
+    if case == "disabled":
+        data["use_bridge"] = False
+    if case == "trimmed":
+        data["clips"][1]["source_start_frame"] = 1
+    if case == "nonadjacent":
+        data["clips"][0]["enabled"] = False
+    compose_h3_project_video("demo", data)
+    originals = [segment for segment in captured["segments"] if "segment_index" in segment]
+    overlays = [segment for segment in captured["segments"] if "segment_index" not in segment]
+    assert [Path(segment["source"]).name for segment in originals] == (
+        ["video_1_1.mp4"] if case == "nonadjacent" else
+        ["video_0_1.mp4", "video_1_1.mp4", "video_2_1.mp4"] if case == "partial" else
+        ["video_0_1.mp4", "video_1_1.mp4"]
+    )
+    assert captured["total_length"] == (120 if case == "nonadjacent" else 239 if case == "trimmed" else 360 if case == "partial" else 240)
+    assert len(overlays) == (1 if case in {"valid", "partial"} else 0)
+    if overlays:
+        assert (overlays[0]["start_frame"], overlays[0]["end_frame"]) == (106, 135)
+        assert overlays[0]["audio_muted"] is True
 
 
 def test_compose_h3_project_video_uses_selected_file_for_same_index(monkeypatch, tmp_path):

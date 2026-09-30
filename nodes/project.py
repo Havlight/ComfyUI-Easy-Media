@@ -286,7 +286,7 @@ def _timed_h3_project_graph(
             and node["class_type"] not in persistent_media_types
         ):
             node.setdefault("_meta", {})[SEGMENT_META] = segment_nodes[node_id]
-            if node["class_type"] == "easy h3ProjectArtifact":
+            if node["class_type"] in {"easy h3ProjectArtifact", "easy h3ProjectBridge"}:
                 node["_meta"][BOUNDARY_META] = True
         if node["class_type"] not in timed_types:
             continue
@@ -1395,6 +1395,24 @@ class EasyMultiTrackProject(io.ComfyNode):
                         has_custom_second_pass_sampling=custom_second)
         report_step(31)
 
+        bridge_sampler = bridge_sigmas = None
+        if not (first_pass_only and has_second_pass) and any(
+            entry["task"].get("content", {}).get("continuity_mode") == "restart_bridge"
+            and not h3_task_is_passthrough(entry) for _, entry in selected_entries
+        ):
+            # A replacement bridge needs a complete schedule, including when
+            # Dual resumes only its second pass or uses split-step presets.
+            if is_selflift:
+                bridge_sampler = graph.node("KSamplerSelect", id="bridge_euler", sampler_name="euler").out(0)
+                bridge_sigmas = first_pass_sigmas
+            else:
+                bridge_sampler, bridge_sigmas = _h3_resolve_pass_sampling(
+                    graph, pass_name="bridge", preset_name=preset_name,
+                    sampler=_raw_project_input(sampling_config.get("sampler", kwargs.get("sampler"))),
+                    sigmas=_raw_project_input(sampling_config.get("sigmas", kwargs.get("sigmas"))),
+                    has_second_pass=False, is_turbo=first_is_turbo,
+                )
+
         report_step(33)
 
         previous_hires_context_latent: Any | None = None
@@ -1557,6 +1575,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 continuity_mode = "context"
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
             uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            if continuity_mode == "restart_bridge" and (task_index == 0 or audio_only or fps != 24):
+                raise ValueError("Restart Bridge requires a previous segment in a 24 fps video project")
             task_images = task_output.out(4)
             previous_frame_source = None
             previous_position = previous_frame_position(content)
@@ -2294,6 +2314,19 @@ class EasyMultiTrackProject(io.ComfyNode):
             )
             previous_artifact = artifact.out(0)
             last_project_output = artifact.out(0)
+            if continuity_mode == "restart_bridge" and completed_sampling_pass != "first":
+                # Match the delivered frames' final model, including second-loader
+                # LoRA patches, while keeping the bridge's full sampling schedule.
+                bridge = graph.node(
+                    "easy h3ProjectBridge", id=f"bridge_{task_index}",
+                    project_name=safe_project_name, segment_index=task_index, tracks_info=info,
+                    model=second_model if (run_second_pass or is_selflift) else model,
+                    clip=clip, vae=vae, audio_vae=audio_vae,
+                    sampler=bridge_sampler, sigmas=bridge_sigmas, seed=first_pass_seed,
+                    width=target_width, height=target_height, enabled_tiling=tiling_enabled,
+                    tile_count=tile_count, previous=artifact.out(0),
+                )
+                previous_artifact = last_project_output = bridge.out(0)
             previous_hires_context_latent = runtime_hires_context_latent
             previous_low_context_latent = runtime_low_context_latent
             segment_nodes.update({
@@ -2350,7 +2383,7 @@ class EasyMultiTrackProjectVideoCombine(io.ComfyNode):
         auto_combine = data.get("auto_combine", True) is not False
         safe_name = safe_h3_project_name(project_name)
         if safe_h3_project_name(data.get("project_name")) != safe_name:
-            data = {"project_name": safe_name, "clips": []}
+            data = {"project_name": safe_name, "clips": [], "use_bridge": data.get("use_bridge", True)}
         try:
             from server import PromptServer
 

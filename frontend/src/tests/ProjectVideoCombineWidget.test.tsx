@@ -15,6 +15,7 @@ const projectData: ProjectData = {
   height: 720,
   frame_rate: 24,
   auto_combine: true,
+  use_bridge: true,
   clips: [{
     id: 'segment-0',
     index: 0,
@@ -95,6 +96,63 @@ beforeEach(() => {
 })
 
 describe('ProjectVideoCombineWidget', () => {
+  it('preserves Use Bridge through refresh and sends it to manual combine', async () => {
+    const { props, api } = widgetProps()
+    api.fetchApi.mockResolvedValue({ ok: true, json: async () => projectData })
+    function ControlledWidget() {
+      const [value, setValue] = useState(projectData)
+      return <ProjectVideoCombineWidget {...props} value={value} onChange={setValue} />
+    }
+    render(<ControlledWidget />)
+    const checkbox = screen.getByRole('checkbox', { name: 'Use Bridge' })
+    expect(checkbox.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh project' }))
+    await waitFor(() => expect(api.fetchApi).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh project' }).hasAttribute('disabled')).toBe(false))
+    expect(checkbox.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'Combine' }))
+    await waitFor(() => expect(api.queuePrompt).toHaveBeenCalled())
+    const prompt = api.queuePrompt.mock.calls[0]![1]
+    expect(JSON.parse(prompt.output['8'].inputs.project_data).use_bridge).toBe(false)
+  })
+
+  it('previews a bridge across the boundary with original audio and switches back to original clips', () => {
+    let animationFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => { animationFrame = callback; return 1 }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const left = projectData.clips[0]!
+    const right = { ...left, id: 'segment-1', index: 1,
+      file_path: 'easy_media/projects/demo/video_1_1.mp4', file_name: 'video_1_1.mp4',
+      continuity_mode: 'restart_bridge' as const, bridge: {
+        left: { video: left.file_name, revision: left.media_revision!, segment_index: 0 },
+        right: { video: 'video_1_1.mp4', revision: left.media_revision!, segment_index: 1 },
+        before: 14, after: 15, left_frame_count: 120, right_frame_count: 120, file: 'bridge_1_1.mp4',
+      } }
+    const { props } = widgetProps()
+    function ControlledWidget() {
+      const [value, setValue] = useState({ ...projectData, clips: [left, right] })
+      return <ProjectVideoCombineWidget {...props} value={value} onChange={setValue} />
+    }
+    const { container } = render(<ControlledWidget />)
+    const overlay = container.querySelector<HTMLVideoElement>('[data-project-bridge-preview]')!
+    expect(overlay.src).toContain('bridge_1_1.mp4')
+    expect(overlay.getAttribute('aria-hidden')).toBe('true')
+    expect(overlay.muted).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    const started = performance.now()
+    act(() => animationFrame?.(started + 4500))
+    expect(overlay.getAttribute('aria-hidden')).toBe('false')
+    expect(overlay.currentTime).toBeCloseTo(2 / 24, 1)
+    expect(container.querySelector<HTMLVideoElement>('video:not([data-project-bridge-preview])')!.muted).toBe(false)
+    act(() => animationFrame?.(started + 5100))
+    expect(container.querySelector('[data-project-bridge-preview]')).toBe(overlay)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Use Bridge' }))
+    expect(container.querySelector('[data-project-bridge-preview]')).toBeNull()
+    expect(container.querySelector('video')!.src).toContain('video_1_1.mp4')
+    expect(screen.getByText('Using original clip')).not.toBeNull()
+  })
+
   function renderComparison() {
     let animationFrame: FrameRequestCallback | undefined
     vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -237,6 +295,7 @@ describe('ProjectVideoCombineWidget', () => {
       frame_rate: 24,
       clips: [],
       auto_combine: true,
+      use_bridge: true,
     }))
     expect(toast.add).not.toHaveBeenCalled()
   })
@@ -283,6 +342,7 @@ describe('ProjectVideoCombineWidget', () => {
       frame_rate: 24,
       clips: [],
       auto_combine: true,
+      use_bridge: true,
     })
     expect(toast.add).toHaveBeenCalledWith(expect.objectContaining({
       severity: 'success',
