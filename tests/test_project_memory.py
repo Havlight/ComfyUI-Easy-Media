@@ -51,6 +51,7 @@ def runtime(monkeypatch):
     patcher.is_model_patcher_output = lambda value: False
     monkeypatch.setitem(sys.modules, "comfy.model_patcher", patcher)
     comfy = types.ModuleType("comfy")
+    comfy.__path__ = [str(comfy_root / "comfy")]
     comfy.model_management = types.SimpleNamespace(soft_empty_cache=lambda: None)
     monkeypatch.setitem(sys.modules, "comfy", comfy)
     _load("comfy_execution.graph_utils", comfy_root / "comfy_execution/graph_utils.py", monkeypatch)
@@ -190,6 +191,49 @@ def test_parent_execution_cache_does_not_accumulate_saved_segment_videos(runtime
             for previous in range(index + 1)
         )
     assert all(reference() is None for reference in tensors)
+
+
+@pytest.mark.parametrize("mode", ["classic", "lru", "ram", "none"])
+def test_bridge_expansion_results_survive_cleanup_after_segment_save(runtime, mode):
+    scheduler = _setup(runtime, mode, segments=2)
+    prompt = scheduler.dynprompt
+    prompt.add_ephemeral_node("bridge", _node(1, True, previous=["saved1", 0]), "project", "project")
+    prompt.add_ephemeral_node("conditioning", _node(), "bridge", "project")
+    prompt.add_ephemeral_node("encoded", _node(), "conditioning", "project")
+    prompt.add_ephemeral_node("bridge_artifact", _node(latent=["conditioning", 0]), "bridge", "project")
+    asyncio.run(scheduler.output_cache.ensure_subcache_for("project", {
+        node for node in prompt.ephemeral_prompt if prompt.get_parent_node_id(node) == "project"
+    }))
+    asyncio.run(scheduler.output_cache.ensure_subcache_for("bridge", {"conditioning", "bridge_artifact"}))
+    asyncio.run(scheduler.output_cache.ensure_subcache_for("conditioning", {"encoded"}))
+    scheduler.pendingNodes.update(dict.fromkeys(("bridge", "conditioning", "encoded", "bridge_artifact"), True))
+
+    # Expansion return links are scheduler dependencies, absent from node inputs.
+    # This is the get_cache path used by execution.py's pending_subgraph_results.
+    scheduler.cache_link("encoded", "conditioning", 0)
+    scheduler.cache_link("conditioning", "bridge_artifact", 0)
+    scheduler.cache_link("bridge_artifact", "bridge", 0)
+    scheduler.cache_link("bridge", "project", 0)
+    _finish(scheduler, "saved1", "demo")
+
+    def finish(node_id, output):
+        scheduler.cache_update(node_id, types.SimpleNamespace(outputs=[output]))
+        _finish(scheduler, node_id, output)
+
+    tensor = torch.ones(1024)
+    reference = weakref.ref(tensor)
+    finish("encoded", tensor)
+    del tensor
+    encoded = scheduler.get_cache("encoded", "conditioning")
+    assert encoded is not None, "Cleanup discarded the pending conditioning expansion's return value"
+    finish("conditioning", encoded.outputs[0])
+    del encoded
+    assert scheduler.get_cache("conditioning", "bridge_artifact") is not None
+    finish("bridge_artifact", "demo")
+    assert scheduler.get_cache("bridge_artifact", "bridge").outputs == ["demo"]
+    finish("bridge", "demo")
+    assert scheduler.get_cache("bridge", "project").outputs == ["demo"]
+    assert reference() is None, "Bridge tensors must be released after their consumers finish"
 
 
 @pytest.mark.parametrize("mode", ["classic", "lru", "ram"])

@@ -144,6 +144,9 @@ describe('TaskSegmentEditor', () => {
     fireEvent.click(continuitySelect)
     fireEvent.click(screen.getByRole('option', { name: 'Drift Control Context' }))
     expect(onContentChange).toHaveBeenCalledWith({ continuity_mode: 'context_drift' })
+    fireEvent.click(continuitySelect)
+    fireEvent.click(screen.getByRole('option', { name: 'Restart Bridge' }))
+    expect(onContentChange).toHaveBeenCalledWith({ continuity_mode: 'restart_bridge' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous tail frame' }))
     expect(onContentChange).toHaveBeenCalledWith({ images: [expect.objectContaining({ source_type: 'previous_frame' })] })

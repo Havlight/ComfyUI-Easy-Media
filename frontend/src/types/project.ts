@@ -1,4 +1,14 @@
-export type ProjectContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_swap'
+export type ProjectContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_swap' | 'restart_bridge'
+
+export interface ProjectBridge {
+  left: { video: string; revision: string; segment_index: number }
+  right: { video: string; revision: string; segment_index: number }
+  left_frame_count: number
+  right_frame_count: number
+  before: number
+  after: number
+  file: string
+}
 
 export interface ProjectVideoFile {
   file_path: string
@@ -6,6 +16,7 @@ export interface ProjectVideoFile {
   media_revision?: string
   source_frame_count: number
   continuity_mode?: ProjectContinuityMode
+  bridge?: ProjectBridge | null
 }
 
 export interface ProjectClip {
@@ -18,6 +29,7 @@ export interface ProjectClip {
   source_end_frame: number
   source_frame_count: number
   continuity_mode: ProjectContinuityMode
+  bridge?: ProjectBridge | null
   enabled: boolean
   video_files?: ProjectVideoFile[]
 }
@@ -29,6 +41,7 @@ export interface ProjectData {
   frame_rate: number
   clips: ProjectClip[]
   auto_combine: boolean
+  use_bridge: boolean
   updated_at?: number
 }
 
@@ -39,4 +52,5 @@ export const DEFAULT_PROJECT_DATA: ProjectData = {
   frame_rate: 24,
   clips: [],
   auto_combine: true,
+  use_bridge: true,
 }
