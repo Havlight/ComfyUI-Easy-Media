@@ -53,7 +53,7 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_swap"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap"}
 H3_CONTEXT_SOURCE_FRAMES = 22
 
 
@@ -1553,7 +1553,7 @@ class EasyMultiTrackProject(io.ComfyNode):
             if continuity_mode == "context_test":
                 continuity_mode = "context"
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
-            uses_swap = continuity_mode == "context_swap"
+            uses_swap = continuity_mode in {"context_drift", "context_swap"}
             aligned_task_length: Any = (
                 minimax_frame_count(base_task_length, round_up=True)
                 if preserve_source_timing

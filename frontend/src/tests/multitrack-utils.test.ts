@@ -1477,7 +1477,7 @@ describe('multitrack utilities', () => {
     })
   })
 
-  it('preserves character swap continuity while normalizing track data', () => {
+  it('migrates legacy context swap continuity while normalizing track data', () => {
     const data = createDefaultTrackData()
     data.tracks[0].segments = [{
       id: 'swap-task',
@@ -1492,7 +1492,7 @@ describe('multitrack utilities', () => {
 
     const normalized = normalizeTrackData(data)
 
-    expect(normalized.tracks[0].segments[0].content.continuity_mode).toBe('context_swap')
+    expect(normalized.tracks[0].segments[0].content.continuity_mode).toBe('context_drift')
   })
 
   it('does not add a default task segment when the range already has task coverage', () => {
