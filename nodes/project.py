@@ -55,7 +55,7 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap", "context_masked"}
 H3_CONTEXT_SOURCE_FRAMES = 22
 
 
@@ -1642,6 +1642,9 @@ class EasyMultiTrackProject(io.ComfyNode):
                 continuity_mode = "context"
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
             uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            uses_masked = continuity_mode == "context_masked"
+            if uses_masked and native_config is None:
+                raise NativePlanError("METHOD_POLICY", "Upgrade this timeline to native timing before using Context Masked.")
             task_images = task_output.out(4)
             previous_frame_source = None
             previous_position = previous_frame_position(content)
@@ -1834,7 +1837,11 @@ class EasyMultiTrackProject(io.ComfyNode):
             first_pass_sampling_model = model
             if has_context_continuity:
                 report_segment_step(0.22)
-                if uses_swap:
+                if uses_masked:
+                    initial_latent = graph.node("easy h3NativeMasked", id=f"native_masked_{task_index}",
+                                                latent=initial_latent, context_latent=first_pass_context_latent).out(0)
+                    first_pass_context_trim_frames = context_trim_frames = 39
+                elif uses_swap:
                     context_swap = graph.node(
                         "easy MiniMaxH3ContextSwap",
                         id=f"first_pass_context_swap_noise_{task_index}",
@@ -2074,17 +2081,23 @@ class EasyMultiTrackProject(io.ComfyNode):
                     report_segment_step(0.59)
                     # Second pass is deliberately kept as an ordinary hi-res refine path.
                     # No context noise, no split-prior, and no Drift-Control patching here.
-                    hires_continuity = graph.node(
-                        "easy MiniMaxH3HiResContinuity",
-                        id=f"hires_continuity_{task_index}",
-                        current_hires_latent=upscaled_latent,
-                        previous_hires_latent=previous_hires_context_latent,
-                        context_length=str(context_source_frames),
-                        video_transition_steps=4,
-                        video_anchor_only=not audio_only,
-                    )
-                    upscaled_latent = hires_continuity.out(0)
-                    context_trim_frames = hires_continuity.out(1)
+                    if uses_masked:
+                        upscaled_latent = graph.node("easy h3NativeMasked", id=f"native_high_masked_{task_index}",
+                                                    latent=upscaled_latent, context_latent=previous_hires_context_latent,
+                                                    refine=True).out(0)
+                        context_trim_frames = 39
+                    else:
+                        hires_continuity = graph.node(
+                            "easy MiniMaxH3HiResContinuity",
+                            id=f"hires_continuity_{task_index}",
+                            current_hires_latent=upscaled_latent,
+                            previous_hires_latent=previous_hires_context_latent,
+                            context_length=str(context_source_frames),
+                            video_transition_steps=4,
+                            video_anchor_only=not audio_only,
+                        )
+                        upscaled_latent = hires_continuity.out(0)
+                        context_trim_frames = hires_continuity.out(1)
 
                 if native_lock_inputs is not None:
                     upscaled_latent = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",

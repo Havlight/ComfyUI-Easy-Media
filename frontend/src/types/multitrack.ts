@@ -7,7 +7,7 @@ export interface H3NativePolicy {
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
-export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_swap'
+export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_swap' | 'context_masked'
 
 export type MultiTrackRefImageSize = 'match' | 'max'
 

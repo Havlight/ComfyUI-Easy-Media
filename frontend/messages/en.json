@@ -67,6 +67,7 @@
     "selectClipFilesHint": "Select one video for the project, or two to compare.",
     "selectClipFileFailed": "Video selection could not be saved",
     "continuityShot": "Shot",
+    "continuityContextMasked": "Context Masked",
     "continuityContext": "Context",
     "continuityContextDrift": "Drift Context",
     "emptyPreview": "Refresh the project to preview its generated clips.",
@@ -308,6 +309,7 @@
     "timelineZoom": "Timeline zoom"
   },
   "multitrackContinuityModes": {
+    "context_masked": "Context Masked",
     "shot": "Shot",
     "context": "Context",
     "context_drift": "Drift Control Context"

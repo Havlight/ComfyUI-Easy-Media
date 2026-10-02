@@ -321,3 +321,21 @@ def test_audio_assembly_twenty_segments_has_no_sample_drift_or_duplicate_overlap
     locked = dict(segments[0], audio_locked=True, audio_source='original.wav')
     assembly.build_native_audio_views([locked, segments[1]], tmp_path)
     assert locked['audio_source'] == 'original.wav'
+
+
+def test_masked_source_is_immutable_video_is_hard_and_audio_releases_over_eight_ticks():
+    drift = importlib.import_module('native_artifact_unit.modules.motion_context.drift_control_av')
+    parent = _latent(_plan(duration=56))
+    child_plan = _plan('b', 56, 17, 'a')
+    child = _latent(child_plan, parent['h3_native'])
+    context = native.slice_native_context(parent, child_plan, 'single_final')
+    before = [tensor.clone() for tensor in native._streams_from_latent(context)]
+    output, _, _ = drift.prepare_context_swap_latent(child, context, 39, continue_audio=True, freeze_audio=False)
+    video_mask, audio_mask = native._noise_mask_streams(output)
+    assert torch.all(video_mask[:, :, :12] == 0)
+    assert torch.all(video_mask[:, :, 12:] == 1)
+    assert torch.all(audio_mask[..., :57] == 0)
+    assert torch.all(torch.diff(audio_mask[..., 57:65]) > 0)
+    assert torch.all(audio_mask[..., 64] == 1)
+    for original, source in zip(before, native._streams_from_latent(context)):
+        assert torch.equal(original, source)

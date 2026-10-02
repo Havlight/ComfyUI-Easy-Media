@@ -264,7 +264,7 @@ def _h3_continuity_mode(value: Any) -> str:
         return "context"
     if normalized == "context_swap":
         return "context_drift"
-    return normalized if normalized in {"context", "context_drift"} else "shot"
+    return normalized if normalized in {"context", "context_drift", "context_masked"} else "shot"
 
 
 def h3_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:

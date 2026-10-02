@@ -1137,7 +1137,7 @@ export function PreviewArea({
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {MULTITRACK_CONTINUITY_MODES.map((continuityMode) => (
+                {MULTITRACK_CONTINUITY_MODES.filter((option) => option !== 'context_masked' || data.h3_native).map((continuityMode) => (
                   <SelectItem key={continuityMode} value={continuityMode}>
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityMode}`)}</span>
                   </SelectItem>

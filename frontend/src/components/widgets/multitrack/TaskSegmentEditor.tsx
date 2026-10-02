@@ -1289,7 +1289,7 @@ export function TaskSegmentEditor({
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {MULTITRACK_CONTINUITY_MODES.map((continuityOption) => (
+                {MULTITRACK_CONTINUITY_MODES.filter((option) => option !== 'context_masked' || nativePolicy).map((continuityOption) => (
                   <SelectItem key={continuityOption} value={continuityOption}>
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityOption}`)}</span>
                   </SelectItem>

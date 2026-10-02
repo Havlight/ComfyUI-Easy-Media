@@ -178,6 +178,27 @@ class EasyH3NativePrepare(io.ComfyNode):
         return io.NodeOutput(prepare_native_canvas(latent, high_meta), high_source, low_source, state)
 
 
+class EasyH3NativeMasked(io.ComfyNode):
+    """Hard native video prefix and an eight-tick half-cosine audio release."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativeMasked", display_name="H3 Native Masked Context", category="EasyUse/H3/dev",
+                         is_dev_only=True, inputs=[io.Latent.Input("latent"), io.Latent.Input("context_latent"),
+                                                 io.Boolean.Input("refine", default=False)],
+                         outputs=[io.Latent.Output("latent")])
+
+    @classmethod
+    def execute(cls, latent: dict[str, Any], context_latent: dict[str, Any], refine: bool = False) -> io.NodeOutput:
+        from ..modules.motion_context.drift_control_av import prepare_context_swap_latent
+
+        if not context_latent.get("h3_native_source"):
+            raise NativePlanError("MASKED_SOURCE", "Masked context requires a verified native source adapter.")
+        prepared, _, _ = prepare_context_swap_latent(latent, context_latent, 39,
+                                                     continue_audio=not refine, freeze_audio=refine)
+        return io.NodeOutput(prepared)
+
+
 class EasyH3NativeDriftModel(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:

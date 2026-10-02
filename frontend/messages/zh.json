@@ -67,6 +67,7 @@
     "selectClipFilesHint": "选择一个视频用于项目，选择两个视频进行对比。",
     "selectClipFileFailed": "视频版本选择保存失败",
     "continuityShot": "分镜",
+    "continuityContextMasked": "Context Masked",
     "continuityContext": "上下文",
     "continuityContextDrift": "上下文(漂移)",
     "emptyPreview": "请刷新项目以预览已生成的视频片段。",
@@ -308,6 +309,7 @@
     "timelineZoom": "时间线缩放"
   },
   "multitrackContinuityModes": {
+    "context_masked": "Context Masked",
     "shot": "分镜",
     "context": "上下文",
     "context_drift": "上下文(漂移控制)"

@@ -168,3 +168,16 @@ def test_native_locked_video_requests_raw_source_window_and_never_stretches(monk
     track['segments'][0]['end_frame'] = 470
     with pytest.raises(ValueError, match='LOCK_VIDEO_RANGE'):
         module.EasyMultiTrackProject.execute(**inputs)
+
+
+@pytest.mark.parametrize('mode', ['single', 'dual', 'selflift'])
+def test_masked_reuses_verified_sources_and_freezes_second_pass_audio(monkeypatch, mode):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs(mode, **({'upscale_by': [1.0]} if mode == 'dual' else {}))
+    inputs['tracks_info'][0]['tracks'][0]['segments'][1]['content']['continuity_mode'] = 'context_masked'
+    result = module.EasyMultiTrackProject.execute(**inputs)
+    masks = [node for node in result.expand.values() if node['class_type'] == 'easy h3NativeMasked']
+    assert len(masks) == (2 if mode == 'dual' else 1)
+    if mode == 'dual':
+        assert masks[-1]['inputs']['refine'] is True
+    assert not any(node['class_type'] in {'VAEEncode', 'VAEEncodeAudio'} for node in result.expand.values())

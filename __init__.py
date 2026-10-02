@@ -117,6 +117,7 @@ class EasyMediaExtension(ComfyExtension):
             EasyH3NativeAudioLock,
             EasyH3NativeLockedVideoInfo,
             EasyH3NativeDriftModel,
+            EasyH3NativeMasked,
             EasyH3NativeResult,
             EasyH3NativeMediaView,
             EasyH3NativeArtifact,
