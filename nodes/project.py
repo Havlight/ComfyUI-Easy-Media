@@ -1894,8 +1894,9 @@ class EasyMultiTrackProject(io.ComfyNode):
                                           [segment["start_frame"], segment["end_frame"]]
                                           for segment in locked_audio_track.get("segments", [])
                                           if not segment.get("content", {}).get("muted", False)])}
-                initial_latent = graph.node("easy h3NativeAudioLock", id=f"native_audio_lock_{task_index}",
-                                            latent=initial_latent, **native_lock_inputs).out(0)
+                native_audio_lock = graph.node("easy h3NativeAudioLock", id=f"native_audio_lock_{task_index}",
+                                              latent=initial_latent, **native_lock_inputs)
+                initial_latent, task_locked_audio = native_audio_lock.out(0), native_audio_lock.out(1)
             report_segment_step(0.28)
             selflift_low_latent: Any | None = None
             if is_selflift:

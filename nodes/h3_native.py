@@ -249,14 +249,15 @@ class EasyH3NativeAudioLock(io.ComfyNode):
         return io.Schema(node_id="easy h3NativeAudioLock", display_name="H3 Native Audio Lock", category="EasyUse/H3/dev",
                          is_dev_only=True, inputs=[io.Latent.Input("latent"), io.AnyType.Input("native_state"),
                              io.Audio.Input("audio"), io.Vae.Input("audio_vae"), io.String.Input("intervals_json")],
-                         outputs=[io.Latent.Output("latent")])
+                         outputs=[io.Latent.Output("latent"), io.Audio.Output("delivered_locked_audio")])
 
     @classmethod
     def execute(cls, latent: dict[str, Any], native_state: dict[str, Any], audio: dict[str, Any] | None,
                 audio_vae: Any, intervals_json: str) -> io.NodeOutput:
-        from ..utils.h3_native_lock import lock_native_audio
+        from ..utils.h3_native_lock import lock_native_audio, native_locked_audio_view
 
-        return io.NodeOutput(lock_native_audio(latent, native_state["high"], audio, audio_vae, json.loads(intervals_json)))
+        return io.NodeOutput(lock_native_audio(latent, native_state["high"], audio, audio_vae, json.loads(intervals_json)),
+                             native_locked_audio_view(native_state["high"], audio))
 
 
 class EasyH3NativeSeed(io.ComfyNode):

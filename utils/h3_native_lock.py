@@ -7,7 +7,20 @@ import torch
 import torch.nn.functional as F
 
 from ..modules.motion_context.core import _noise_mask_streams, _official_nested_tensor, _streams_from_latent
-from .h3_native_timing import NativePlanError, round_ratio
+from .h3_native_timing import NativePlanError, round_ratio, sample_at_frame
+
+
+def native_locked_audio_view(metadata: dict[str, Any], audio: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Crop the already mixed external timeline at cumulative sample endpoints."""
+    if audio is None:
+        return None
+    rate = int(audio['sample_rate'])
+    start = sample_at_frame(metadata['start_frame'], rate)
+    end = sample_at_frame(metadata['end_frame'], rate)
+    waveform = audio['waveform'][..., start:end]
+    # Match the declared external lock's existing silence policy beyond source.
+    waveform = F.pad(waveform, (0, end - start - waveform.shape[-1]))
+    return {**audio, 'waveform': waveform}
 
 
 def lock_native_audio(latent: dict[str, Any], metadata: dict[str, Any], audio: dict[str, Any] | None,

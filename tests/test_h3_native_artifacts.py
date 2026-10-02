@@ -345,3 +345,14 @@ def test_locked_video_without_audio_keeps_native_generated_streams():
     lock = importlib.import_module('native_artifact_unit.utils.h3_native_lock')
     latent = _latent()
     assert lock.lock_native_audio(latent, latent['h3_native'], None, object(), [[0, 243]]) is latent
+
+
+def test_locked_output_uses_cumulative_44100hz_endpoints_without_dropped_samples():
+    lock = importlib.import_module('native_artifact_unit.utils.h3_native_lock')
+    source = torch.arange(352800, dtype=torch.float32).reshape(1, 1, -1)
+    audio = {'waveform': source, 'sample_rate': 44100}
+    pieces = [lock.native_locked_audio_view({'start_frame': a, 'end_frame': b}, audio)['waveform']
+              for a, b in [(0, 90), (90, 141), (141, 192)]]
+    assert [piece.shape[-1] for piece in pieces] == [165375, 93712, 93713]
+    assert torch.equal(torch.cat(pieces, dim=-1), source)
+    assert lock.native_locked_audio_view({}, None) is None
