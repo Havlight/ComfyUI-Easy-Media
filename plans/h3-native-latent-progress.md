@@ -48,6 +48,15 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - 前端 **237 項通過**，TypeScript 檢查與 release build 通過；Editor 序列化後端 **178 項通過、2 項略過**。
 - sampler 圖仍待下一階段串接，本階段未宣稱可執行完整 native pipeline。
 
+## Sampler 與原生來源串接
+
+- 新版 Single／Dual／SelfLift 圖改為儲存完整 sampler AV，再 decode delivered view；不再建立 legacy context rebuild／anchor re-encode 節點。
+- 每段完成保存後，下一段由版本 sidecar 載入所需 stage 並複製合法 context；沿用既有 segment cache 回收邊界，避免整條鏈保留完整 GPU tensors。
+- Native SelfLift 明示 `rho=0`；Dual 像素 upscale 與 previous-frame 影像回流在 strict preflight 阻擋。
+- 新增 **8 項**圖／runtime 測試，含實際 safetensors 保存後重新載入、audio canvas 多一 tick 的覆蓋與 39 幀 slice。
+- 11 個後端測試檔合計 **552 項通過、2 項因 FFmpeg 略過**；release build 成功。修正測試間 Comfy mock 污染造成的套件順序相依。
+- 外部 passthrough／舊版本 fallback adapter、Lock 覆蓋優先序、音訊 overlap 組裝與 GPU 品質驗收仍待完成；目前 native passthrough 會明確拒絕。
+
 ## 待完成
 
 - 將 native artifacts、階段 lineage、原子保存接入執行圖與版本操作。

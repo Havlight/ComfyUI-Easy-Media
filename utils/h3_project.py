@@ -297,7 +297,7 @@ def _task_for_range(
 def h3_task_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
     tasks = h3_task_segments(info)
     markers = info.get("task_markers", [])
-    if not isinstance(markers, list) or not markers:
+    if info.get("h3_native") is not None or not isinstance(markers, list) or not markers:
         return [
             {
                 "task": task,

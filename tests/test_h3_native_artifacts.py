@@ -22,6 +22,20 @@ artifacts = importlib.import_module("native_artifact_unit.utils.h3_native_artifa
 timing = importlib.import_module("native_artifact_unit.utils.h3_native_timing")
 
 
+@pytest.fixture(autouse=True)
+def real_nested_tensor(monkeypatch):
+    # Other node tests replace the parent comfy module. Restore this one real
+    # dependency for each test so suite order cannot change the implementation.
+    path = ROOT.parent.parent / "comfy/nested_tensor.py"
+    spec = importlib.util.spec_from_file_location("comfy.nested_tensor", path)
+    nested = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(nested)
+    comfy = sys.modules.get("comfy", types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy", comfy)
+    monkeypatch.setitem(sys.modules, "comfy.nested_tensor", nested)
+    monkeypatch.setattr(comfy, "nested_tensor", nested, raising=False)
+
+
 def _plan(sid="a", start=0, duration=243, parent=None):
     context = 39 if parent else 0
     return timing.NativeTaskPlan(sid, start, start + duration, "context" if parent else "shot",
