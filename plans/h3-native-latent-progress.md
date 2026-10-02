@@ -57,6 +57,14 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - 11 個後端測試檔合計 **552 項通過、2 項因 FFmpeg 略過**；release build 成功。修正測試間 Comfy mock 污染造成的套件順序相依。
 - 外部 passthrough／舊版本 fallback adapter、Lock 覆蓋優先序、音訊 overlap 組裝與 GPU 品質驗收仍待完成；目前 native passthrough 會明確拒絕。
 
+## 實際 GPU 結構驗證
+
+- 新增可手動執行的 `tests/manual/h3_native_gpu_smoke.py`，使用既有 ComfyUI Python 和真實 H3 diffusion checkpoint。
+- RTX 4090／PyTorch 2.9.1+cu130 上完成兩段 raw 56 幀採樣：video 17 tokens、audio 94 ticks；第二段採 39 幀原生 context。
+- 完整流程約 **26.2 秒**，峰值 CUDA allocated **21,337,064,448 bytes**，全部 tensor 有限，接續 encoder 呼叫 **0**。
+- 使用零文字 embedding，屬結構驗證，不代表畫質 A/B 已完成。尚未因此新增 Masked 或切換預設。
+- JSON 結果保存在 ComfyUI `output/easy_media/native-validation/structural.json`。
+
 ## 待完成
 
 - 將 native artifacts、階段 lineage、原子保存接入執行圖與版本操作。
