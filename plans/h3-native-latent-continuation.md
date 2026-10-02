@@ -1,6 +1,14 @@
 # H3 純 latent 接續與時間軸升級計畫
 
-日期：2026 年 10 月 3 日。適用倉庫基線：`22c9161`，包含本 fork 的 previous frame 功能。狀態：**完整規劃，尚未實作功能**。程式碼證據、外部參考的固定版本與本輪測試結果見[可行性紀錄](h3-native-latent-feasibility.md)。
+日期：2026 年 10 月 3 日。適用倉庫基線：`22c9161`，包含本 fork 的 previous frame 功能。狀態：**功能已實作，最終驗證記錄見下列連結**。程式碼證據、外部參考的固定版本與本輪測試結果見[可行性紀錄](h3-native-latent-feasibility.md)。
+
+目前操作方式見[使用指南](h3-native-latent-guide.md)，測試與實作取捨見[進度紀錄](h3-native-latent-progress.md)。本文保留設計時的需求與候選方案；以下完成決策優先於後文的預定文字。
+
+- 保留 Context 預設。Masked 已加入且通過原生結構測試，但樣本未證明普遍品質優勢，不執行原第 9 階段的預設切換。
+- 設定定稿為 `h3_native: {version: 1, allow_vae_fallback: false}`；不新增更多開關或 context 長度選單。
+- Editor 顯示時間已對齊及末幀相容性；模型、sidecar 與來源在執行時驗證。版本 UI 顯示過期與回退，未新增不可靠的提前「已驗證」標章。編輯錯誤可以選取對應片段；重算與回退沿用原操作。
+- Native 第一採預覽後重新執行兩阶段；目前不從 clean prediction 推斷 noisy resume。舊版 resume 保留。
+- API／GPU／瀏覽器及回歸證據、品質限制均記錄在進度文件，不以結構測試代替感知品質認證。
 
 本次升級的目標是：使用者照原本的方式編輯 H3 任務時間軸，系統就產生合法的原生生成計畫；接續直接使用上一段的 sampler latent，避免生成內容經過 VAE decode→encode 回流。保留原有 Editor、軌道、片段卡、接續選單、Project 節點與版本操作，新增一個回退設定和少量就地說明。
 
@@ -303,7 +311,7 @@ sampling preview 仍屬於 Project 節點，不搬進 TRACK_DATA／Editor。輸�
 
 每個 frontend 階段在提交前執行 `bun run build:release`，generated `dist/` 另用 `chore: build release assets for ...` commit；source 不與產物混為一個 commit。提交前檢查 diff、測試及相對 main 的狀態；避免 pre-commit hook 自動把 dist 混入 source，stage 後再次檢查範圍。基線／文件階段也遵守倉庫的提交前 build 規則。
 
-每階段必要的測試和修復與該責任一起提交，不把所有測試延到最後。前端、Python／ComfyUI、i18n 各按實際變更 review；重大修正後重跑受影響驗證。正式發布前確認 `dist/release` 對應 source。這份計畫不授權本輪直接實作、push main 或發布。
+每階段必要的測試和修復與該責任一起提交，不把所有測試延到最後。前端、Python／ComfyUI、i18n 各按實際變更 review；重大修正後重跑受影響驗證。正式發布前確認 `dist/release` 對應 source。最初規劃輪未授權實作；使用者隨後已明確授權完整實作及分段 commit。實作於 feature branch，不直接推送 main。
 
 階段 2–6 的新 schema 在功能分支內整合，尚未連通時不作正式新建專案預設；舊 schema 仍走相容路徑。階段 7 和基礎驗收通過後才開放完整原生工作流程，避免中間 commit 只開 UI 開關卻給出尚未成立的保證。
 

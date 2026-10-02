@@ -65,15 +65,6 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - 使用零文字 embedding，屬結構驗證，不代表畫質 A/B 已完成。尚未因此新增 Masked 或切換預設。
 - JSON 結果保存在 ComfyUI `output/easy_media/native-validation/structural.json`。
 
-## 待完成
-
-- 將 native artifacts、階段 lineage、原子保存接入執行圖與版本操作。
-- marker／prompt override 的原生 adapter、Lock 與完整 UI 回歸。
-- 原生 Context／Drift、Dual／SelfLift、嚴格政策與明確 fallback。
-- UI、音訊組裝、Lock、last frame 和回歸驗證。
-- 基礎 GPU 驗收通過後的 Masked 方法與預設方法比較。
-- 最終 release、文件與適用 review。
-
 ## 外部來源、回退与版本保護
 
 - Native passthrough 以實際 delivered 尾端 39 幀首次編碼；缺少 low stage、解析度或階段不相容時，只有已授權 fallback 才重建生成素材。損毀／checksum 不符不會被回退掩蓋。
@@ -92,3 +83,54 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - 20 段 sample-valued ramp 驗證精確累積樣本數、無重複或跳過；版本選單顯示過期及曾使用 fallback。
 - SelfLift low guide 改用保存的 low-stage tokens；第二 MODEL 的 Drift wrapper 獨立建立，保留 LoRA 及完整 sigma schedule。
 - 後端主回歸 **559 通過、2 略過**；新增 Lock graph 測試另外通過。前端相關 **282 項**中未變更六檔先前通過，修正 locked-track normalization 後 native timing/editing **22 項通過**。TypeScript 與 release build 通過。
+
+
+## Masked、UI 與品質決策
+
+- 完成共同底層、Context／Drift 和 GPU 結構驗收後，新增唯一方法 Context Masked。固定 video prefix、音訊最後 8 ticks 半餘弦釋放；Dual 第二階段固定既有 audio，SelfLift 仍走原生 stage lineage。
+- 新／已升級 timeline 選單共 Shot、Context、Drift、Masked 四項；legacy 不出現 Masked。保留 Context 預設。
+- RTX 4090 真實 32B CLIP、H3 int8、Turbo LoRA、不同第二 MODEL LoRA 強度與自訂 sigma：Single／Dual／SelfLift 共 12 組採樣與解碼通過，生成內容 encoder 呼叫 0。另有 learned upscaler 的 Dual／SelfLift 8 組通過。
+- 這些小尺寸比較不是品質認證：極短二採 sigma 的 Dual 圖有明顯紋理／重影，direct lift 也不等同 learned upscaler。沒有因此宣稱 Masked 普遍優於 Context。
+- 實際 React Widget 在獨立 Chromium 完成四種選單、秒數輸入／方向鍵、fallback 不改幾何及 1200／480 px 版面操作，沒有瀏覽器例外。Chrome 連線工具受 Windows／WSL 路徑問題阻擋，因此使用獨立 headless 瀏覽器；沒有假稱使用者整個 ComfyUI 工作流已由 GUI 操作驗收。
+
+## 實際 ComfyUI 排程與 review 修正
+
+- 啟動只載入本插件的獨立 ComfyUI，九個 native runtime nodes 與 Project 均成功註冊。使用真正 Editor → Project → Combine → SaveVideo 的 API 工作流。
+- 單次三段完整生成、sidecar 保存、下一段載入及成片成功。Single Context 快速動作 10 段與 SelfLift Drift 人物／場景轉換 10 段均完整保存並合成，後者包含第二 MODEL LoRA 及 learned upscaler。
+- 實際 Windows 執行找出並修正只讀 handle 的 `fsync` 問題；改為可寫 handle，失敗版本未覆蓋已存版本。Windows torch／safetensors／版本與末幀測試 70 項通過，1 項因 Windows 未授權 symlink 略過（Linux 另有覆蓋）。
+- 實際 Dual 自訂二採 schedule 找出既有 linked static prepare 對 Context 輸出 `None` 的錯誤，修為保留指定第二 schedule，並加入 runtime regression。不是偷偷套內建 sigma。
+- 補上來源重建時 low／high audio clock 對齊；只需重建 video stage 時沿用 high 原生 audio。外部已驗證 seed 可重新做所需尺寸的 ingress，不標成 generated fallback。
+- Lock Video 在不使用影片的 task mode 直接指出需 Reference／Edit；短於 39 幀的 native source 任務在 Editor 即拒絕，避免執行時才發現幾何不成立。
+- 明示原生第一採預覽後會重算兩階段；不把 clean prediction 冒充 noisy resume。修正 Windows 輸出路徑比較和 legacy 版本操作不必要載入 native module。
+- 最終 React／TypeScript review：互動控制沿用 shadcn，無新增 raw color、素材時間不被 planner 移動、錯誤可選取對應片段。中英文 key 一致，其他語系沿用既有 fallback；sampling preview DOM 與 uint8 防白屏測試保留。
+
+
+## 最終驗收與交付
+
+- 自訂第二 sigma 修正後，真實 Dual + Masked + 第二 MODEL LoRA + learned upscaler 三段完整生成／成片成功；重啟 ComfyUI 後單獨重算第三段也成功，既有前三段版本均保留。
+- Lock Audio 與沒有音軌的 Lock Video 各三段真實 API 流程通過。無音軌影片不虛構音訊鎖定；完成後移除本次 staging MP4，失敗時保留排錯資料。
+- Lock Audio 的逐樣本檢查發現原本每段獨立 round 在 44.1 kHz 下會少一個 sample，已改為累積 sample endpoints。重跑 Dual + Masked + Lock Audio 後，三段 8 秒共 **352,800 samples**，與既有匯入／混音階段的整段來源相比最大差異 **0.0**。Native raw／locked WAV 改存 FLOAT，legacy PCM24 保存不變。
+- H3 政策在其他模型格式的 Editor 中暫停，Split／duration 也不會沿用 H3 格點；切回 H3 需要調整時先檢視預覽。新增回歸確認設定保留且不偷偷改其他格式幾何。
+- 最終測試數量見本節下方；主回歸之外的 Windows 測試有重疊，不把兩者相加宣稱不同案例。實際 API 測試及圖片／WAV 留在本機 ComfyUI `output/easy_media/native-validation/`，無模型或測試影片加入 Git。
+
+### 驗證範圍與限制
+
+此次涵蓋多個 seed、同場景、快速動作與人物／場景變化，包含兩條 10 段鏈、三段 Dual、重啟接續與外部 Lock，並完成中小尺寸 GPU、實際保存／合成與 encoder spy 驗證。沒有完成高解析度／大量 prompt 的全面感知品質評測，也沒有以音訊數值一致推論對嘴或語音品質。因此保留 Context 預設；方法選擇仍需依使用者模型、prompt 和 sigma 試片。
+
+CPU 音訊時鐘測試另涵蓋 1,000 段模擬與 20 段精確 waveform 組裝，這是時間正確性證據，不等同 1,000 段真實 GPU 渲染。Native 首採預覽續跑採重算兩階段；任意第三方模型 adapter、任意輸出切點轉回接續與 5／22 幀 context 選單沒有加入。
+
+
+### 最終檢查結果
+
+| 檢查 | 結果 |
+| --- | --- |
+| Python 主回歸（11 檔） | 571 通過，2 因 Linux 無 FFmpeg 略過 |
+| Windows 版本／末幀／native artifacts | 73 通過，1 因帳戶未授權 symlink 略過 |
+| Frontend Vitest | 52 檔、600 項通過 |
+| TypeScript strict | 通過 |
+| Release build | 通過；暫存副本產物逐檔核對後同步到 `dist/release`，獨立 commit |
+| Browser | 實際 Widget 選單／秒數／方向鍵／fallback／寬窄版操作通過，無 pageerror |
+| GPU／ComfyUI API | 三種 sampling mode、兩個 MODEL 的 LoRA、自訂 sigma、learned upscale、3／10 段、restart、Lock 均通過上述矩陣 |
+| Review | Python／ComfyUI、React／TypeScript、i18n、完整 branch diff 與 `git diff --check` 完成 |
+
+手動重現入口：`tests/manual/h3_native_gpu_smoke.py`（結構與 VAE 邊界）、`h3_native_gpu_matrix.py`（三模式比較）、`h3_native_api_smoke.py`（真實排程、跨執行與 Lock）。使用 ComfyUI 的 Python 執行 `--help` 查看參數；Windows 建議 `python -X utf8`，避免既有中文 log 在重導向輸出時遇到系統編碼錯誤。
