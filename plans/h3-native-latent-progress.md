@@ -39,10 +39,19 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - 新增 **13 項**實際 torch／safetensors 測試；連同時間測試共 **29 項通過**。
 - 本提交是共用底層，後續才接入 Project 圖與既有版本 UI。
 
+## Editor 原生時間整合
+
+- 新 H3 空時間軸的首次編輯採 strict；有內容的舊 workflow 需先檢視升級預覽，可整筆 undo。
+- 原生交易在進入 history 之前套用；resize preview、duration、split／cut／smart split 與 undo／redo 均接入，素材本身維持逐幀時間。
+- 加入共用回退 checkbox、39 幀 context 說明、last frame 相容性提示，保留原版面與接續方法。
+- 時間輸入支援 `10s`、上下鍵合法間距、Esc 取消；API 送入不合法 native 範圍會在媒體讀取前拒絕。
+- 前端 **237 項通過**，TypeScript 檢查與 release build 通過；Editor 序列化後端 **178 項通過、2 項略過**。
+- sampler 圖仍待下一階段串接，本階段未宣稱可執行完整 native pipeline。
+
 ## 待完成
 
 - 將 native artifacts、階段 lineage、原子保存接入執行圖與版本操作。
-- 全部時間軸編輯入口與遷移。
+- marker／prompt override 的原生 adapter、Lock 與完整 UI 回歸。
 - 原生 Context／Drift、Dual／SelfLift、嚴格政策與明確 fallback。
 - UI、音訊組裝、Lock、last frame 和回歸驗證。
 - 基礎 GPU 驗收通過後的 Masked 方法與預設方法比較。

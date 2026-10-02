@@ -93,3 +93,21 @@ export function splitH3NativeTask(segment: MultiTrackSegment, requested: number,
       content: { ...segment.content, continuity_mode: isH3Continuation(segment) ? segment.content.continuity_mode : 'context' } },
   ]
 }
+
+export function splitH3NativeAtBoundaries(segment: MultiTrackSegment, boundaries: number[], makeId: () => string): MultiTrackSegment[] {
+  const parts: MultiTrackSegment[] = []
+  let remainder = segment
+  for (const boundary of [...new Set(boundaries)].sort((a, b) => a - b)) {
+    if (boundary <= remainder.start_frame || boundary >= remainder.end_frame) continue
+    const [left, right] = splitH3NativeTask(remainder, boundary, makeId())
+    parts.push(left)
+    remainder = right
+  }
+  return [...parts, remainder]
+}
+
+/** Explicit seconds keep the existing timecode grammar unambiguous. */
+export function parseH3Seconds(value: string): number | null {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*s$/i)
+  return match && Number.isFinite(Number(match[1])) ? Number(match[1]) : null
+}

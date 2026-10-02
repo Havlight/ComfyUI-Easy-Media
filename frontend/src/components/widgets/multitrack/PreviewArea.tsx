@@ -1343,6 +1343,7 @@ export function PreviewArea({
             totalFrames={data.total_length}
             imageIndexOffset={resolutionInput.format === 'MiniMax' ? 1 : 0}
             format={resolutionInput.format}
+            nativePolicy={data.h3_native}
             onContentChange={onSelectedSegmentContentChange}
             onTrackSegmentsContentChange={onTrackSegmentsContentChange}
             onTrackSegmentsChange={onTaskTrackSegmentsChange}

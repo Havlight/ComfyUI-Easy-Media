@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCanvasScale } from '@/hooks/use-canvas-scale'
 import { useElementWidth } from '@/hooks/use-element-width'
 import { useMultiTrackHistory } from '@/hooks/use-multitrack-history'
+import { useH3NativeEditing } from '@/hooks/use-h3-native-editing'
 import { useMultiTrackResolutionInput } from '@/hooks/use-multitrack-resolution-input'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
 import { LocaleContext, translate } from '@/lib/i18n'
@@ -80,6 +81,7 @@ import { adjustMultiTrackEditorNodeHeight } from '@/lib/timeline-node-size'
 import type { MultiTrack, MultiTrackSegment, MultiTrackSegmentContent, MultiTrackSourceType, MultiTrackTaskImage, MultiTrackType, TrackData } from '@/types/multitrack'
 import { MultiTrackRuler, MULTITRACK_LEFT_GUTTER, MULTITRACK_RIGHT_RESERVE } from './multitrack/MultiTrackRuler'
 import { MultiTrackToolbar } from './multitrack/MultiTrackToolbar'
+import { H3NativeControls } from './multitrack/H3NativeControls'
 import { PreviewArea } from './multitrack/PreviewArea'
 import { SplitTaskSegmentDialog } from './multitrack/SplitTaskSegmentDialog'
 import { TrackArea } from './multitrack/TrackArea'
@@ -257,9 +259,8 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   const t = (path: string, params?: Record<string, string | number>) => translate(locale, path, params)
   const missingModelDirectoryName = missingModel?.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? ''
 
-  function commitNormalizedTrackChange(nextData: TrackData) {
-    commitTrackChange(normalizeTrackData(nextData))
-  }
+  const nativeEditing = useH3NativeEditing(committedData, resolutionInput.format, commitTrackChange)
+  const commitNormalizedTrackChange = nativeEditing.commitEdit
 
   function setSingleSelectedSegment(segmentId: string | null) {
     setSelectedSegmentId(segmentId)
@@ -819,6 +820,8 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
         content: {
           media_type: 'none' as const,
           ...getInheritedTaskSegmentContent(track.segments, startFrame, track.task_mode ?? 'default'),
+          ...(data.h3_native && track.segments.some((segment) => segment.end_frame === startFrame)
+            ? { continuity_mode: 'context' as const } : {}),
           images: images ?? [],
         },
       }
@@ -969,22 +972,24 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   }
 
   function handleSplitTaskSegment(segmentId: string, targetFrames: number) {
+    commitNormalizedTrackChange(() => {
     let splitSegmentIds: string[] = []
     const updatedTracks = data.tracks.map((track) => {
       if (track.type !== 'task' || !track.segments.some((segment) => segment.id === segmentId)) return track
-      const result = splitMultiTrackSegmentByFrames(track.segments, segmentId, targetFrames)
+      const result = splitMultiTrackSegmentByFrames(track.segments, segmentId, targetFrames, !!data.h3_native)
       if (!result) return track
       splitSegmentIds = result.splitSegmentIds
       return { ...track, segments: result.segments }
     })
-    if (splitSegmentIds.length === 0) return
-    commitNormalizedTrackChange({
+    if (splitSegmentIds.length === 0) return data
+    setSelectedSegmentIds(new Set(splitSegmentIds))
+    setSelectedSegmentId(splitSegmentIds[0] ?? null)
+    return {
       ...data,
       tracks: updatedTracks,
       total_length: calculateTotalLength(updatedTracks, data.frame_rate),
+    }
     })
-    setSelectedSegmentIds(new Set(splitSegmentIds))
-    setSelectedSegmentId(splitSegmentIds[0] ?? null)
   }
 
   function buildResizedTrackData(sourceData: TrackData, segmentId: string, edge: 'start' | 'end', nextTime: number): TrackData {
@@ -1059,12 +1064,12 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   }
 
   function handleResizeSegmentPreview(segmentId: string, edge: 'start' | 'end', nextTime: number, brakeDistanceFrames = 0) {
-    setResizePreviewData(buildResizedTrackData(
+    setResizePreviewData(nativeEditing.previewEdit(buildResizedTrackData(
       committedData,
       segmentId,
       edge,
       snappedResizeTime(segmentId, edge, nextTime, brakeDistanceFrames),
-    ))
+    )))
   }
 
   function handleResizeSegment(segmentId: string, edge: 'start' | 'end', nextTime: number, brakeDistanceFrames = 0) {
@@ -1341,10 +1346,11 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   }
 
   function handleCutSegment(segmentId: string, splitFrame: number) {
-    commitNormalizedTrackChange(splitTrackSegmentAtFrame(data, segmentId, splitFrame))
+    commitNormalizedTrackChange(() => splitTrackSegmentAtFrame(data, segmentId, splitFrame))
   }
 
   function handleCutAtCurrentTime() {
+    commitNormalizedTrackChange(() => {
     const splitFrame = snapTimeToFrame(currentTime, data.frame_rate)
     const targetSegmentIds = selectedSegmentIds.size > 0
       ? Array.from(selectedSegmentIds)
@@ -1353,7 +1359,7 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
           .filter((segment) => splitFrame > segment.start_frame && splitFrame < segment.end_frame)
           .map((segment) => segment.id)
       ))
-    if (targetSegmentIds.length === 0) return
+    if (targetSegmentIds.length === 0) return data
 
     const originalSegmentCount = data.tracks.reduce((count, track) => count + track.segments.length, 0)
     const nextData = targetSegmentIds.reduce(
@@ -1361,9 +1367,10 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
       data,
     )
     const nextSegmentCount = nextData.tracks.reduce((count, track) => count + track.segments.length, 0)
-    if (nextSegmentCount === originalSegmentCount) return
+    if (nextSegmentCount === originalSegmentCount) return data
 
-    commitNormalizedTrackChange(nextData)
+    return nextData
+    })
   }
 
   function getTrimTargetSegmentIds(trimFrame: number): string[] {
@@ -1438,6 +1445,17 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
           className="relative flex h-full w-full min-w-0 max-w-full flex-col overflow-hidden rounded text-foreground font-sans text-xs select-none"
           aria-busy={isSmartSplitting || isRecognizingSubtitles}
         >
+          {resolutionInput.format === 'MiniMax' && (
+            <H3NativeControls data={data} isNew={nativeEditing.isNewH3} migration={nativeEditing.migration}
+              onChange={commitNormalizedTrackChange} onMigrate={nativeEditing.previewMigration}
+              onApply={nativeEditing.applyMigration} onCancel={nativeEditing.cancelMigration} />
+          )}
+          {nativeEditing.error && (
+            <div role="alert" className="flex shrink-0 items-center justify-between gap-2 bg-destructive/10 px-2 py-1 text-destructive">
+              <span>{t('h3Native.editFailed')} [{nativeEditing.error.code}] {nativeEditing.error.message}</span>
+              <Button variant="ghost" size="icon" className="h-6 w-6" aria-label={t('h3Native.dismiss')} onClick={nativeEditing.dismissError}><X className="h-3 w-3" /></Button>
+            </div>
+          )}
           <PreviewArea
             data={data}
             currentTime={currentTime}

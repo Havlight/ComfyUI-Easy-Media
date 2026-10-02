@@ -788,6 +788,13 @@ def _build_tracks_info_and_media_outputs(
     tracks = data.get("tracks", [])
     if not isinstance(tracks, list):
         raise ValueError("TRACK_DATA.tracks must be a list.")
+    native_timing = None
+    if format_name == "MiniMax" and data.get("h3_native") is not None:
+        from ..utils.h3_native_timing import compile_native_plan, native_policy
+
+        native_timing = native_policy(data)
+        # Validate original integer ranges before media loading or normalization.
+        compile_native_plan({**data, "format": format_name})
 
     materialized_types = (
         {"image", "audio", "video"}
@@ -1121,6 +1128,8 @@ def _build_tracks_info_and_media_outputs(
         ] if isinstance(data.get("task_markers", []), list) else [],
         "tracks": normalized_tracks,
     }
+    if native_timing is not None:
+        tracks_info["h3_native"] = native_timing
     audio_result = (audio_out or [None]) if format_name == "MiniMax" else audio_out
     video_result = (video_out or [None]) if format_name == "MiniMax" else video_out
     if materialized_types:

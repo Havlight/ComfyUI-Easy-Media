@@ -11,6 +11,7 @@ import type {
   TrackData,
 } from '@/types/multitrack'
 import { uuid } from './uuid'
+import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
 
 export const MULTITRACK_DEFAULT_FRAME_RATE = 24
@@ -677,6 +678,7 @@ export function splitMultiTrackSegmentByFrames(
   segments: MultiTrackSegment[],
   segmentId: string,
   targetFrames: number,
+  native = false,
 ): SplitMultiTrackSegmentResult | null {
   const sorted = [...segments].sort((left, right) => left.start_frame - right.start_frame)
   const index = sorted.findIndex((segment) => segment.id === segmentId)
@@ -686,6 +688,13 @@ export function splitMultiTrackSegmentByFrames(
   const duration = segmentDuration(source)
   const safeTargetFrames = Math.round(targetFrames)
   if (duration <= 1 || safeTargetFrames < 1 || safeTargetFrames >= duration) return null
+
+  if (native && source.content.task_mode !== 'passthrough') {
+    const boundaries: number[] = []
+    for (let frame = source.start_frame + safeTargetFrames; frame < source.end_frame; frame += safeTargetFrames) boundaries.push(frame)
+    const parts = splitH3NativeAtBoundaries(source, boundaries, uuid)
+    return { segments: [...sorted.slice(0, index), ...parts, ...sorted.slice(index + 1)], splitSegmentIds: parts.map((part) => part.id) }
+  }
 
   let cursor = source.start_frame
   const splitSegments: MultiTrackSegment[] = []
