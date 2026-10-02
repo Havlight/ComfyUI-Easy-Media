@@ -23,9 +23,16 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 
 `--confcutdir` 隔離 ComfyUI 插件啟動與上層 pytest 設定，不修改或停用倉庫的 `__init__.py`。
 
+## 原生時間契約
+
+- 新增不依賴 ComfyUI 的 Python planner 與 TypeScript 編輯交易 planner；legacy schema 維持原路徑。
+- 共同 fixtures 覆蓋 Shot／continuation 長度、同距離向下取整與 split。
+- 1,000 段有理數時鐘模擬確認 audio origin 誤差不累積、來源 slice 覆蓋接縫，輸出 sample 數由累積 frame 邊界換算。
+- 新增 Python **16 項**、前端 **16 項**測試；連同前端既有測試共 **179 項通過**。release build 成功。
+- planner 尚未接入 UI 或 sampler；後續提交會沿用此契約，避免只在 UI 表面吸附。
+
 ## 待完成
 
-- 原生時間計畫、AV 時鐘與跨語言 fixtures。
 - 完整 native artifacts、來源和階段 lineage、原子版本保存。
 - 全部時間軸編輯入口與遷移。
 - 原生 Context／Drift、Dual／SelfLift、嚴格政策與明確 fallback。

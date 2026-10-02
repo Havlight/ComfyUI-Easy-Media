@@ -1,5 +1,10 @@
 export type MultiTrackType = 'task' | 'video' | 'audio' | 'subtitle'
 
+export interface H3NativePolicy {
+  version: 1
+  allow_vae_fallback: boolean
+}
+
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
 export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_swap'
@@ -116,6 +121,8 @@ export interface MultiTrack {
 }
 
 export interface TrackData {
+  /** Missing means legacy timing; fallback never disables native geometry. */
+  h3_native?: H3NativePolicy
   tracks: MultiTrack[]
   total_length: number
   frame_rate: number
@@ -140,6 +147,7 @@ export interface TracksInfoMediaItem {
 }
 
 export interface TracksInfo {
+  h3_native?: H3NativePolicy
   total_length: number
   frame_rate: number
   task_markers?: MultiTrackTaskMarker[]

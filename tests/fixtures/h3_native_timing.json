@@ -1,0 +1,17 @@
+{
+  "durations": [
+    {"frames": 240, "continuation": false, "expected": 243},
+    {"frames": 240, "continuation": true, "expected": 238},
+    {"frames": 1, "continuation": false, "expected": 39},
+    {"frames": 1, "continuation": true, "expected": 17},
+    {"frames": 192, "continuation": false, "expected": 192},
+    {"frames": 25.5, "continuation": true, "expected": 17},
+    {"frames": 10000, "continuation": false, "expected": 3592},
+    {"frames": 10000, "continuation": true, "expected": 3553}
+  ],
+  "splits": [
+    {"start": 0, "end": 243, "requested": 120, "continuation": false, "expected": 124},
+    {"start": 243, "end": 481, "requested": 363, "continuation": true, "expected": 362},
+    {"start": 0, "end": 56, "requested": 55, "continuation": false, "expected": 39}
+  ]
+}
