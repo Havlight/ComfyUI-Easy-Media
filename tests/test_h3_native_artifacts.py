@@ -20,6 +20,7 @@ for name, path in (("native_artifact_unit", ROOT), ("native_artifact_unit.utils"
 native = importlib.import_module("native_artifact_unit.utils.h3_native")
 artifacts = importlib.import_module("native_artifact_unit.utils.h3_native_artifacts")
 timing = importlib.import_module("native_artifact_unit.utils.h3_native_timing")
+sources = importlib.import_module("native_artifact_unit.utils.h3_native_sources")
 
 
 @pytest.fixture(autouse=True)
@@ -212,3 +213,83 @@ def test_task_reorder_retains_versions_by_identity(tmp_path):
     assert len(manifest["segments"]["0"]["generations"]) == 2
     assert manifest["segments"]["1"]["segment_id"] == "a"
     assert "0" in manifest["segments"]["1"]["generations"]
+
+
+def test_seed_encoder_guard_distinguishes_external_input_from_generated_rebuild():
+    class Encoder:
+        audio_sample_rate = 32000
+        def __init__(self, shape):
+            self.shape = shape
+            self.calls = 0
+        def encode(self, pixels):
+            self.calls += 1
+            return torch.ones(self.shape)
+    video_vae = Encoder((1, 24, 12, 2, 2))
+    audio_vae = Encoder((1, 32, 2, 65))
+    images = torch.zeros(39, 32, 32, 3)
+    audio = {"sample_rate": 32000, "waveform": torch.zeros(1, 2, 52000)}
+    plan = _plan(duration=243)
+    for kind in ("native_sampler", "rebuilt_generated"):
+        with pytest.raises(timing.NativePlanError, match="ENCODER_PURPOSE|VAE_FALLBACK_REQUIRED"):
+            sources.encode_native_seed(images, audio, video_vae, audio_vae, plan,
+                                       "imported_seed", {}, 32, 32, kind, False)
+    assert video_vae.calls == audio_vae.calls == 0
+    imported = sources.encode_native_seed(images, audio, video_vae, audio_vae, plan,
+                                          "imported_seed", {}, 32, 32, "imported_seed", False)
+    assert imported["h3_native"]["fallback_history"] == []
+    assert imported["h3_native"]["raw_start_frame"] == 204
+    rebuilt = sources.encode_native_seed(images, audio, video_vae, audio_vae, plan,
+                                         "single_final", {}, 32, 32, "rebuilt_generated", True)
+    assert rebuilt["h3_native"]["fallback_history"][0]["reason"] == "DELIVERED_SOURCE_REBUILD"
+    assert video_vae.calls == audio_vae.calls == 2
+    audio_vae.shape = (1, 32, 2, 64)
+    with pytest.raises(timing.NativePlanError, match="SEED_AUDIO_GRID"):
+        sources.encode_native_seed(images, audio, video_vae, audio_vae, plan,
+                                   "imported_seed", {}, 32, 32, "imported_seed", False)
+
+
+def test_rebuilt_source_depends_on_the_selected_delivered_version():
+    legacy = {"video": "video_0_0.mp4", "updated_at": 123}
+    source = native.new_native_metadata(_plan(), "single_final", {}, fallback_reasons=("DELIVERED_SOURCE_REBUILD",))
+    source["artifact_id"] = artifacts.media_version_id("a", "0", legacy)
+    child = _latent(_plan("b", 243, 238, "a"), source)
+    generation = {"native": {"high": {"metadata": child["h3_native"]}}}
+    manifest = {"segments": {
+        "0": {"segment_id": "a", "active_generation": 0, "generations": {"0": legacy}},
+        "1": {"segment_id": "b", "active_generation": 0, "generations": {"0": generation}},
+    }}
+    artifacts.refresh_native_dependencies(manifest)
+    assert not generation.get("native_stale")
+    legacy["updated_at"] = 456
+    artifacts.refresh_native_dependencies(manifest)
+    assert generation["native_stale"] is True
+
+
+def test_native_audio_lock_preserves_clock_and_overrides_context_only_in_locked_interval():
+    lock = importlib.import_module('native_artifact_unit.utils.h3_native_lock')
+    parent = _latent(_plan(duration=56))
+    child = _latent(_plan('b', 56, 17, 'a'), parent['h3_native'])
+    video, before = native._streams_from_latent(child)
+    captured = []
+    class Vae:
+        audio_sample_rate = 32000
+        def encode(self, value):
+            captured.append(value)
+            return torch.full_like(before, -7)
+    waveform = torch.arange(120000, dtype=torch.float32).reshape(1, 1, -1).expand(1, 2, -1)
+    result = lock.lock_native_audio(child, child['h3_native'], {'waveform': waveform, 'sample_rate': 32000}, Vae(), [[56, 73]])
+    after_video, after = native._streams_from_latent(result)
+    vm, am = native._noise_mask_streams(result)
+    assert torch.equal(after_video, video)
+    assert captured[0][0, 0, 0] == 22400  # inherited origin 84/120 seconds
+    assert torch.equal(after[..., :64], before[..., :64])
+    assert torch.all(after[..., 65:] == -7)
+    assert torch.all(am[..., :64] == 1) and torch.all(am[..., 65:] == 0)
+    assert torch.all(vm == 1)
+
+
+def test_native_high_final_can_switch_sampler_modes_without_rebuilding():
+    parent = _latent()
+    next_plan = _plan('b', 243, 238, 'a')
+    for stage in ('dual_high_final', 'selflift_high_final'):
+        assert native.slice_native_context(parent, next_plan, stage)['samples'].unbind()[0].shape[2] == 12

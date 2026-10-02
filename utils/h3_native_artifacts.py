@@ -122,28 +122,41 @@ def native_dependents(manifest: dict[str, Any], artifact_ids: set[str]) -> list[
     segments = list(manifest.get("segments", {}).values()) + list(manifest.get("detached_segments", {}).values())
     for segment in segments:
         for generation in segment.get("generations", {}).values():
-            if any(d.get("metadata", {}).get("parent_artifact_id") in artifact_ids
+            if any(set(native_parent_ids(d.get("metadata", {}))) & artifact_ids
                    for d in generation.get("native", {}).values()):
                 found.append(str(segment.get("segment_id", "unknown")))
     return found
 
 
+def native_parent_ids(metadata: dict[str, Any]) -> list[str]:
+    return [value for value in [metadata.get("parent_artifact_id"), *metadata.get("reference_artifact_ids", [])] if value]
+
+
+def media_version_id(segment_id: str, generation_id: str, generation: dict[str, Any]) -> str:
+    """Stable dependency on a delivered version when its conditioning is rebuilt."""
+    identity = [segment_id, str(generation_id), generation.get("video"), generation.get("audio"), generation.get("updated_at")]
+    return "media:" + hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+
+
 def refresh_native_dependencies(manifest: dict[str, Any]) -> None:
     """A version is valid only while its exact parent versions are active and valid."""
-    active = [s.get("generations", {}).get(str(s.get("active_generation")), {})
+    active = [(s.get("segment_id", ""), str(s.get("active_generation")),
+               s.get("generations", {}).get(str(s.get("active_generation")), {}))
               for s in manifest.get("segments", {}).values()]
     valid_ids: set[str] = set()
-    remaining = [g for g in active if g.get("native")]
+    remaining = [item for item in active if item[2]]
     while remaining:
-        accepted = [g for g in remaining if all(not d["metadata"].get("parent_artifact_id")
-                    or d["metadata"]["parent_artifact_id"] in valid_ids for d in g["native"].values())]
+        accepted = [item for item in remaining if all(set(native_parent_ids(d["metadata"])) <= valid_ids
+                    for d in item[2].get("native", {}).values())]
         if not accepted:
             break
-        for generation in accepted:
+        for item in accepted:
+            sid, gid, generation = item
             generation.pop("native_stale", None)
-            valid_ids.update(d["metadata"]["artifact_id"] for d in generation["native"].values())
-            remaining.remove(generation)
-    for generation in remaining:
+            valid_ids.update(d["metadata"]["artifact_id"] for d in generation.get("native", {}).values())
+            valid_ids.add(media_version_id(sid, gid, generation))
+            remaining.remove(item)
+    for _, _, generation in remaining:
         generation["native_stale"] = True
 
 
@@ -172,7 +185,8 @@ def commit_native_generation(
         manifest = read_native_manifest(directory)
         old_segments = manifest.get("segments", {})
         tasks = project_fields["task_segments"]
-        by_id = {s["segment_id"]: s for s in old_segments.values() if s.get("segment_id")}
+        detached = manifest.setdefault("detached_segments", {})
+        by_id = {**detached, **{s["segment_id"]: s for s in old_segments.values() if s.get("segment_id")}}
         segments: dict[str, Any] = {}
         for index, task in enumerate(tasks):
             sid = task["segment_id"]
@@ -181,8 +195,7 @@ def commit_native_generation(
                 # Legacy versions remain visible during a first explicit migration.
                 prior = old_segments.get(str(index), {}) if not manifest.get("h3_native") else {}
             segments[str(index)] = {**prior, "segment_id": sid}
-        detached = manifest.setdefault("detached_segments", {})
-        detached.update(by_id)
+        manifest["detached_segments"] = detached = by_id
         target = segments[str(segment_index)]
         if target["segment_id"] != meta["segment_id"]:
             raise NativePlanError("SEGMENT_ID", "The artifact does not belong at the selected timeline index.")

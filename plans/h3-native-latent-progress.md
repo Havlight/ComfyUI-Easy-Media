@@ -73,3 +73,12 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - UI、音訊組裝、Lock、last frame 和回歸驗證。
 - 基礎 GPU 驗收通過後的 Masked 方法與預設方法比較。
 - 最終 release、文件與適用 review。
+
+## 外部來源、回退与版本保護
+
+- Native passthrough 以實際 delivered 尾端 39 幀首次編碼；缺少 low stage、解析度或階段不相容時，只有已授權 fallback 才重建生成素材。損毀／checksum 不符不會被回退掩蓋。
+- 相同解析度的三種 final stage 可直接互通；低解析 clean prediction 仍獨立驗證，不當作 final 或 noisy resume。
+- 版本刪除保護涵蓋歷史與 detached 任務；選擇版本會更新後代過期狀態，與生成共用交易鎖。已移除任務復原時取回 stable ID 的版本。
+- Native Lock Audio 使用繼承的 audio clock，在 context 複製後套用來源區間；保存 lossless locked WAV 供成片使用。
+- 真實 VAE 驗證通過：raw 56 幀解碼、17 幀 delivered view、外部 39 幀 seed 對應 video 12 tokens／audio 65 ticks；接續 encode 次數 0。
+- 三個後端測試檔 **287 項通過**；release build 通過。擴充 GPU 測試的 allocator peak 包含 Windows shared-memory 行為，不能解讀為實體 VRAM 需求。

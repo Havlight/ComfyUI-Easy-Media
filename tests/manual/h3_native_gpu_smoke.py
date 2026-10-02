@@ -18,7 +18,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, help="Path to a compatible H3 diffusion model")
     parser.add_argument("--report", required=True, help="Path for the JSON result")
+    parser.add_argument("--video-vae", help="Optionally verify actual video decode and external seed encode")
+    parser.add_argument("--audio-vae", help="Required together with --video-vae")
     options = parser.parse_args()
+    if bool(options.video_vae) != bool(options.audio_vae):
+        parser.error("--video-vae and --audio-vae must be provided together")
     model_path, report_path = Path(options.model).resolve(), Path(options.report).resolve()
     sys.argv = [sys.argv[0]]  # Comfy CLI must not parse this test's arguments.
     root = Path(__file__).resolve().parents[2]
@@ -85,6 +89,29 @@ def main() -> None:
               "device": torch.cuda.get_device_name(0), "torch": torch.__version__,
               "seconds": time.monotonic() - start, "encoder_calls": len(encoder_calls), "segments": reports,
               "peak_cuda_bytes": torch.cuda.max_memory_allocated()}
+    if options.video_vae:
+        def load_vae(path: str):
+            state, metadata = comfy.utils.load_torch_file(str(Path(path).resolve()), return_metadata=True)
+            return comfy.sd.VAE(sd=state, metadata=metadata)
+        print("Checking actual output decoders and the external seed encoder boundary", flush=True)
+        video_vae, audio_vae = load_vae(options.video_vae), load_vae(options.audio_vae)
+        raw_images = video_vae.decode(streams[0])
+        if raw_images.ndim == 5:  # Match ComfyUI's VAEDecode node IMAGE adapter.
+            raw_images = raw_images.reshape(-1, *raw_images.shape[-3:])
+        raw_audio = {"waveform": audio_vae.decode(streams[1]).movedim(-1, 1), "sample_rate": audio_vae.audio_sample_rate}
+        images, audio = native.trim_native_media(parent["h3_native"], raw_images, raw_audio)
+        assert images.shape[0] == 17
+        assert audio["waveform"].shape[-1] == timing.sample_at_frame(73, 32000) - timing.sample_at_frame(56, 32000)
+        sources = importlib.import_module("native_gpu_smoke.utils.h3_native_sources")
+        seed = sources.encode_native_seed(torch.zeros(39, 256, 256, 3),
+            {"waveform": torch.zeros(1, 2, 52000), "sample_rate": 32000}, video_vae, audio_vae,
+            timing.NativeTaskPlan("external", 0, 56, "shot", None, 0, 0, 56),
+            "imported_seed", {}, 256, 256, "imported_seed", False)
+        result["vae"] = {"raw_video_frames": len(raw_images), "delivered_video_frames": len(images),
+                         "delivered_audio_samples": audio["waveform"].shape[-1],
+                         "seed_shapes": [list(t.shape) for t in native._streams_from_latent(seed)]}
+        result["seconds"] = time.monotonic() - start
+        result["peak_cuda_bytes"] = torch.cuda.max_memory_allocated()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result), flush=True)

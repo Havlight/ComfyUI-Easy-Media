@@ -113,6 +113,8 @@ class EasyMediaExtension(ComfyExtension):
             EasyH3LockedAudioSelect,
             EasyH3ProjectArtifact,
             EasyH3NativePrepare,
+            EasyH3NativeSeed,
+            EasyH3NativeAudioLock,
             EasyH3NativeResult,
             EasyH3NativeMediaView,
             EasyH3NativeArtifact,

@@ -124,3 +124,15 @@ def test_native_runtime_nodes_save_full_raw_and_load_only_legal_context(monkeypa
     assert second.values[3]["high"]["audio_origin_units"] == 84
     with pytest.raises(ValueError, match="MODEL_ADAPTER"):
         runtime.EasyH3NativePrepare.execute(empty, object(), "test", json.dumps(plans[0].as_dict()), json.dumps(recipe))
+
+
+def test_native_passthrough_uses_explicit_seed_boundary(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs()
+    inputs['tracks_info'][0]['tracks'][0]['segments'][0]['content']['task_mode'] = 'passthrough'
+    result = module.EasyMultiTrackProject.execute(**inputs)
+    types = [node['class_type'] for node in result.expand.values()]
+    assert types.count('easy h3NativeSeed') == 1
+    assert types.count('easy h3NativeArtifact') == 2
+    assert 'easy h3ProjectArtifact' not in types
+    assert 'VAEEncode' not in types

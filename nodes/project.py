@@ -87,6 +87,8 @@ def _h3_native_output(
                            filename_prefix=f"easy_media/projects/{project_name}/.staging_video_{task_index}")
         media = {"video_path": saved.out(1), "last_frame": graph.node(
             "easy h3LastFrame", id=f"tail_frame_{task_index}", images=view.out(0)).out(0)}
+    if locked_audio is not None:
+        media["locked_audio"] = delivered_audio
     return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
                       segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio,
                       **({"low_latent": result.out(1)} if low_latent is not None else {}),
@@ -1339,10 +1341,19 @@ class EasyMultiTrackProject(io.ComfyNode):
                 _first_input(kwargs.get("upscale_model"), "None"),
             )
         )
+        native_reference_reasons: list[str] = []
         if native_config is not None:
+            from ..utils.h3_native_sources import generated_reference_paths
+
+            generated_paths = generated_reference_paths(info)
+            if generated_paths:
+                if not native_config["allow_vae_fallback"]:
+                    raise NativePlanError("GENERATED_REFERENCE", "Generated project media would be encoded as a reference. Use its native context or allow VAE fallback: " + ", ".join(generated_paths))
+                native_reference_reasons.append("GENERATED_REFERENCE")
             for task_index, entry in selected_entries:
                 if h3_task_is_passthrough(entry) or is_passthrough:
-                    raise NativePlanError("IMPORT_ADAPTER", "Native passthrough needs a verified external seed adapter.", native_plans[task_index].segment_id)
+                    if native_plans[task_index].end_frame - native_plans[task_index].start_frame < 39:
+                        raise NativePlanError("SEED_SHORT", "Native passthrough requires at least 39 delivered frames.", native_plans[task_index].segment_id)
                 if previous_frame_position(entry.get("task", {}).get("content", {})) is not None and not native_config["allow_vae_fallback"]:
                     raise NativePlanError("GENERATED_IMAGE", "Previous-frame references encode generated pixels. Remove that reference or allow VAE fallback.", native_plans[task_index].segment_id)
             if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only and not native_config["allow_vae_fallback"]:
@@ -1548,6 +1559,26 @@ class EasyMultiTrackProject(io.ComfyNode):
                     project_name=safe_project_name,
                     segment_index=task_index,
                 )
+                if native_config is not None:
+                    seed_recipe = {"sampling_mode": "passthrough", "context_sampling_mode": sampling_mode,
+                                   "first_width": first_pass_width, "first_height": first_pass_height,
+                                   "target_width": target_width, "target_height": target_height,
+                                   "lowres_scale": lowres_scale, "allow_vae_fallback": native_config["allow_vae_fallback"],
+                                   "fallback_reasons": native_reference_reasons}
+                    seeded = graph.node("easy h3NativeSeed", id=f"native_seed_{task_index}",
+                                        video_path=passthrough.out(0), vae=vae, audio_vae=audio_vae,
+                                        plan_json=json.dumps(native_plans[task_index].as_dict()),
+                                        recipe_json=json.dumps(seed_recipe))
+                    previous_artifact = last_project_output = graph.node(
+                        "easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=safe_project_name,
+                        segment_index=task_index, tracks_info=output_info, latent=seeded.out(0), low_latent=seeded.out(1),
+                        video_path=passthrough.out(0), raw_audio=seeded.out(2),
+                        last_frame=graph.node("easy h3LastFrame", id=f"tail_frame_{task_index}", images=passthrough.out(1)).out(0),
+                        **({"previous": previous_artifact} if previous_artifact is not None else {})).out(0)
+                    previous_hires_context_latent = previous_low_context_latent = None
+                    segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
+                    report_segment_step(1.0)
+                    continue
                 context_latent = _h3_encode_context_media(
                     graph, passthrough.out(1), passthrough.out(2), vae, audio_vae,
                     f"passthrough_context_{task_index}",
@@ -1698,7 +1729,7 @@ class EasyMultiTrackProject(io.ComfyNode):
 
             native_state = None
             if native_config is not None:
-                fallback_reasons = []
+                fallback_reasons = list(native_reference_reasons)
                 if previous_position is not None:
                     fallback_reasons.append("GENERATED_IMAGE")
                 if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only:
@@ -1709,6 +1740,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                           "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
                           "upscale_model": selected_upscale_model, "upscale_by": upscale_by,
                           "seed": first_pass_seed, "sampling_plan": preset_name,
+                          "parent_index": task_index - 1,
+                          **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),
                           "fallback_reasons": fallback_reasons, "rho": 0.0,
                           "allow_vae_fallback": native_config["allow_vae_fallback"]}
                 prepared_native = graph.node("easy h3NativePrepare", id=f"native_prepare_{task_index}",
@@ -1716,6 +1749,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                                              project_name=safe_project_name,
                                              plan_json=json.dumps(native_plans[task_index].as_dict()), recipe_json=json.dumps(recipe),
                                              sigmas=first_pass_sigmas,
+                                             vae=vae, audio_vae=audio_vae,
                                              **({"second_sigmas": context_second_pass_sigmas if uses_context and context_second_pass_sigmas is not None else second_pass_sigmas} if run_second_pass else {}),
                                              **({"previous": previous_artifact} if previous_artifact is not None else {}))
                 initial_latent, native_state = prepared_native.out(0), prepared_native.out(3)
@@ -1763,7 +1797,7 @@ class EasyMultiTrackProject(io.ComfyNode):
             # can be shifted behind the copied source prefix. The extra 12
             # generated frames required by H3's temporal grid are removed from
             # the tail after decoding, not from the task's opening frames.
-            if has_task_locked_audio:
+            if has_task_locked_audio and native_config is None:
                 report_segment_step(0.20)
                 initial_latent = graph.node(
                     "easy minimaxH3AudioLock",
@@ -1819,6 +1853,15 @@ class EasyMultiTrackProject(io.ComfyNode):
             else:
                 report_segment_step(0.22)
 
+            native_lock_inputs = None
+            if has_task_locked_audio and native_config is not None:
+                native_lock_inputs = {"native_state": native_state, "audio": full_locked_audio,
+                                      "audio_vae": audio_vae, "intervals_json": json.dumps([
+                                          [segment["start_frame"], segment["end_frame"]]
+                                          for segment in locked_audio_track.get("segments", [])
+                                          if not segment.get("content", {}).get("muted", False)])}
+                initial_latent = graph.node("easy h3NativeAudioLock", id=f"native_audio_lock_{task_index}",
+                                            latent=initial_latent, **native_lock_inputs).out(0)
             report_segment_step(0.28)
             selflift_low_latent: Any | None = None
             if is_selflift:
@@ -2021,6 +2064,9 @@ class EasyMultiTrackProject(io.ComfyNode):
                     upscaled_latent = hires_continuity.out(0)
                     context_trim_frames = hires_continuity.out(1)
 
+                if native_lock_inputs is not None:
+                    upscaled_latent = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",
+                                                 latent=upscaled_latent, **native_lock_inputs).out(0)
                 report_segment_step(0.62)
                 second_pass_noise = graph.node(
                     "DisableNoise" if disable_2nd_noise else "RandomNoise",

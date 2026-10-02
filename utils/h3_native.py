@@ -111,7 +111,10 @@ def slice_native_context(
     meta = validate_native_latent(latent)
     if meta["segment_id"] != plan.parent_segment_id:
         raise NativePlanError("PARENT_ID", "The source task changed; regenerate the required predecessor.", plan.segment_id)
-    if meta["stage"] != expected_stage:
+    external_seed = meta["stage"] == "imported_seed" and meta["source_kind"] in {"imported_seed", "rebuilt_generated"}
+    final_stages = {"single_final", "dual_high_final", "selflift_high_final"}
+    compatible_final = meta["stage"] in final_stages and expected_stage in final_stages
+    if meta["stage"] != expected_stage and not external_seed and not compatible_final:
         raise NativePlanError("STAGE_MISMATCH", f"Need {expected_stage}, found {meta['stage']}; regenerate the predecessor in the selected mode.", plan.segment_id)
     video, audio = _streams_from_latent(latent)
     if expected_size is not None and tuple(video.shape[-2:]) != expected_size:

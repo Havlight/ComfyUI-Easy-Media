@@ -100,7 +100,8 @@ def load_previous_frame(project_name: str, index: int, resume: bool = False) -> 
     identity = video_identity(root, index - 1, version, record)
     if pinned is not None and pinned != identity:
         raise ValueError("The previous-frame source was overwritten; regenerate this segment instead of resuming")
-    path = root / f"last_frame_{index - 1}_{version}.png"
+    path = (_project_child_path(root, record["last_frame"]) if record.get("last_frame")
+            else root / f"last_frame_{index - 1}_{version}.png")
     if not path.is_file():
         video = _project_child_path(root, record["video"])
         save_tail_image(read_video_frames(video, video_frame_count(video) - 1, 1, fps=None), path)
