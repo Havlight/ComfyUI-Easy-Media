@@ -6170,6 +6170,7 @@ def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
     ]}
     result = module.MultiImagesLoader.execute(
         {"resolution": "width x height (longest)", "resize_to_pixel": 120, "resize_method": "crop"},
+        -1,
         json.dumps(image_data),
     )
 
@@ -6182,6 +6183,6 @@ def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
 def test_multi_images_loader_rejects_more_than_25_images():
     module = _load_basic_module()
     with pytest.raises(ValueError, match="at most 25"):
-        module.MultiImagesLoader.execute("width x height (auto)", {
+        module.MultiImagesLoader.execute("width x height (auto)", -1, {
             "images": [{"source_type": "input", "file_path": "x.png"}] * 26,
         })
