@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { H3NativeTimingError, reconcileH3NativeTimeline } from '@/lib/h3-native-timing'
 import { normalizeTrackData } from '@/lib/multitrack-utils'
 import type { TrackData } from '@/types/multitrack'
@@ -11,6 +11,7 @@ export function useH3NativeEditing(
 ) {
   const [error, setError] = useState<{ code: string; message: string; segmentId?: string } | null>(null)
   const [migration, setMigration] = useState<TrackData | null>(null)
+  const previousFormat = useRef(format)
   const isNewH3 = format === 'MiniMax' && !current.tracks.some((track) => track.type === 'task' && track.segments.length)
 
   function prepare(candidate: TrackData): TrackData {
@@ -25,6 +26,7 @@ export function useH3NativeEditing(
     }
     if (isNewH3 && !next.h3_native) next.h3_native = { version: 1, allow_vae_fallback: false }
     // Other model families retain their editor geometry. H3 policy stays saved for switching back.
+    if (format !== 'MiniMax' && current.h3_native) next.h3_native = current.h3_native
     return format === 'MiniMax' ? reconcileH3NativeTimeline(next) : next
   }
 
@@ -69,6 +71,18 @@ export function useH3NativeEditing(
       report(error)
     }
   }
+
+  useEffect(() => {
+    const changed = previousFormat.current !== format
+    previousFormat.current = format
+    if (!changed || format !== 'MiniMax' || !current.h3_native) return
+    try {
+      const next = reconcileH3NativeTimeline(current)
+      if (JSON.stringify(next.tracks) !== JSON.stringify(current.tracks)) setMigration(next)
+    } catch (error: unknown) {
+      report(error)
+    }
+  }, [format, current])
 
   return { commitEdit, previewEdit, error, dismissError: () => setError(null), isNewH3,
     migration, previewMigration, cancelMigration: () => setMigration(null),

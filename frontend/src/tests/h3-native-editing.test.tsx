@@ -77,3 +77,19 @@ describe('native editor transactions', () => {
     expect(result.current.data.h3_native).toEqual({ version: 1, allow_vae_fallback: false })
   })
 })
+
+it('keeps native policy inactive for other formats and reviews timing when switching back', () => {
+  const { result, rerender } = renderHook(({ format }) => {
+    const [data, setData] = useState(initialData())
+    return { data, ...useH3NativeEditing(data, format, setData) }
+  }, { initialProps: { format: 'Wan' } })
+  const edited = initialData()
+  edited.tracks[0].segments[0].end_frame = 240
+  delete edited.h3_native
+  act(() => result.current.commitEdit(edited))
+  expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
+  expect(result.current.data.h3_native?.allow_vae_fallback).toBe(false)
+  rerender({ format: 'MiniMax' })
+  expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
+  expect(result.current.migration?.tracks[0].segments[0].end_frame).toBe(243)
+})

@@ -135,13 +135,15 @@ function getTrackLayoutHeight(data: TrackData): number {
 }
 
 export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactWidgetProps<TrackData>>) {
+  const resolutionInput = useMultiTrackResolutionInput(node)
   const committedData = ensureTrackData(value)
   const committedDataKey = JSON.stringify(committedData)
   const [resizePreviewData, setResizePreviewData] = useState<TrackData | null>(null)
-  const data = resizePreviewData ?? committedData
+  const persistedData = resizePreviewData ?? committedData
+  const data = resolutionInput.format === 'MiniMax' ? persistedData : { ...persistedData, h3_native: undefined }
   const taskOverview = data.task_overview === true
   const dataRef = useRef(committedData)
-  dataRef.current = committedData
+  dataRef.current = data
   const [currentTime, setCurrentTime] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [zoom, setZoom] = useState(1)
@@ -168,7 +170,6 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   const timelineWidth = Math.max(1, useElementWidth(timelineContainerRef))
   const scaledTimelineWidth = timelineWidth * zoom
   const canvasScale = useCanvasScale(app)
-  const resolutionInput = useMultiTrackResolutionInput(node)
   // React's wheel listener can be passive; cancel native scrolling before moving the timeline.
   // useLayoutEffect attaches the non-passive listener before paint so the very first wheel
   // gesture on the timeline is intercepted rather than falling through to native scroll.
