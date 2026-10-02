@@ -15,6 +15,14 @@ export function useH3NativeEditing(
 
   function prepare(candidate: TrackData): TrackData {
     const next = normalizeTrackData(candidate)
+    if (format === 'MiniMax' && current.h3_native) {
+      for (const track of normalizeTrackData(current).tracks.filter((item) => item.locked)) {
+        const updated = next.tracks.find((item) => item.id === track.id)
+        if ((!updated || updated.locked) && JSON.stringify(track.segments) !== JSON.stringify(updated?.segments)) {
+          throw new H3NativeTimingError('TRACK_LOCKED', 'Unlock the track before editing its contents.')
+        }
+      }
+    }
     if (isNewH3 && !next.h3_native) next.h3_native = { version: 1, allow_vae_fallback: false }
     // Other model families retain their editor geometry. H3 policy stays saved for switching back.
     return format === 'MiniMax' ? reconcileH3NativeTimeline(next) : next
@@ -27,9 +35,18 @@ export function useH3NativeEditing(
 
   function commitEdit(candidate: TrackData | (() => TrackData)) {
     try {
-      const next = prepare(typeof candidate === 'function' ? candidate() : candidate)
+      const requested = typeof candidate === 'function' ? candidate() : candidate
+      const next = prepare(requested)
+      const requestedTasks = new Map(requested.tracks.flatMap((track) => track.type === 'task' ? track.segments.map((item) => [item.id, item] as const) : []))
+      const adjusted = next.tracks.flatMap((track) => track.type === 'task' ? track.segments : [])
+        .filter((item) => {
+          const before = requestedTasks.get(item.id)
+          return before && (before.start_frame !== item.start_frame || before.end_frame !== item.end_frame
+            || before.content.continuity_mode !== item.content.continuity_mode)
+        })
       setError(null)
-      commit(next)
+      if (current.h3_native && adjusted.length > 1) setMigration(next)
+      else commit(next)
     } catch (error: unknown) {
       report(error)
     }
@@ -55,5 +72,5 @@ export function useH3NativeEditing(
 
   return { commitEdit, previewEdit, error, dismissError: () => setError(null), isNewH3,
     migration, previewMigration, cancelMigration: () => setMigration(null),
-    applyMigration: () => { if (migration) commitEdit(migration); setMigration(null) } }
+    applyMigration: () => { if (migration) commit(migration); setMigration(null) } }
 }

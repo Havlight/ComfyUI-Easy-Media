@@ -64,3 +64,9 @@ describe('shared H3 native timing contract', () => {
     }
   })
 })
+
+it('aligns generation markers without moving source media or the playhead', () => {
+  const input = data([segment('a', 0, 243)])
+  input.task_markers = [{ id: 'cut', frame: 120 }]
+  expect(reconcileH3NativeTimeline(input).task_markers).toEqual([{ id: 'cut', frame: 124 }])
+})

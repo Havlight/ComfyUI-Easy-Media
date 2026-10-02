@@ -47,7 +47,7 @@ export function H3NativeControls({ data, isNew, migration, onChange, onMigrate, 
       <Dialog open={migration !== null} onOpenChange={(open) => { if (!open) onCancel() }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t('h3Native.upgrade')}</DialogTitle>
+            <DialogTitle>{t(data.h3_native ? 'h3Native.reviewTiming' : 'h3Native.upgrade')}</DialogTitle>
             <DialogDescription>{t('h3Native.migrationDescription', { count: changes.length })}</DialogDescription>
           </DialogHeader>
           <div className="max-h-64 overflow-auto text-xs tabular-nums">

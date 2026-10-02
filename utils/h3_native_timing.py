@@ -81,9 +81,7 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
         return []
     if info.get("format", "MiniMax") != "MiniMax" or float(info.get("frame_rate", 24)) != 24:
         raise NativePlanError("FORMAT", "Native H3 generation requires MiniMax at 24 fps.")
-    segments = [s for t in info.get("tracks", []) if t.get("type") == "task"
-                for s in t.get("segments", [])]
-    segments.sort(key=lambda s: (s.get("start_frame", 0), s.get("id", "")))
+    segments = native_task_segments(info)
     result: list[NativeTaskPlan] = []
     seen: set[str] = set()
     for segment in segments:
@@ -117,6 +115,66 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
                                     previous.segment_id if context and previous else None,
                                     prefix, start - prefix, duration + prefix, passthrough))
     return result
+
+
+def native_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
+    """Markers split legal tasks into stable virtual tasks, without moving media."""
+    from copy import deepcopy
+
+    tasks = sorted([s for t in info.get("tracks", []) if t.get("type") == "task"
+                    for s in t.get("segments", [])], key=lambda s: (s.get("start_frame", 0), s.get("id", "")))
+    markers = sorted(info.get("task_markers", []), key=lambda m: m.get("frame", 0))
+    result: list[dict[str, Any]] = []
+    for task in tasks:
+        current = deepcopy(task)
+        for marker in markers:
+            frame = marker.get("frame", 0)
+            if not current["start_frame"] < frame < current["end_frame"]:
+                continue
+            if current.get("content", {}).get("task_mode") == "passthrough":
+                raise NativePlanError("MARKER_IMPORT", "Split imported source tasks explicitly instead of placing a generation marker inside them.", task["id"])
+            continuation = current.get("content", {}).get("continuity_mode", "shot") != "shot"
+            cut = native_split_frame(current["start_frame"], current["end_frame"], frame, continuation)
+            if cut != frame:
+                raise NativePlanError("MARKER_GRID", f"Move this marker to frame {cut}.", task["id"])
+            result.append({**current, "end_frame": cut})
+            current = {**current, "id": f"{task['id']}:marker:{marker.get('id', frame)}", "start_frame": cut,
+                       "content": {**current.get("content", {}), "continuity_mode": current.get("content", {}).get("continuity_mode", "context") if continuation else "context"}}
+        result.append(current)
+    return result
+
+
+def reconcile_native_override(data: dict[str, Any]) -> dict[str, Any]:
+    """Prompt override changes generation tasks only; external media retain timing."""
+    from copy import deepcopy
+
+    if native_policy(data) is None:
+        return data
+    output = deepcopy(data)
+    output["task_markers"] = []
+    tasks = native_task_segments(output)
+    by_id: dict[str, dict[str, Any]] = {}
+    previous = None
+    shift = 0
+    for task in tasks:
+        content = task.setdefault("content", {})
+        mode = content.get("continuity_mode", "shot")
+        context = previous is not None and mode != "shot" and content.get("task_mode") != "passthrough"
+        start = previous["end_frame"] if context else max(previous["end_frame"] if previous else 0, task["start_frame"] + shift)
+        duration = task["end_frame"] - task["start_frame"]
+        if content.get("task_mode") != "passthrough":
+            duration = snap_duration(duration, context)
+        end = start + duration
+        shift = end - task["end_frame"]
+        task.update(start_frame=start, end_frame=end)
+        content["continuity_mode"] = mode if context else "shot"
+        previous = by_id[task["id"]] = task
+    for track in output.get("tracks", []):
+        if track.get("type") == "task":
+            track["segments"] = [by_id[s["id"]] for s in track.get("segments", [])]
+    output["total_length"] = max(output.get("total_length", 0), previous["end_frame"] if previous else 0)
+    compile_native_plan(output)
+    return output
 
 
 def audio_clock(plan: NativeTaskPlan, parent: dict[str, Any] | None = None) -> dict[str, int]:

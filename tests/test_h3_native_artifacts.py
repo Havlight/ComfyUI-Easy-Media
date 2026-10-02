@@ -293,3 +293,31 @@ def test_native_high_final_can_switch_sampler_modes_without_rebuilding():
     next_plan = _plan('b', 243, 238, 'a')
     for stage in ('dual_high_final', 'selflift_high_final'):
         assert native.slice_native_context(parent, next_plan, stage)['samples'].unbind()[0].shape[2] == 12
+
+
+def test_audio_assembly_twenty_segments_has_no_sample_drift_or_duplicate_overlap(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    assembly = importlib.import_module('native_artifact_unit.utils.h3_native_assembly')
+    segments = []
+    parent = None
+    cursor = 0
+    for index in range(20):
+        plan = _plan(str(index), cursor, 56 if index == 0 else 51, str(index - 1) if index else None)
+        metadata = native.new_native_metadata(plan, 'single_final', {}, parent)
+        path = tmp_path / f'raw-{index}.wav'
+        # Absolute sample-valued ramp catches both repeated and skipped samples.
+        origin = timing.round_ratio(metadata['audio_origin_units'] * 32000, 120)
+        wave = (np.arange(metadata['audio_ticks'] * 800, dtype=np.float32) + origin)[:, None]
+        sf.write(path, wave, 32000, subtype='FLOAT')
+        segments.append({'start_frame': cursor, 'end_frame': plan.end_frame, 'source_start_frame': 0,
+                         'native_metadata': metadata, 'raw_audio_source': str(path)})
+        cursor = plan.end_frame
+        parent = metadata
+    assembly.build_native_audio_views(segments, tmp_path)
+    samples = np.concatenate([sf.read(s['audio_source'], dtype='float32', always_2d=True)[0] for s in segments])[:, 0]
+    assert len(samples) == timing.sample_at_frame(cursor, 32000)
+    assert np.array_equal(samples, np.arange(len(samples), dtype=np.float32))
+    locked = dict(segments[0], audio_locked=True, audio_source='original.wav')
+    assembly.build_native_audio_views([locked, segments[1]], tmp_path)
+    assert locked['audio_source'] == 'original.wav'

@@ -956,7 +956,10 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                                     <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-sm border border-border', checked && 'border-primary bg-primary text-primary-foreground')}>
                                       {checked ? <Check className="size-3" /> : null}
                                     </span>
-                                    <span className="truncate">{file.file_name}</span>
+                                    <span className="min-w-0 truncate" title={file.native_stale ? t('h3Native.staleVersion') : file.fallback_history?.length ? t('h3Native.fallbackVersion') : undefined}>
+                                      {file.file_name}
+                                      {file.native_stale ? ` · ${t('h3Native.staleVersion')}` : file.fallback_history?.length ? ` · ${t('h3Native.fallbackVersion')}` : ''}
+                                    </span>
                                   </Button>
                                   <Button
                                     type="button"

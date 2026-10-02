@@ -5,6 +5,8 @@ export interface ProjectVideoFile {
   file_name: string
   media_revision?: string
   source_frame_count: number
+  native_stale?: boolean
+  fallback_history?: Array<{ reason?: string }>
   continuity_mode?: ProjectContinuityMode
 }
 

@@ -1188,6 +1188,7 @@ def test_schema_exposes_list_media_inputs_without_image_position(monkeypatch):
         "width",
         "height",
         "length",
+        "native_locked_video",
         "locked_video_timing_frames",
         "ref_image_size",
     ]

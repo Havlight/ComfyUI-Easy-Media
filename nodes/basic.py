@@ -1962,6 +1962,10 @@ class MultiTrackEditor(io.ComfyNode):
             data = build_minimax_multitrack_data_from_prompt_override(data, prompt_override)
         elif prompt_override_has_value(prompt_override):
             data = build_multitrack_data_from_prompt_override(data, prompt_override)
+        if format == "MiniMax" and prompt_override_has_value(prompt_override) and data.get("h3_native"):
+            from ..utils.h3_native_timing import reconcile_native_override
+
+            data = reconcile_native_override(data)
         materialize_media = multitrack_slot_media_types(data)
         tracks_info, images_out, audio_out, video_out = _build_tracks_info_and_media_outputs(
             data,
@@ -2128,6 +2132,11 @@ def _task_for_marker_range(tasks: list[dict], start_frame: int, end_frame: int) 
 
 
 def _multitrack_task_entries(info: dict) -> list[dict]:
+    if info.get("h3_native") is not None:
+        from ..utils.h3_native_timing import native_task_segments
+
+        return [{"task": task, "start_frame": task["start_frame"], "end_frame": task["end_frame"]}
+                for task in native_task_segments(info)]
     tasks = _multitrack_task_segments(info)
     markers = info.get("task_markers", [])
     if not isinstance(markers, list) or not markers:

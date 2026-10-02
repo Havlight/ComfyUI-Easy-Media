@@ -82,7 +82,23 @@ export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
     ? { ...track, segments: track.segments.map((segment) => replacements.get(segment.id) ?? segment) }
     : track)
   const lastFrame = Math.max(0, ...tracks.flatMap((track) => track.segments.map((segment) => segment.end_frame)))
-  return { ...candidate, tracks, total_length: Math.max(candidate.total_length, lastFrame) }
+  const markerMap = new Map((candidate.task_markers ?? []).map((marker) => [marker.id, marker]))
+  for (const task of replacements.values()) {
+    let start = task.start_frame
+    let continuation = isH3Continuation(task)
+    for (const marker of [...markerMap.values()].sort((a, b) => a.frame - b.frame)) {
+      if (marker.frame <= start || marker.frame >= task.end_frame) continue
+      if (task.content.task_mode === 'passthrough') {
+        throw new H3NativeTimingError('MARKER_IMPORT', 'Split imported source tasks explicitly.', task.id)
+      }
+      const frame = h3NativeSplitFrame(start, task.end_frame, marker.frame, continuation)
+      markerMap.set(marker.id, { ...marker, frame })
+      start = frame
+      continuation = true
+    }
+  }
+  return { ...candidate, tracks, ...(candidate.task_markers ? { task_markers: [...markerMap.values()] } : {}),
+    total_length: Math.max(candidate.total_length, lastFrame) }
 }
 
 export function splitH3NativeTask(segment: MultiTrackSegment, requested: number, rightId: string): MultiTrackSegment[] {

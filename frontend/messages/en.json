@@ -464,6 +464,9 @@
     "addLocal": "Add local file"
   },
   "h3Native": {
+    "staleVersion": "Regenerate: parent version changed",
+    "fallbackVersion": "Includes VAE fallback",
+    "reviewTiming": "Review timeline changes",
     "allowFallback": "Allow VAE fallback",
     "fallbackTooltip": "When off, generated video and audio cannot be re-encoded into the generation chain. Initial external media encoding and preview/output decoding are allowed. Native timeline alignment remains active when fallback is allowed.",
     "legacy": "Legacy timeline",

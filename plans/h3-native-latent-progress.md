@@ -82,3 +82,13 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - Native Lock Audio 使用繼承的 audio clock，在 context 複製後套用來源區間；保存 lossless locked WAV 供成片使用。
 - 真實 VAE 驗證通過：raw 56 幀解碼、17 幀 delivered view、外部 39 幀 seed 對應 video 12 tokens／audio 65 ticks；接續 encode 次數 0。
 - 三個後端測試檔 **287 項通過**；release build 通過。擴充 GPU 測試的 allocator peak 包含 Windows shared-memory 行為，不能解讀為實體 VRAM 需求。
+
+## 編輯入口、Lock 與成片
+
+- marker 依同一 split 契約吸附，後端展開為 stable ID 的 virtual tasks；prompt override 先對齊生成任務，素材時間不跟著位移。
+- 多段受連帶調整時使用既有升級預覽 dialog 檢視，再一次 undo；已鎖定軌道不能藉整筆交易繞過鎖定。
+- Lock Video 取得 raw 視窗的外部影片，包括 context 前綴；要求來源完整覆蓋且實際幀數相符，不作 uniform stretch。
+- 成片以 saved raw WAV 組裝，incoming 版本擁有正確接縫的 generated audio overlap；重排／trim／錯誤父版本不套用重疊。Lock 來源優先。
+- 20 段 sample-valued ramp 驗證精確累積樣本數、無重複或跳過；版本選單顯示過期及曾使用 fallback。
+- SelfLift low guide 改用保存的 low-stage tokens；第二 MODEL 的 Drift wrapper 獨立建立，保留 LoRA 及完整 sigma schedule。
+- 後端主回歸 **559 通過、2 略過**；新增 Lock graph 測試另外通過。前端相關 **282 項**中未變更六檔先前通過，修正 locked-track normalization 後 native timing/editing **22 項通過**。TypeScript 與 release build 通過。

@@ -1350,7 +1350,7 @@ export function TaskSegmentEditor({
       </div>
       {nativePolicy && format === 'MiniMax' && (
         <div className="shrink-0 border-t border-border px-2 py-1 text-[10px] text-muted-foreground" aria-live="polite">
-          {previousFrameImage ? t(nativePolicy.allow_vae_fallback ? 'h3Native.lastFrameFallback' : 'h3Native.lastFrameBlocked')
+          {previousFrameImage && previousFrameImage.muted !== true ? t(nativePolicy.allow_vae_fallback ? 'h3Native.lastFrameFallback' : 'h3Native.lastFrameBlocked')
             : t(mode === 'passthrough' ? 'h3Native.passthroughStatus' : isH3Continuation(segment) ? 'h3Native.contextStatus' : 'h3Native.shotStatus')}
         </div>
       )}

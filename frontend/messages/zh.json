@@ -464,6 +464,9 @@
     "addLocal": "添加本地文件"
   },
   "h3Native": {
+    "staleVersion": "需重新生成：前段版本已變更",
+    "fallbackVersion": "含 VAE 回退",
+    "reviewTiming": "檢視時間軸調整",
     "allowFallback": "允許 VAE 回退",
     "fallbackTooltip": "關閉時，生成畫面與音訊不得重編碼後回流。外部素材首次編碼、預覽與輸出解碼仍允許。開啟回退後，時間軸仍保持原生對齊。",
     "legacy": "舊版時間軸",

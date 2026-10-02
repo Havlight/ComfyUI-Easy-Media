@@ -895,8 +895,9 @@ def apply_motion_context(
         {
             "resolved_frame_index": position,
             "latent": block,
+            **({"easy_media_native_context_step": index} if context_latent and context_latent.get("h3_native_source") else {}),
         }
-        for position, block in zip(offsets, blocks)
+        for index, (position, block) in enumerate(zip(offsets, blocks))
     ]
 
     audio_keyframe: dict[str, Any] | None = None

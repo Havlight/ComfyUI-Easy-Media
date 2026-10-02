@@ -50,6 +50,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                                  io.String.Input("plan_json"), io.String.Input("recipe_json"),
                                  io.Sigmas.Input("sigmas", optional=True), io.Sigmas.Input("second_sigmas", optional=True),
                                  io.Vae.Input("vae", optional=True), io.Vae.Input("audio_vae", optional=True),
+                                 io.String.Input("previous_frame_source", optional=True),
                                  io.AnyType.Input("previous", optional=True)],
                          outputs=[io.Latent.Output("latent"), io.Latent.Output("high_context"),
                                   io.Latent.Output("low_context"), io.AnyType.Output("native_state")])
@@ -58,7 +59,7 @@ class EasyH3NativePrepare(io.ComfyNode):
     def execute(cls, latent: dict[str, Any], model: Any, project_name: str, plan_json: str,
                 recipe_json: str, second_model: Any = None, previous: Any = None,
                 sigmas: torch.Tensor | None = None, second_sigmas: torch.Tensor | None = None,
-                vae: Any = None, audio_vae: Any = None) -> io.NodeOutput:
+                vae: Any = None, audio_vae: Any = None, previous_frame_source: str | None = None) -> io.NodeOutput:
         del previous
         adapter = _native_model_adapter(model)
         if second_model is not None:
@@ -94,7 +95,8 @@ class EasyH3NativePrepare(io.ComfyNode):
             if not isinstance(generation, dict) or generation.get("native_stale"):
                 raise NativePlanError("STALE_SOURCE", "The predecessor is missing or depends on a replaced version; regenerate it.", plan.segment_id)
             descriptors = generation.get("native", {})
-            high_size = (recipe["target_height"] // 16, recipe["target_width"] // 16)
+            high_size = ((recipe["first_height"] // 16, recipe["first_width"] // 16) if recipe.get("first_pass_only")
+                         else (recipe["target_height"] // 16, recipe["target_width"] // 16))
             seed_window = None
             imported_parent = False
 
@@ -131,7 +133,9 @@ class EasyH3NativePrepare(io.ComfyNode):
             full_high = load_stage("high", high_stage, high_size)
             high_parent = validate_native_latent(full_high)
             imported_parent = high_parent["source_kind"] == "imported_seed"
-            if high_parent["end_frame"] != plan.start_frame:
+            expected_parent = recipe.get("parent_plan", {})
+            if (high_parent["end_frame"] != plan.start_frame
+                    or (expected_parent and any(high_parent[key] != expected_parent[key] for key in ("start_frame", "end_frame")))):
                 raise NativePlanError("PARENT_RANGE", "The predecessor's delivered range changed; regenerate it before continuing.", plan.segment_id)
             high_source = slice_native_context(full_high, plan, high_stage, high_size)
             if low_stage:
@@ -156,7 +160,61 @@ class EasyH3NativePrepare(io.ComfyNode):
                 if item not in high_meta["fallback_history"]:
                     high_meta["fallback_history"].append(item)
         state = {"high": high_meta, "low": low_meta}
+        if previous_frame_source:
+            identity = json.loads(previous_frame_source)
+            manifest = read_native_manifest(_project_directory(project_name))
+            segment = manifest.get("segments", {}).get(str(identity["segment_index"]), {})
+            record = segment.get("generations", {}).get(str(identity["generation"]), {})
+            if record.get("video") != identity["video"]:
+                raise NativePlanError("REFERENCE_VERSION", "The previous-frame version changed during preparation.")
+            dependency = media_version_id(segment.get("segment_id", recipe["previous_segment_id"]), identity["generation"], record)
+            for metadata in (high_meta, low_meta):
+                if metadata is not None:
+                    metadata.setdefault("reference_artifact_ids", []).append(dependency)
+                    metadata["previous_frame_source"] = identity
+                    for ancestor in record.get("fallback_history", []):
+                        if ancestor not in metadata["fallback_history"]:
+                            metadata["fallback_history"].append(ancestor)
         return io.NodeOutput(prepare_native_canvas(latent, high_meta), high_source, low_source, state)
+
+
+class EasyH3NativeDriftModel(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativeDriftModel", display_name="H3 Native Drift Stage", category="EasyUse/H3/dev",
+                         is_dev_only=True, inputs=[io.Model.Input("model"), io.Latent.Input("latent"), io.Sigmas.Input("sigmas")],
+                         outputs=[io.Model.Output("model")])
+
+    @classmethod
+    def execute(cls, model: Any, latent: dict[str, Any], sigmas: torch.Tensor) -> io.NodeOutput:
+        from ..modules.motion_context.drift_control_av import install_drift_control_av_model
+
+        return io.NodeOutput(install_drift_control_av_model(model, latent, sigmas, prefix_steps=12))
+
+
+class EasyH3NativeLockedVideoInfo(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativeLockedVideoInfo", display_name="H3 Native Locked Video Window",
+                         category="EasyUse/H3/dev", is_dev_only=True,
+                         inputs=[TYPE_TRACKS_INFO.Input("tracks_info"), io.String.Input("plan_json"), io.String.Input("track_id")],
+                         outputs=[TYPE_TRACKS_INFO.Output("tracks_info")])
+
+    @classmethod
+    def execute(cls, tracks_info: dict[str, Any], plan_json: str, track_id: str) -> io.NodeOutput:
+        plan = NativeTaskPlan(**json.loads(plan_json))
+        source = next((track for track in tracks_info.get("tracks", []) if track.get("id") == track_id), None)
+        if source is None:
+            raise NativePlanError("LOCK_VIDEO_SOURCE", "The locked video track was removed before execution.")
+        # Reuse TaskOutput's external media resolver with an explicit raw window.
+        # A terminal sentinel bounds its existing next-task crop logic.
+        info = {**tracks_info, "tracks": [{"type": "task", "segments": [
+            {"id": "native-reference-window", "start_frame": plan.raw_start_frame, "end_frame": plan.end_frame, "content": {}},
+            {"id": "native-reference-end", "start_frame": plan.end_frame, "end_frame": plan.end_frame + 1, "content": {}},
+        ]}, source], "task_markers": []}
+        for key in ("h3_native", "_preloaded_media", "_easy_media_runtime_cache"):
+            info.pop(key, None)
+        return io.NodeOutput(info)
 
 
 class EasyH3NativeAudioLock(io.ComfyNode):
@@ -273,6 +331,7 @@ class EasyH3NativeArtifact(io.ComfyNode):
                   "sampling_pass": "first" if recipe.get("first_pass_only") else "second" if recipe["sampling_mode"] == "dual" else "single",
                   "audio_locked": compact[segment_index].get("audio_locked", False),
                   "raw_audio_sample_rate": raw_audio["sample_rate"], "native_recipe": recipe,
+                  **({"previous_frame_source": meta["previous_frame_source"]} if meta.get("previous_frame_source") else {}),
                   "fallback_history": meta["fallback_history"]}
         with tempfile.TemporaryDirectory(prefix=".native-media-", dir=directory) as work:
             media: dict[str, Path] = {}

@@ -136,3 +136,35 @@ def test_native_passthrough_uses_explicit_seed_boundary(monkeypatch):
     assert types.count('easy h3NativeArtifact') == 2
     assert 'easy h3ProjectArtifact' not in types
     assert 'VAEEncode' not in types
+
+
+def test_native_audio_lock_is_applied_after_context_in_both_dual_passes(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs('dual', upscale_by=[1.0])
+    inputs['tracks_info'][0]['tracks'].append({'id': 'audio', 'type': 'audio', 'audio_locked': True,
+        'segments': [{'start_frame': 0, 'end_frame': 481, 'content': {'media_type': 'audio'}}]})
+    result = module.EasyMultiTrackProject.execute(**inputs)
+    nodes = result.expand
+    locks = [node for node in nodes.values() if node['class_type'] == 'easy h3NativeAudioLock']
+    assert len(locks) == 4
+    assert all(node['class_type'] != 'easy minimaxH3AudioLock' for node in nodes.values())
+    sources = [nodes[lock['inputs']['latent'][0]]['class_type'] for lock in locks]
+    assert 'easy MiniMaxH3MotionContextHard' in sources
+    assert 'easy MiniMaxH3HiResContinuity' in sources
+
+
+def test_native_locked_video_requests_raw_source_window_and_never_stretches(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs()
+    for task in inputs['tracks_info'][0]['tracks'][0]['segments']:
+        task['content']['task_mode'] = 'ref'
+    track = {'id': 'video', 'type': 'video', 'audio_locked': True,
+             'segments': [{'start_frame': 0, 'end_frame': 481, 'content': {'media_type': 'video'}}]}
+    inputs['tracks_info'][0]['tracks'].append(track)
+    result = module.EasyMultiTrackProject.execute(**inputs)
+    windows = [node for node in result.expand.values() if node['class_type'] == 'easy h3NativeLockedVideoInfo']
+    assert len(windows) == 2
+    assert json.loads(windows[1]['inputs']['plan_json'])['raw_start_frame'] == 204
+    track['segments'][0]['end_frame'] = 470
+    with pytest.raises(ValueError, match='LOCK_VIDEO_RANGE'):
+        module.EasyMultiTrackProject.execute(**inputs)

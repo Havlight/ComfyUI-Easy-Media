@@ -87,3 +87,14 @@ def test_short_split_and_invalid_audio_source_are_rejected():
 def test_legacy_has_no_native_guarantee():
     assert timing.native_policy({}) is None
     assert timing.compile_native_plan({"tracks": []}) == []
+
+
+def test_native_markers_expand_legal_stable_tasks():
+    info = {'h3_native': {'version': 1, 'allow_vae_fallback': False}, 'frame_rate': 24,
+            'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243, 'content': {}}]}],
+            'task_markers': [{'id': 'cut', 'frame': 124}]}
+    plans = timing.compile_native_plan(info)
+    assert [(p.segment_id, p.raw_frames) for p in plans] == [('a', 124), ('a:marker:cut', 158)]
+    info['task_markers'][0]['frame'] = 120
+    with pytest.raises(ValueError, match='MARKER_GRID'):
+        timing.compile_native_plan(info)

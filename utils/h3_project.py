@@ -296,7 +296,12 @@ def _task_for_range(
 
 
 def h3_task_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
-    tasks = h3_task_segments(info)
+    if info.get("h3_native") is not None:
+        from .h3_native_timing import native_task_segments
+
+        tasks = native_task_segments(info)
+    else:
+        tasks = h3_task_segments(info)
     markers = info.get("task_markers", [])
     if info.get("h3_native") is not None or not isinstance(markers, list) or not markers:
         return [
@@ -1357,6 +1362,9 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             "start_frame": cursor,
             "end_frame": cursor + duration,
             "source_start_frame": source_start,
+            **({"native_metadata": selected_file["native_metadata"],
+                "raw_audio_source": str(output_dir / selected_file["raw_audio_path"])}
+               if selected_file.get("native_metadata") and selected_file.get("raw_audio_path") else {}),
             "audio_locked": source_clip.get("audio_locked") is True,
             **(
                 {
@@ -1379,13 +1387,13 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
     if width <= 0 or height <= 0:
         raise ValueError("H3 project width and height must be greater than zero")
 
-    temporary = merge_video_track_with_ffmpeg(
-        timeline_segments,
-        cursor,
-        frame_rate,
-        width,
-        height,
-    )
+    from .h3_native_assembly import build_native_audio_views
+
+    with tempfile.TemporaryDirectory(prefix="h3-native-audio-", dir=folder_paths.get_temp_directory()) as work:
+        build_native_audio_views(timeline_segments, Path(work))
+        temporary = merge_video_track_with_ffmpeg(
+            timeline_segments, cursor, frame_rate, width, height,
+        )
     if temporary is None:
         raise RuntimeError("FFmpeg could not compose the H3 project video")
     return Path(temporary)
