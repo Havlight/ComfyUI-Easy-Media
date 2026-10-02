@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 from copy import deepcopy
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +87,7 @@ def validate_h3_project_outputs(
             raise ValueError(H3_AUDIO_ONLY_COMBINE_ERROR)
 
 
-def save_h3_audio(audio: dict[str, Any] | None, path: Path) -> None:
+def save_h3_audio(audio: dict[str, Any] | None, path: Path, *, subtype: str = "PCM_24") -> None:
     """Atomically save a single H3 segment as a lossless PCM WAV."""
     import soundfile as sf
 
@@ -109,7 +110,7 @@ def save_h3_audio(audio: dict[str, Any] | None, path: Path) -> None:
     try:
         sf.write(
             str(temporary), waveform[0].detach().cpu().float().numpy().T,
-            sample_rate, format="WAV", subtype="PCM_24",
+            sample_rate, format="WAV", subtype=subtype,
         )
         temporary.replace(path)
     except (OSError, RuntimeError, TypeError, ValueError) as error:
@@ -263,7 +264,7 @@ def _h3_continuity_mode(value: Any) -> str:
         return "context"
     if normalized == "context_swap":
         return "context_drift"
-    return normalized if normalized in {"context", "context_drift"} else "shot"
+    return normalized if normalized in {"context", "context_drift", "context_masked"} else "shot"
 
 
 def h3_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
@@ -295,9 +296,14 @@ def _task_for_range(
 
 
 def h3_task_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
-    tasks = h3_task_segments(info)
+    if info.get("h3_native") is not None:
+        from .h3_native_timing import native_task_segments
+
+        tasks = native_task_segments(info)
+    else:
+        tasks = h3_task_segments(info)
     markers = info.get("task_markers", [])
-    if not isinstance(markers, list) or not markers:
+    if info.get("h3_native") is not None or not isinstance(markers, list) or not markers:
         return [
             {
                 "task": task,
@@ -944,6 +950,19 @@ def _project_child_path(project_dir: Path, filename: Any) -> Path:
 
 
 def delete_h3_project_video(project_name: str, segment_index: int, file_path: str) -> dict[str, Any]:
+    """Serialize native version edits with generation publication."""
+    directory = h3_project_directory(project_name)
+    _, manifest = _load_h3_manifest(project_name)
+    guard = nullcontext()
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import native_project_transaction
+
+        guard = native_project_transaction(directory)
+    with guard:
+        return _delete_h3_project_video(project_name, segment_index, file_path)
+
+
+def _delete_h3_project_video(project_name: str, segment_index: int, file_path: str) -> dict[str, Any]:
     """Delete one recorded generation and atomically persist the remaining project."""
     project_dir = h3_project_directory(project_name)
     if project_dir.is_symlink() or (project_dir / "project.json").is_symlink():
@@ -965,7 +984,15 @@ def delete_h3_project_video(project_name: str, segment_index: int, file_path: st
     if not generation_keys:
         raise ValueError("Video does not belong to this project segment")
 
-    artifact_keys = ("video", "locked_audio", "latent", "context_latent", "context_latent_low", "last_frame")
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import media_version_id, native_dependents
+
+        identities = {media_version_id(segment["segment_id"], key, generations[key]) for key in generation_keys}
+        identities.update(d["metadata"]["artifact_id"] for key in generation_keys for d in generations[key].get("native", {}).values())
+        dependents = native_dependents(manifest, identities)
+        if dependents:
+            raise ValueError("This version supplies continuation data to: " + ", ".join(sorted(set(dependents))) + ". Remove the dependent versions first.")
+    artifact_keys = ("video", "audio", "raw_audio", "locked_audio", "latent", "context_latent", "context_latent_low", "last_frame")
     artifacts: set[Path] = set()
     for key in generation_keys:
         for field in artifact_keys:
@@ -978,7 +1005,7 @@ def delete_h3_project_video(project_name: str, segment_index: int, file_path: st
                     continue
         del generations[key]
     # Keep artifacts still referenced by another generation or segment.
-    for other_segment in segments.values():
+    for other_segment in [*segments.values(), *manifest.get("detached_segments", {}).values()]:
         for generation in other_segment.get("generations", {}).values():
             for field in artifact_keys:
                 if generation.get(field):
@@ -999,6 +1026,10 @@ def delete_h3_project_video(project_name: str, segment_index: int, file_path: st
     segment["updated_at"] = now
     manifest["updated_at"] = now
     manifest.pop("last_render", None)
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import refresh_native_dependencies
+
+        refresh_native_dependencies(manifest)
     project_data = _h3_project_data(project_name, project_dir, manifest)
 
     # Stage files so a failed manifest write can restore the original project.
@@ -1025,6 +1056,23 @@ def delete_h3_project_video(project_name: str, segment_index: int, file_path: st
 
 
 def select_h3_project_video(
+    project_name: str,
+    segment_index: int,
+    file_path: str,
+) -> dict[str, Any]:
+    """Serialize native version edits with generation publication."""
+    directory = h3_project_directory(project_name)
+    _, manifest = _load_h3_manifest(project_name)
+    guard = nullcontext()
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import native_project_transaction
+
+        guard = native_project_transaction(directory)
+    with guard:
+        return _select_h3_project_video(project_name, segment_index, file_path)
+
+
+def _select_h3_project_video(
     project_name: str,
     segment_index: int,
     file_path: str,
@@ -1066,6 +1114,11 @@ def select_h3_project_video(
     segment["continuity_mode"] = _h3_continuity_mode(
         generation.get("continuity_mode", segment.get("continuity_mode", "shot"))
     )
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import refresh_native_dependencies
+
+        refresh_native_dependencies(manifest)
+    manifest["updated_at"] = time.time()
     temporary = project_dir / ".project.json.tmp"
     try:
         temporary.write_text(
@@ -1144,6 +1197,12 @@ def _h3_project_data(
                 "file_name": candidate_source.name,
                 "media_revision": str(candidate_source.stat().st_mtime_ns),
                 "source_frame_count": candidate_frame_count,
+                **({"native_stale": bool(candidate.get("native_stale")),
+                    "native_stage": candidate["native"]["high"]["metadata"]["stage"],
+                    "fallback_history": candidate.get("fallback_history", []),
+                    "native_metadata": candidate["native"]["high"]["metadata"],
+                    "raw_audio_path": _project_child_path(project_dir, candidate["raw_audio"]).relative_to(output_dir).as_posix()}
+                   if candidate.get("native") and candidate.get("raw_audio") else {}),
                 "continuity_mode": _h3_continuity_mode(candidate.get(
                     "continuity_mode",
                     segment.get("continuity_mode", "shot"),
@@ -1172,7 +1231,7 @@ def _h3_project_data(
             continue
         task_segment = task_segments_by_index.get(index, {})
         clips.append({
-            "id": f"segment-{index}",
+            "id": segment.get("segment_id", f"segment-{index}"),
             "index": index,
             "file_path": active_file["file_path"],
             "file_name": active_file["file_name"],
@@ -1262,7 +1321,7 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             # Reconcile that stale snapshot with the current manifest instead of
             # failing an otherwise valid render containing newly generated clips.
             continue
-        requested_path = str(clip.get("file_path", ""))
+        requested_path = str(clip.get("file_path", "")).replace("\\", "/")
         snapshot_updated_at = clip.get("updated_at")
         if snapshot_updated_at is None and isinstance(requested, dict):
             snapshot_updated_at = requested.get("updated_at")
@@ -1307,6 +1366,9 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             "start_frame": cursor,
             "end_frame": cursor + duration,
             "source_start_frame": source_start,
+            **({"native_metadata": selected_file["native_metadata"],
+                "raw_audio_source": str(output_dir / selected_file["raw_audio_path"])}
+               if selected_file.get("native_metadata") and selected_file.get("raw_audio_path") else {}),
             "audio_locked": source_clip.get("audio_locked") is True,
             **(
                 {
@@ -1329,13 +1391,13 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
     if width <= 0 or height <= 0:
         raise ValueError("H3 project width and height must be greater than zero")
 
-    temporary = merge_video_track_with_ffmpeg(
-        timeline_segments,
-        cursor,
-        frame_rate,
-        width,
-        height,
-    )
+    from .h3_native_assembly import build_native_audio_views
+
+    with tempfile.TemporaryDirectory(prefix="h3-native-audio-", dir=folder_paths.get_temp_directory()) as work:
+        build_native_audio_views(timeline_segments, Path(work))
+        temporary = merge_video_track_with_ffmpeg(
+            timeline_segments, cursor, frame_rate, width, height,
+        )
     if temporary is None:
         raise RuntimeError("FFmpeg could not compose the H3 project video")
     return Path(temporary)

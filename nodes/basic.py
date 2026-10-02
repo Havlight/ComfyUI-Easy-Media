@@ -788,6 +788,13 @@ def _build_tracks_info_and_media_outputs(
     tracks = data.get("tracks", [])
     if not isinstance(tracks, list):
         raise ValueError("TRACK_DATA.tracks must be a list.")
+    native_timing = None
+    if format_name == "MiniMax" and data.get("h3_native") is not None:
+        from ..utils.h3_native_timing import compile_native_plan, native_policy
+
+        native_timing = native_policy(data)
+        # Validate original integer ranges before media loading or normalization.
+        compile_native_plan({**data, "format": format_name})
 
     materialized_types = (
         {"image", "audio", "video"}
@@ -1121,6 +1128,8 @@ def _build_tracks_info_and_media_outputs(
         ] if isinstance(data.get("task_markers", []), list) else [],
         "tracks": normalized_tracks,
     }
+    if native_timing is not None:
+        tracks_info["h3_native"] = native_timing
     audio_result = (audio_out or [None]) if format_name == "MiniMax" else audio_out
     video_result = (video_out or [None]) if format_name == "MiniMax" else video_out
     if materialized_types:
@@ -1953,6 +1962,10 @@ class MultiTrackEditor(io.ComfyNode):
             data = build_minimax_multitrack_data_from_prompt_override(data, prompt_override)
         elif prompt_override_has_value(prompt_override):
             data = build_multitrack_data_from_prompt_override(data, prompt_override)
+        if format == "MiniMax" and prompt_override_has_value(prompt_override) and data.get("h3_native"):
+            from ..utils.h3_native_timing import reconcile_native_override
+
+            data = reconcile_native_override(data)
         materialize_media = multitrack_slot_media_types(data)
         tracks_info, images_out, audio_out, video_out = _build_tracks_info_and_media_outputs(
             data,
@@ -2119,6 +2132,11 @@ def _task_for_marker_range(tasks: list[dict], start_frame: int, end_frame: int) 
 
 
 def _multitrack_task_entries(info: dict) -> list[dict]:
+    if info.get("h3_native") is not None:
+        from ..utils.h3_native_timing import native_task_segments
+
+        return [{"task": task, "start_frame": task["start_frame"], "end_frame": task["end_frame"]}
+                for task in native_task_segments(info)]
     tasks = _multitrack_task_segments(info)
     markers = info.get("task_markers", [])
     if not isinstance(markers, list) or not markers:

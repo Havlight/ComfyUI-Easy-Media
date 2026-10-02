@@ -757,6 +757,7 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
                     step=32,
                 ),
                 io.Int.Input("length", default=124, min=5, max=3600, step=17),
+                io.Boolean.Input("native_locked_video", default=False, optional=True, advanced=True),
                 io.Int.Input(
                     "locked_video_timing_frames",
                     default=0,
@@ -805,6 +806,7 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
         audio_vae: Any | None = None,
         ref_image_size: str = "match",
         locked_video_timing_frames: int = 0,
+        native_locked_video: bool = False,
         **reference_inputs: Any,
     ) -> io.NodeOutput:
         grouped_inputs: dict[str, dict[str, Any]] = {
@@ -832,6 +834,10 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
 
         target_frame_count = _align_frame_count(max(5, int(length)))
         locked_timing_frames = int(locked_video_timing_frames)
+        if native_locked_video:
+            for frames in grouped_inputs["ref_videos"].values():
+                if frames.shape[0] != locked_timing_frames or locked_timing_frames % 17 != 5:
+                    raise ValueError("H3 LOCK_VIDEO_RANGE: external video must cover the exact native raw window; it cannot be stretched or padded.")
         grouped_inputs["ref_videos"] = {
             name: (
                 _fit_reference_video_frames(frames, locked_timing_frames)
@@ -2732,6 +2738,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
                     step=17,
                     tooltip="Frame count at 24 fps, snapped up to the model's 17k+5 grid (124 = ~5s; trained range is ~124-362, longer is untested)",
                 ),
+                io.Boolean.Input("native_locked_video", default=False, optional=True, advanced=True),
                 io.Int.Input(
                     "locked_video_timing_frames",
                     default=0,
@@ -2772,6 +2779,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
         height: list[int] | int = 768,
         length: list[int] | int = 124,
         locked_video_timing_frames: list[int] | int = 0,
+        native_locked_video: list[bool] | bool = False,
         ref_image_size: list[str] | str = "match",
     ) -> io.NodeOutput:
         selected_mode = str(_first_input(mode, "reference"))
@@ -2862,6 +2870,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
             }
             if locked_timing_frames > 0:
                 node_inputs["locked_video_timing_frames"] = locked_timing_frames
+                node_inputs["native_locked_video"] = bool(_first_input(native_locked_video, False))
             for index, image in enumerate(expanded_images):
                 node_inputs[f"ref_image_{index}"] = image
                 advance_progress()

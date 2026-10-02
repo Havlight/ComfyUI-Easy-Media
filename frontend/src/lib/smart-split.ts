@@ -1,4 +1,5 @@
 import { uuid } from '@/lib/uuid'
+import { splitH3NativeAtBoundaries } from '@/lib/h3-native-timing'
 import { throwIfMissingModelResponse } from '@/lib/model-download'
 import type { MultiTrackSegment, TrackData } from '@/types/multitrack'
 
@@ -54,7 +55,9 @@ function splitSegment(
   segment: MultiTrackSegment,
   boundaries: number[],
   originStartFrame?: number,
+  native = false,
 ): MultiTrackSegment[] {
+  if (native && segment.content.task_mode !== 'passthrough') return splitH3NativeAtBoundaries(segment, boundaries, uuid)
   const points = [segment.start_frame, ...boundaries, segment.end_frame]
   return points.slice(0, -1).map((startFrame, index) => ({
     ...segment,
@@ -115,7 +118,7 @@ export function applySmartSplit(
         && segment.start_frame === source.start_frame
         && segment.end_frame === source.end_frame
       if (isSource) return splitSegment(segment, boundaries, sourceOriginStart)
-      return isLinkedTask ? splitSegment(segment, boundaries) : [segment]
+      return isLinkedTask ? splitSegment(segment, boundaries, undefined, !!data.h3_native) : [segment]
     }).sort((left, right) => left.start_frame - right.start_frame),
   }))
   return { ...data, tracks }
@@ -139,7 +142,7 @@ export function applySmartSplitToMatchingTasks(
         track.type === 'task'
           && segment.start_frame === source.start_frame
           && segment.end_frame === source.end_frame
-          ? splitSegment(segment, boundaries)
+          ? splitSegment(segment, boundaries, undefined, !!data.h3_native)
           : [segment]
       )).sort((left, right) => left.start_frame - right.start_frame),
     })),
@@ -162,7 +165,7 @@ export function splitTrackSegmentAtFrame(
     tracks: data.tracks.map((track) => ({
       ...track,
       segments: track.segments.flatMap((segment) => (
-        segment.id === segmentId ? splitSegment(segment, [frame], originStart) : [segment]
+        segment.id === segmentId ? splitSegment(segment, [frame], originStart, !!data.h3_native && track.type === 'task') : [segment]
       )).sort((left, right) => left.start_frame - right.start_frame),
     })),
   }

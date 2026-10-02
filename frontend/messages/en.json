@@ -67,6 +67,7 @@
     "selectClipFilesHint": "Select one video for the project, or two to compare.",
     "selectClipFileFailed": "Video selection could not be saved",
     "continuityShot": "Shot",
+    "continuityContextMasked": "Context Masked",
     "continuityContext": "Context",
     "continuityContextDrift": "Drift Context",
     "emptyPreview": "Refresh the project to preview its generated clips.",
@@ -308,6 +309,7 @@
     "timelineZoom": "Timeline zoom"
   },
   "multitrackContinuityModes": {
+    "context_masked": "Context Masked",
     "shot": "Shot",
     "context": "Context",
     "context_drift": "Drift Control Context"
@@ -462,5 +464,27 @@
     "slotAudio": "Audio {n}",
     "slotVideo": "Video {n}",
     "addLocal": "Add local file"
+  },
+  "h3Native": {
+    "locateTask": "Select task",
+    "staleVersion": "Regenerate: parent version changed",
+    "fallbackVersion": "Includes VAE fallback",
+    "reviewTiming": "Review timeline changes",
+    "allowFallback": "Allow VAE fallback",
+    "fallbackTooltip": "When off, generated video and audio cannot be re-encoded into the generation chain. Initial external media encoding and preview/output decoding are allowed. Native timeline alignment remains active when fallback is allowed.",
+    "legacy": "Legacy timeline",
+    "upgrade": "Upgrade native timing",
+    "migrationDescription": "Review changes to {count} tasks. Source media stay in place. Apply as one undoable edit; saved versions are retained and may need regeneration.",
+    "frames": "frames",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "dismiss": "Dismiss",
+    "editFailed": "The timeline edit could not be applied.",
+    "durationDetail": "{frames} frames · {seconds} seconds. Enter seconds with s; arrow keys step through legal durations.",
+    "lastFrameFallback": "VAE fallback required · Previous-frame image reference re-encodes generated pixels.",
+    "lastFrameBlocked": "Native execution blocked · Remove the previous-frame reference or allow VAE fallback.",
+    "passthroughStatus": "Source passthrough · Provenance and downstream context will be checked at execution.",
+    "contextStatus": "Native timing aligned · 39-frame / 1.625 s context; no added output length. Source and model compatibility checked at execution.",
+    "shotStatus": "Native timing aligned · No context overlap; model compatibility checked at execution."
   }
 }

@@ -14,6 +14,7 @@ from comfy.utils import ProgressBar
 from ..utils import instrument_node_timing, log_node_info
 from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_preset
 from ..utils.h3_previous_frame import previous_frame_position
+from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy
 from ..utils.h3_project import (
     clear_h3_project_segments_from,
     compose_h3_project_video,
@@ -54,8 +55,44 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap", "context_masked"}
 H3_CONTEXT_SOURCE_FRAMES = 22
+
+
+def _h3_native_output(
+    graph: GraphBuilder, task_index: int, project_name: str, info: dict[str, Any],
+    final_latent: Any, low_latent: Any, state: Any, vae: Any, audio_vae: Any,
+    locked_audio: Any, audio_only: bool, previous: Any,
+) -> Any:
+    """Decode a delivered view while publishing the untouched raw sampler source."""
+    result = graph.node("easy h3NativeResult", id=f"native_result_{task_index}",
+                        latent=final_latent, native_state=state,
+                        **({"low_latent": low_latent} if low_latent is not None else {}))
+    decoded_audio = graph.node("VAEDecodeAudio", id=f"decode_audio_{task_index}",
+                               samples=result.out(0), vae=audio_vae).out(0)
+    images = None if audio_only else graph.node("VAEDecode", id=f"decode_video_{task_index}",
+                                                 samples=result.out(0), vae=vae).out(0)
+    view = graph.node("easy h3NativeMediaView", id=f"native_view_{task_index}",
+                      native_state=result.out(2), audio=decoded_audio,
+                      **({"images": images} if images is not None else {}))
+    delivered_audio = view.out(1)
+    if locked_audio is not None:
+        delivered_audio = graph.node("easy h3LockedAudioSelect", id=f"locked_audio_select_{task_index}",
+                                     generated_audio=delivered_audio, locked_audio=locked_audio).out(0)
+    media = {"audio": delivered_audio}
+    if not audio_only:
+        saved = graph.node("easy saveVideo", id=f"save_video_{task_index}", input_mode="images+audio",
+                           **{"input_mode.images": view.out(0), "input_mode.audio": delivered_audio,
+                              "input_mode.fps": 24.0, "output_mode": "hide&save"},
+                           filename_prefix=f"easy_media/projects/{project_name}/.staging_video_{task_index}")
+        media = {"video_path": saved.out(1), "last_frame": graph.node(
+            "easy h3LastFrame", id=f"tail_frame_{task_index}", images=view.out(0)).out(0)}
+    if locked_audio is not None:
+        media["locked_audio"] = locked_audio
+    return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
+                      segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio,
+                      **({"low_latent": result.out(1)} if low_latent is not None else {}),
+                      **({"previous": previous} if previous is not None else {}), **media).out(0)
 
 
 def _first_input(value: Any, default: Any = None) -> Any:
@@ -286,7 +323,7 @@ def _timed_h3_project_graph(
             and node["class_type"] not in persistent_media_types
         ):
             node.setdefault("_meta", {})[SEGMENT_META] = segment_nodes[node_id]
-            if node["class_type"] == "easy h3ProjectArtifact":
+            if node["class_type"] in {"easy h3ProjectArtifact", "easy h3NativeArtifact"}:
                 node["_meta"][BOUNDARY_META] = True
         if node["class_type"] not in timed_types:
             continue
@@ -849,6 +886,11 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                         graph, preset_name=str(sampling_plan), is_turbo=second_is_turbo,
                         has_custom_second_pass_sampling=custom_second,
                     )
+                # The expanded graph always has a link to this output. A link
+                # cannot be tested for the None it will contain at runtime.
+                # Preserve the selected schedule when no context preset applies.
+                if context_sigmas is None:
+                    context_sigmas = second_sigmas
             return io.NodeOutput(
                 static_data, None, model, second_model, clip, vae, audio_vae,
                 preview_vae, locked, first_sampler, first_sigmas, second_sampler,
@@ -988,7 +1030,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                     tooltip=(
                         "Run and save only the first selected segment's "
                         "first pass. Turn this off on the next run to "
-                        "resume directly from that checkpoint at pass two."
+                        "resume directly from that checkpoint at pass two on legacy timelines. "
+                        "Native timelines regenerate both passes to verify their stage lineage."
                     ),
                 ),
                 io.Boolean.Input("disable_2nd_noise", default=False, tooltip="Disable noise in second-pass for dual-sampling"),
@@ -1081,6 +1124,8 @@ class EasyMultiTrackProject(io.ComfyNode):
         if not uses_linked_prepare:
             _require_minimax_h3_model(model)
         info = parse_tracks_info(kwargs.get("tracks_info"))
+        native_config = native_policy(info)
+        native_plans = compile_native_plan(info)
         hidden_inputs = getattr(cls, "hidden", None)
         validate_h3_project_outputs(
             info,
@@ -1184,11 +1229,8 @@ class EasyMultiTrackProject(io.ComfyNode):
         )
         # Keep task inputs at the configured size; exports use the final size.
         output_info = {**info, "width": target_width, "height": target_height}
-        initialize_h3_project(
-            safe_project_name,
-            output_info,
-            folder_paths.get_output_directory(),
-        )
+        if native_config is None:
+            initialize_h3_project(safe_project_name, output_info, folder_paths.get_output_directory())
         all_entries = h3_task_entries(info)
         segment_start_number = int(_first_input(kwargs.get("segment_start_number"), 1))
         if segment_start_number < 1:
@@ -1223,6 +1265,8 @@ class EasyMultiTrackProject(io.ComfyNode):
         if first_selected_continuity == "context_test":
             first_selected_continuity = "context"
         if (
+            native_config is None
+            and
             first_selected_index > 0
             and first_selected_continuity in H3_CONTEXT_CONTINUITY_MODES
             and not is_passthrough
@@ -1263,7 +1307,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     "latent. Regenerate the previous segment with SelfLift first."
                 )
         resume_task_index: int | None = None
-        if run_second_pass and selected_entries:
+        if run_second_pass and selected_entries and native_config is None:
             first_selected_index = selected_entries[0][0]
             if has_h3_first_pass_checkpoint(
                 safe_project_name,
@@ -1276,7 +1320,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     f"Resuming segment {first_selected_index} from its first-pass checkpoint",
                 )
 
-        if project_save == "override" and segment_count == -1:
+        if project_save == "override" and segment_count == -1 and native_config is None:
             clear_h3_project_segments_from(
                 safe_project_name,
                 (
@@ -1303,6 +1347,33 @@ class EasyMultiTrackProject(io.ComfyNode):
                 _first_input(kwargs.get("upscale_model"), "None"),
             )
         )
+        native_reference_reasons: list[str] = []
+        if native_config is not None:
+            from ..utils.h3_native_sources import generated_reference_paths
+
+            generated_paths = generated_reference_paths(info)
+            if generated_paths:
+                if not native_config["allow_vae_fallback"]:
+                    raise NativePlanError("GENERATED_REFERENCE", "Generated project media would be encoded as a reference. Use its native context or allow VAE fallback: " + ", ".join(generated_paths))
+                native_reference_reasons.append("GENERATED_REFERENCE")
+            for task_index, entry in selected_entries:
+                if h3_task_is_passthrough(entry) or is_passthrough:
+                    if native_plans[task_index].end_frame - native_plans[task_index].start_frame < 39:
+                        raise NativePlanError("SEED_SHORT", "Native passthrough requires at least 39 delivered frames.", native_plans[task_index].segment_id)
+                locked_video = h3_locked_video_track(entry, info)
+                if locked_video is not None:
+                    if not (h3_task_is_passthrough(entry) or is_passthrough) and h3_generation_mode(h3_task_type(entry, info)) != "reference":
+                        raise NativePlanError("LOCK_VIDEO_MODE", "Locked video needs Reference or Edit mode. Select that task mode or unlock the source video.", native_plans[task_index].segment_id)
+                    coverage = native_plans[task_index].raw_start_frame
+                    for source in sorted(locked_video.get("segments", []), key=lambda item: item["start_frame"]):
+                        if source["start_frame"] <= coverage:
+                            coverage = max(coverage, source["end_frame"])
+                    if coverage < native_plans[task_index].end_frame:
+                        raise NativePlanError("LOCK_VIDEO_RANGE", "Locked video must cover the complete raw window, including the 39-frame context. Extend the source or start a Shot.", native_plans[task_index].segment_id)
+                if previous_frame_position(entry.get("task", {}).get("content", {})) is not None and not native_config["allow_vae_fallback"]:
+                    raise NativePlanError("GENERATED_IMAGE", "Previous-frame references encode generated pixels. Remove that reference or allow VAE fallback.", native_plans[task_index].segment_id)
+            if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only and not native_config["allow_vae_fallback"]:
+                raise NativePlanError("PIXEL_UPSCALE", "Dual pixel upscale re-encodes generated video. Select a latent upscaler, use upscale_by=1, or allow VAE fallback.")
         if not uses_linked_prepare and audio_vae is None:
             raise ValueError(
                 "model_loader must include audio_vae to decode MiniMax H3 audio."
@@ -1488,6 +1559,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 base_task_length = task_output.out(3)
                 if preserve_source_timing:
                     base_task_length = task_duration_frames
+            if native_config is not None:
+                base_task_length = task_duration_frames
             if task_is_passthrough:
                 if audio_only:
                     raise ValueError("Passthrough requires a video project, not audio-only mode")
@@ -1502,6 +1575,26 @@ class EasyMultiTrackProject(io.ComfyNode):
                     project_name=safe_project_name,
                     segment_index=task_index,
                 )
+                if native_config is not None:
+                    seed_recipe = {"sampling_mode": "passthrough", "context_sampling_mode": sampling_mode,
+                                   "first_width": first_pass_width, "first_height": first_pass_height,
+                                   "target_width": target_width, "target_height": target_height,
+                                   "lowres_scale": lowres_scale, "allow_vae_fallback": native_config["allow_vae_fallback"],
+                                   "fallback_reasons": native_reference_reasons}
+                    seeded = graph.node("easy h3NativeSeed", id=f"native_seed_{task_index}",
+                                        video_path=passthrough.out(0), vae=vae, audio_vae=audio_vae,
+                                        plan_json=json.dumps(native_plans[task_index].as_dict()),
+                                        recipe_json=json.dumps(seed_recipe))
+                    previous_artifact = last_project_output = graph.node(
+                        "easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=safe_project_name,
+                        segment_index=task_index, tracks_info=output_info, latent=seeded.out(0), low_latent=seeded.out(1),
+                        video_path=passthrough.out(0), raw_audio=seeded.out(2),
+                        last_frame=graph.node("easy h3LastFrame", id=f"tail_frame_{task_index}", images=passthrough.out(1)).out(0),
+                        **({"previous": previous_artifact} if previous_artifact is not None else {})).out(0)
+                    previous_hires_context_latent = previous_low_context_latent = None
+                    segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
+                    report_segment_step(1.0)
+                    continue
                 context_latent = _h3_encode_context_media(
                     graph, passthrough.out(1), passthrough.out(2), vae, audio_vae,
                     f"passthrough_context_{task_index}",
@@ -1557,6 +1650,9 @@ class EasyMultiTrackProject(io.ComfyNode):
                 continuity_mode = "context"
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
             uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            uses_masked = continuity_mode == "context_masked"
+            if uses_masked and native_config is None:
+                raise NativePlanError("METHOD_POLICY", "Upgrade this timeline to native timing before using Context Masked.")
             task_images = task_output.out(4)
             previous_frame_source = None
             previous_position = previous_frame_position(content)
@@ -1582,7 +1678,11 @@ class EasyMultiTrackProject(io.ComfyNode):
             )
             context_source_frames = H3_CONTEXT_SOURCE_FRAMES
             context_generation_frames = 34
-            if will_have_context_continuity:
+            if native_config is not None:
+                context_source_frames = 39
+                task_length = native_plans[task_index].raw_frames
+                aligned_task_length = task_duration_frames
+            elif will_have_context_continuity:
                 task_length = graph.node(
                     "ComfyMathExpression",
                     id=f"context_length_{task_index}",
@@ -1604,9 +1704,17 @@ class EasyMultiTrackProject(io.ComfyNode):
                     "videos": task_output.out(6),
                 })
                 if fit_locked_video_timing:
-                    conditioning_inputs["locked_video_timing_frames"] = (
-                        aligned_task_length
-                    )
+                    if native_config is not None:
+                        raw_video_info = graph.node("easy h3NativeLockedVideoInfo", id=f"native_video_window_{task_index}",
+                                                    tracks_info=task_tracks_info, plan_json=json.dumps(native_plans[task_index].as_dict()),
+                                                    track_id=locked_video_track["id"])
+                        raw_video = graph.node("easy multiTrackTaskOutput", id=f"native_video_output_{task_index}",
+                                               tracks_info=raw_video_info.out(0), task_index=0, prompt_format="default")
+                        conditioning_inputs["videos"] = raw_video.out(6)
+                        conditioning_inputs["locked_video_timing_frames"] = task_length
+                        conditioning_inputs["native_locked_video"] = True
+                    else:
+                        conditioning_inputs["locked_video_timing_frames"] = aligned_task_length
             encoded_conditioning = graph.node(
                 "easy minimaxH3ToVideo",
                 id=f"conditioning_{task_index}",
@@ -1645,6 +1753,38 @@ class EasyMultiTrackProject(io.ComfyNode):
                 ).out(0)
             initial_latent = conditioning.out(1)
             positive = base_positive
+
+            native_state = None
+            if native_config is not None:
+                fallback_reasons = list(native_reference_reasons)
+                if previous_position is not None:
+                    fallback_reasons.append("GENERATED_IMAGE")
+                if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only:
+                    fallback_reasons.append("PIXEL_UPSCALE")
+                recipe = {"sampling_mode": sampling_mode, "first_pass_only": first_pass_only,
+                          "first_width": first_pass_width, "first_height": first_pass_height,
+                          "target_width": target_width, "target_height": target_height,
+                          "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
+                          "upscale_model": selected_upscale_model, "upscale_by": upscale_by,
+                          "seed": first_pass_seed, "sampling_plan": preset_name,
+                          "task_content": content, "disable_2nd_noise": disable_2nd_noise,
+                          "parent_index": task_index - 1,
+                          "previous_segment_id": native_plans[task_index - 1].segment_id if task_index else None,
+                          **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),
+                          "fallback_reasons": fallback_reasons, "rho": 0.0,
+                          "allow_vae_fallback": native_config["allow_vae_fallback"]}
+                prepared_native = graph.node("easy h3NativePrepare", id=f"native_prepare_{task_index}",
+                                             latent=initial_latent, model=model, second_model=second_model,
+                                             project_name=safe_project_name,
+                                             plan_json=json.dumps(native_plans[task_index].as_dict()), recipe_json=json.dumps(recipe),
+                                             sigmas=first_pass_sigmas,
+                                             vae=vae, audio_vae=audio_vae,
+                                             **({"previous_frame_source": previous_frame_source} if previous_frame_source is not None else {}),
+                                             **({"second_sigmas": context_second_pass_sigmas if uses_context and context_second_pass_sigmas is not None else second_pass_sigmas} if run_second_pass else {}),
+                                             **({"previous": previous_artifact} if previous_artifact is not None else {}))
+                initial_latent, native_state = prepared_native.out(0), prepared_native.out(3)
+                if uses_context:
+                    previous_hires_context_latent, previous_low_context_latent = prepared_native.out(1), prepared_native.out(2)
 
             if (
                 uses_context
@@ -1687,7 +1827,7 @@ class EasyMultiTrackProject(io.ComfyNode):
             # can be shifted behind the copied source prefix. The extra 12
             # generated frames required by H3's temporal grid are removed from
             # the tail after decoding, not from the task's opening frames.
-            if has_task_locked_audio:
+            if has_task_locked_audio and native_config is None:
                 report_segment_step(0.20)
                 initial_latent = graph.node(
                     "easy minimaxH3AudioLock",
@@ -1706,7 +1846,11 @@ class EasyMultiTrackProject(io.ComfyNode):
             first_pass_sampling_model = model
             if has_context_continuity:
                 report_segment_step(0.22)
-                if uses_swap:
+                if uses_masked:
+                    initial_latent = graph.node("easy h3NativeMasked", id=f"native_masked_{task_index}",
+                                                latent=initial_latent, context_latent=first_pass_context_latent).out(0)
+                    first_pass_context_trim_frames = context_trim_frames = 39
+                elif uses_swap:
                     context_swap = graph.node(
                         "easy MiniMaxH3ContextSwap",
                         id=f"first_pass_context_swap_noise_{task_index}",
@@ -1743,6 +1887,16 @@ class EasyMultiTrackProject(io.ComfyNode):
             else:
                 report_segment_step(0.22)
 
+            native_lock_inputs = None
+            if has_task_locked_audio and native_config is not None:
+                native_lock_inputs = {"native_state": native_state, "audio": full_locked_audio,
+                                      "audio_vae": audio_vae, "intervals_json": json.dumps([
+                                          [segment["start_frame"], segment["end_frame"]]
+                                          for segment in locked_audio_track.get("segments", [])
+                                          if not segment.get("content", {}).get("muted", False)])}
+                native_audio_lock = graph.node("easy h3NativeAudioLock", id=f"native_audio_lock_{task_index}",
+                                              latent=initial_latent, **native_lock_inputs)
+                initial_latent, task_locked_audio = native_audio_lock.out(0), native_audio_lock.out(1)
             report_segment_step(0.28)
             selflift_low_latent: Any | None = None
             if is_selflift:
@@ -1761,13 +1915,17 @@ class EasyMultiTrackProject(io.ComfyNode):
                     "seed": first_pass_seed,
                     "transition_ratio": transition_ratio,
                     "lowres_scale": lowres_scale,
-                    "rho": 0.1 if has_context_continuity else 0.0,
+                    "rho": 0.1 if has_context_continuity and native_config is None else 0.0,
                     "w_max": 0.7,
                     "w_min": 0.25,
                     "upscaler_model": selected_upscale_model,
                     "enabled_tiling": tiling_enabled,
                     "tile_count": tile_count,
                 }
+                if native_config is not None and has_context_continuity and uses_swap:
+                    selflift_inputs["highres_model"] = graph.node(
+                        "easy h3NativeDriftModel", id=f"native_selflift_high_drift_{task_index}",
+                        model=second_model, latent=initial_latent, sigmas=first_pass_sigmas).out(0)
                 if has_sampling_preview:
                     selflift_inputs.update({
                         "preview_vae": preview_vae,
@@ -1933,18 +2091,27 @@ class EasyMultiTrackProject(io.ComfyNode):
                     report_segment_step(0.59)
                     # Second pass is deliberately kept as an ordinary hi-res refine path.
                     # No context noise, no split-prior, and no Drift-Control patching here.
-                    hires_continuity = graph.node(
-                        "easy MiniMaxH3HiResContinuity",
-                        id=f"hires_continuity_{task_index}",
-                        current_hires_latent=upscaled_latent,
-                        previous_hires_latent=previous_hires_context_latent,
-                        context_length=str(H3_CONTEXT_SOURCE_FRAMES),
-                        video_transition_steps=4,
-                        video_anchor_only=not audio_only,
-                    )
-                    upscaled_latent = hires_continuity.out(0)
-                    context_trim_frames = hires_continuity.out(1)
+                    if uses_masked:
+                        upscaled_latent = graph.node("easy h3NativeMasked", id=f"native_high_masked_{task_index}",
+                                                    latent=upscaled_latent, context_latent=previous_hires_context_latent,
+                                                    refine=True).out(0)
+                        context_trim_frames = 39
+                    else:
+                        hires_continuity = graph.node(
+                            "easy MiniMaxH3HiResContinuity",
+                            id=f"hires_continuity_{task_index}",
+                            current_hires_latent=upscaled_latent,
+                            previous_hires_latent=previous_hires_context_latent,
+                            context_length=str(context_source_frames),
+                            video_transition_steps=4,
+                            video_anchor_only=not audio_only,
+                        )
+                        upscaled_latent = hires_continuity.out(0)
+                        context_trim_frames = hires_continuity.out(1)
 
+                if native_lock_inputs is not None:
+                    upscaled_latent = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",
+                                                 latent=upscaled_latent, **native_lock_inputs).out(0)
                 report_segment_step(0.62)
                 second_pass_noise = graph.node(
                     "DisableNoise" if disable_2nd_noise else "RandomNoise",
@@ -2011,6 +2178,16 @@ class EasyMultiTrackProject(io.ComfyNode):
                 if has_second_pass
                 else final_latent
             )
+            if native_config is not None:
+                previous_artifact = last_project_output = _h3_native_output(
+                    graph, task_index, safe_project_name, output_info, final_latent,
+                    low_stage_context_latent if has_second_pass or is_selflift else None,
+                    native_state, vae, audio_vae, task_locked_audio if has_task_locked_audio else None,
+                    audio_only, previous_artifact)
+                previous_hires_context_latent = previous_low_context_latent = None
+                segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
+                report_segment_step(1.0)
+                continue
             hires_context_reencoded = False
             low_context_reencoded = False
             if audio_only:

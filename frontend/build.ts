@@ -86,6 +86,7 @@ async function build(type: BuildType = "all") {
     }
   } catch (e) {
     console.error(`[build:${mode}] Error:`, e);
+    if (!watch) process.exitCode = 1;
   }
 }
 

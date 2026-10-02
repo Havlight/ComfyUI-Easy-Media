@@ -221,7 +221,7 @@ def _load_basic_module():
     nodes_package = types.ModuleType("easy_media.nodes")
     nodes_package.__path__ = []
     utils_module = types.ModuleType("easy_media.utils")
-    utils_module.__path__ = []
+    utils_module.__path__ = [str(Path(__file__).resolve().parents[1] / "utils")]
     utils_module.FFMPEG_RESIZE_METHODS = frozenset({
         "stretch", "resize", "pad", "pad (white)", "crop",
     })
@@ -6170,6 +6170,7 @@ def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
     ]}
     result = module.MultiImagesLoader.execute(
         {"resolution": "width x height (longest)", "resize_to_pixel": 120, "resize_method": "crop"},
+        -1,
         json.dumps(image_data),
     )
 
@@ -6182,6 +6183,21 @@ def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
 def test_multi_images_loader_rejects_more_than_25_images():
     module = _load_basic_module()
     with pytest.raises(ValueError, match="at most 25"):
-        module.MultiImagesLoader.execute("width x height (auto)", {
+        module.MultiImagesLoader.execute("width x height (auto)", -1, {
             "images": [{"source_type": "input", "file_path": "x.png"}] * 26,
         })
+
+
+def test_native_policy_survives_editor_serialization_and_rejects_unaligned_api_input():
+    module = _load_basic_module()
+    data = {"total_length": 243, "frame_rate": 24,
+            "h3_native": {"version": 1, "allow_vae_fallback": False},
+            "tracks": [{"id": "task", "type": "task", "segments": [
+                {"id": "a", "start_frame": 0, "end_frame": 243, "content": {"media_type": "none"}}]}]}
+    result = module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)
+    assert result.values[0]["h3_native"] == data["h3_native"]
+    data["tracks"][0]["segments"][0]["end_frame"] = 240
+    for allow in (False, True):
+        data["h3_native"]["allow_vae_fallback"] = allow
+        with pytest.raises(ValueError, match="DURATION_GRID"):
+            module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)

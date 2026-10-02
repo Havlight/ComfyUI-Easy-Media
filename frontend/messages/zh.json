@@ -67,6 +67,7 @@
     "selectClipFilesHint": "选择一个视频用于项目，选择两个视频进行对比。",
     "selectClipFileFailed": "视频版本选择保存失败",
     "continuityShot": "分镜",
+    "continuityContextMasked": "Context Masked",
     "continuityContext": "上下文",
     "continuityContextDrift": "上下文(漂移)",
     "emptyPreview": "请刷新项目以预览已生成的视频片段。",
@@ -308,6 +309,7 @@
     "timelineZoom": "时间线缩放"
   },
   "multitrackContinuityModes": {
+    "context_masked": "Context Masked",
     "shot": "分镜",
     "context": "上下文",
     "context_drift": "上下文(漂移控制)"
@@ -462,5 +464,27 @@
     "slotAudio": "音频 {n}",
     "slotVideo": "视频 {n}",
     "addLocal": "添加本地文件"
+  },
+  "h3Native": {
+    "locateTask": "選取片段",
+    "staleVersion": "需重新生成：前段版本已變更",
+    "fallbackVersion": "含 VAE 回退",
+    "reviewTiming": "檢視時間軸調整",
+    "allowFallback": "允許 VAE 回退",
+    "fallbackTooltip": "關閉時，生成畫面與音訊不得重編碼後回流。外部素材首次編碼、預覽與輸出解碼仍允許。開啟回退後，時間軸仍保持原生對齊。",
+    "legacy": "舊版時間軸",
+    "upgrade": "升級原生時間規則",
+    "migrationDescription": "請檢視 {count} 個任務的變更。來源素材保持原位；套用後可一次復原。已存版本會保留，必要時需重新生成。",
+    "frames": "幀",
+    "cancel": "取消",
+    "apply": "套用",
+    "dismiss": "關閉提示",
+    "editFailed": "無法套用這次時間軸編輯。",
+    "durationDetail": "{frames} 幀 · {seconds} 秒。秒數輸入加 s；上下鍵選取合法長度。",
+    "lastFrameFallback": "需要 VAE 回退 · 前段末幀影像參考會重編碼已生成畫面。",
+    "lastFrameBlocked": "無法原生執行 · 請取消前段末幀參考，或允許 VAE 回退。",
+    "passthroughStatus": "素材直通 · 執行時檢查來源與下游接續相容性。",
+    "contextStatus": "時間已原生對齊 · 接續使用 39 幀／1.625 秒，不增加成片長度；來源與模型相容性於執行時檢查。",
+    "shotStatus": "時間已原生對齊 · 無接續重疊；模型相容性於執行時檢查。"
   }
 }

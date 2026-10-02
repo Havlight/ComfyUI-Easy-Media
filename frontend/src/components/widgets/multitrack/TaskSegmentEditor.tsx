@@ -23,6 +23,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { MediaSelector } from '@/components/widgets/mediaSelector/MediaSelector'
 import type { MediaTab } from '@/components/widgets/mediaSelector/MediaSelector'
 import { useT } from '@/lib/i18n'
+import { isH3Continuation, parseH3Seconds, snapH3NativeDuration } from '@/lib/h3-native-timing'
+import type { H3NativePolicy } from '@/types/multitrack'
 import { mediaContentToViewUrl } from '@/lib/media-url'
 import { getSegmentTrackPresentation } from '@/lib/multitrack-segment-style'
 import { computeSlotItems } from '@/lib/timeline-utils'
@@ -106,6 +108,7 @@ interface TaskSegmentEditorProps {
   totalFrames?: number
   imageIndexOffset?: number
   format?: string
+  nativePolicy?: H3NativePolicy
   onContentChange: (patch: Partial<MultiTrackSegmentContent>) => void
   onTrackSegmentsContentChange?: (updates: TrackSegmentContentUpdate[]) => void
   onTrackSegmentsChange?: (segments: MultiTrackSegment[]) => void
@@ -233,6 +236,7 @@ export function TaskSegmentEditor({
   totalFrames,
   imageIndexOffset = 0,
   format,
+  nativePolicy,
   onContentChange,
   onTrackSegmentsContentChange,
   onTrackSegmentsChange,
@@ -253,6 +257,7 @@ export function TaskSegmentEditor({
   const duration = frameToSeconds(segmentDuration(segment), frameRate)
   const formattedDuration = formatMultiTrackDurationTimecode(duration, frameRate)
   const [durationInput, setDurationInput] = useState(formattedDuration)
+  const durationCancelledRef = useRef(false)
   const images = taskImages(segment)
   const slotItems = useMemo(
     () => computeSlotItems(node, app, 'image'),
@@ -373,7 +378,10 @@ export function TaskSegmentEditor({
   }, [combinedPromptValue])
 
   function commitDuration() {
-    const nextDuration = parseMultiTrackDurationTimecode(durationInput, frameRate)
+    if (durationCancelledRef.current) return
+    const parsed = (nativePolicy ? parseH3Seconds(durationInput) : null) ?? parseMultiTrackDurationTimecode(durationInput, frameRate)
+    const nextDuration = parsed !== null && nativePolicy && mode !== 'passthrough'
+      ? snapH3NativeDuration(parsed * frameRate, isH3Continuation(segment)) / frameRate : parsed
     if (nextDuration === null) {
       setDurationInput(formattedDuration)
       setIsDurationEditing(false)
@@ -1211,13 +1219,28 @@ export function TaskSegmentEditor({
               autoFocus
               aria-label={t('multitrack.duration')}
               type="text"
-              inputMode="numeric"
+              inputMode="text"
               placeholder="00:00:00"
               className="tabular-nums"
               value={durationInput}
               onChange={(event) => setDurationInput(event.currentTarget.value)}
               onBlur={commitDuration}
               onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  durationCancelledRef.current = true
+                  setDurationInput(formattedDuration)
+                  setIsDurationEditing(false)
+                  return
+                }
+                if (nativePolicy && mode !== 'passthrough' && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+                  event.preventDefault()
+                  const parsed = parseH3Seconds(durationInput) ?? parseMultiTrackDurationTimecode(durationInput, frameRate) ?? duration
+                  const current = snapH3NativeDuration(parsed * frameRate, isH3Continuation(segment))
+                  const frames = snapH3NativeDuration(current + (event.key === 'ArrowUp' ? 17 : -17), isH3Continuation(segment))
+                  setDurationInput(formatMultiTrackDurationTimecode(frames / frameRate, frameRate))
+                  return
+                }
                 if (event.key !== 'Enter') return
                 event.preventDefault()
                 commitDuration()
@@ -1227,7 +1250,7 @@ export function TaskSegmentEditor({
             <div className="flex items-center gap-1 text-muted-foreground">
               <div className="flex flex-col items-center">
                 <span className="text-[10px] text-primary">{t('multitrack.taskNumber', { n: taskIndex + 1 })}</span>
-                <span className="text-[10px] mt-0.5 tabular-nums">{formattedDuration}</span>
+                <span className="text-[10px] mt-0.5 tabular-nums" title={nativePolicy ? t('h3Native.durationDetail', { frames: segmentDuration(segment), seconds: duration.toFixed(3) }) : undefined}>{formattedDuration}</span>
               </div>
               {onDurationChange && (
                 <Button
@@ -1236,7 +1259,7 @@ export function TaskSegmentEditor({
                   size="icon"
                   className="h-5 w-5 cursor-pointer"
                   aria-label={t('multitrack.editTaskDuration')}
-                  onClick={() => setIsDurationEditing(true)}
+                  onClick={() => { durationCancelledRef.current = false; setIsDurationEditing(true) }}
                 >
                   <Pencil className="h-3 w-3" />
                 </Button>
@@ -1266,7 +1289,7 @@ export function TaskSegmentEditor({
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {MULTITRACK_CONTINUITY_MODES.map((continuityOption) => (
+                {MULTITRACK_CONTINUITY_MODES.filter((option) => option !== 'context_masked' || nativePolicy).map((continuityOption) => (
                   <SelectItem key={continuityOption} value={continuityOption}>
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityOption}`)}</span>
                   </SelectItem>
@@ -1325,6 +1348,12 @@ export function TaskSegmentEditor({
           </Select>
         </div>
       </div>
+      {nativePolicy && format === 'MiniMax' && (
+        <div className="shrink-0 border-t border-border px-2 py-1 text-[10px] text-muted-foreground" aria-live="polite">
+          {previousFrameImage && previousFrameImage.muted !== true ? t(nativePolicy.allow_vae_fallback ? 'h3Native.lastFrameFallback' : 'h3Native.lastFrameBlocked')
+            : t(mode === 'passthrough' ? 'h3Native.passthroughStatus' : isH3Continuation(segment) ? 'h3Native.contextStatus' : 'h3Native.shotStatus')}
+        </div>
+      )}
       <Dialog open={applyPromptToAllOpen} onOpenChange={setApplyPromptToAllOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
