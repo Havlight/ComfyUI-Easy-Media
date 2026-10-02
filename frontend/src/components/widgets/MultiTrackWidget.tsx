@@ -1453,6 +1453,9 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
           {nativeEditing.error && (
             <div role="alert" className="flex shrink-0 items-center justify-between gap-2 bg-destructive/10 px-2 py-1 text-destructive">
               <span>{t('h3Native.editFailed')} [{nativeEditing.error.code}] {nativeEditing.error.message}</span>
+              {nativeEditing.error.segmentId && data.tracks.some((track) => track.segments.some((segment) => segment.id === nativeEditing.error?.segmentId)) && (
+                <Button variant="ghost" size="sm" className="h-6 shrink-0 text-[10px]" onClick={() => handleSelectSegment(nativeEditing.error!.segmentId!)}>{t('h3Native.locateTask')}</Button>
+              )}
               <Button variant="ghost" size="icon" className="h-6 w-6" aria-label={t('h3Native.dismiss')} onClick={nativeEditing.dismissError}><X className="h-3 w-3" /></Button>
             </div>
           )}

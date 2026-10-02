@@ -524,7 +524,7 @@ def _reencoded_anchor_av_latent(
     context_frames: int,
     anchor_frames: int = REENCODED_ANCHOR_FRAMES,
 ) -> dict[str, Any]:
-    """Hard-pin a short re-encoded video anchor at the end of a soft prefix."""
+    """Hard-pin a short video latent anchor at the end of a soft prefix."""
     context_steps = _steps_for_frames(int(context_frames))
     anchor_video_steps = _steps_for_frames(int(anchor_frames))
     if context_steps is None or anchor_video_steps is None:
@@ -586,7 +586,7 @@ def _reencoded_anchor_av_latent(
         )
     )
     LOGGER.info(
-        "Re-encoded video anchor: soft context=%d frames, hard anchor=%d frames "
+        "Latent video anchor: soft context=%d frames, hard anchor=%d frames "
         "(video steps=%d:%d); audio remains generative",
         context_frames,
         anchor_frames,

@@ -88,7 +88,7 @@ def _h3_native_output(
         media = {"video_path": saved.out(1), "last_frame": graph.node(
             "easy h3LastFrame", id=f"tail_frame_{task_index}", images=view.out(0)).out(0)}
     if locked_audio is not None:
-        media["locked_audio"] = delivered_audio
+        media["locked_audio"] = locked_audio
     return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
                       segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio,
                       **({"low_latent": result.out(1)} if low_latent is not None else {}),
@@ -886,6 +886,11 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                         graph, preset_name=str(sampling_plan), is_turbo=second_is_turbo,
                         has_custom_second_pass_sampling=custom_second,
                     )
+                # The expanded graph always has a link to this output. A link
+                # cannot be tested for the None it will contain at runtime.
+                # Preserve the selected schedule when no context preset applies.
+                if context_sigmas is None:
+                    context_sigmas = second_sigmas
             return io.NodeOutput(
                 static_data, None, model, second_model, clip, vae, audio_vae,
                 preview_vae, locked, first_sampler, first_sigmas, second_sampler,
@@ -1025,7 +1030,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                     tooltip=(
                         "Run and save only the first selected segment's "
                         "first pass. Turn this off on the next run to "
-                        "resume directly from that checkpoint at pass two."
+                        "resume directly from that checkpoint at pass two on legacy timelines. "
+                        "Native timelines regenerate both passes to verify their stage lineage."
                     ),
                 ),
                 io.Boolean.Input("disable_2nd_noise", default=False, tooltip="Disable noise in second-pass for dual-sampling"),
@@ -1356,6 +1362,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                         raise NativePlanError("SEED_SHORT", "Native passthrough requires at least 39 delivered frames.", native_plans[task_index].segment_id)
                 locked_video = h3_locked_video_track(entry, info)
                 if locked_video is not None:
+                    if not (h3_task_is_passthrough(entry) or is_passthrough) and h3_generation_mode(h3_task_type(entry, info)) != "reference":
+                        raise NativePlanError("LOCK_VIDEO_MODE", "Locked video needs Reference or Edit mode. Select that task mode or unlock the source video.", native_plans[task_index].segment_id)
                     coverage = native_plans[task_index].raw_start_frame
                     for source in sorted(locked_video.get("segments", []), key=lambda item: item["start_frame"]):
                         if source["start_frame"] <= coverage:
@@ -1759,6 +1767,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                           "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
                           "upscale_model": selected_upscale_model, "upscale_by": upscale_by,
                           "seed": first_pass_seed, "sampling_plan": preset_name,
+                          "task_content": content, "disable_2nd_noise": disable_2nd_noise,
                           "parent_index": task_index - 1,
                           "previous_segment_id": native_plans[task_index - 1].segment_id if task_index else None,
                           **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),

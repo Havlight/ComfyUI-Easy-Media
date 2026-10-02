@@ -466,6 +466,7 @@
     "addLocal": "添加本地文件"
   },
   "h3Native": {
+    "locateTask": "選取片段",
     "staleVersion": "需重新生成：前段版本已變更",
     "fallbackVersion": "含 VAE 回退",
     "reviewTiming": "檢視時間軸調整",

@@ -9,7 +9,7 @@ export function useH3NativeEditing(
   format: string | undefined,
   commit: (next: TrackData) => void,
 ) {
-  const [error, setError] = useState<{ code: string; message: string } | null>(null)
+  const [error, setError] = useState<{ code: string; message: string; segmentId?: string } | null>(null)
   const [migration, setMigration] = useState<TrackData | null>(null)
   const isNewH3 = format === 'MiniMax' && !current.tracks.some((track) => track.type === 'task' && track.segments.length)
 
@@ -29,7 +29,7 @@ export function useH3NativeEditing(
   }
 
   function report(error: unknown) {
-    setError(error instanceof H3NativeTimingError ? { code: error.code, message: error.message }
+    setError(error instanceof H3NativeTimingError ? { code: error.code, message: error.message, segmentId: error.segmentId }
       : { code: 'EDIT_FAILED', message: error instanceof Error ? error.message : String(error) })
   }
 

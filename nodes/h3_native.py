@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -101,16 +102,20 @@ class EasyH3NativePrepare(io.ComfyNode):
             imported_parent = False
 
             def load_stage(label: str, stage: str, size: tuple[int, int]) -> dict[str, Any]:
-                nonlocal seed_window
+                nonlocal seed_window, imported_parent
                 if label in descriptors:
                     saved = load_native_latent(directory, descriptors[label])
+                    if label == "high":
+                        imported_parent = validate_native_latent(saved)["source_kind"] == "imported_seed"
                     try:
-                        slice_native_context(saved, plan, stage, size)
+                        sliced = slice_native_context(saved, plan, stage, size)
+                        if label == "low" and high_source is not None and sliced["h3_native_slice"]["audio_origin_units"] != high_source["h3_native_slice"]["audio_origin_units"]:
+                            raise NativePlanError("STAGE_CLOCK", "The saved low stage uses a different audio clock from the selected high source.")
                         return saved
                     except NativePlanError as error:
-                        if error.code not in {"STAGE_MISMATCH", "SIZE_MISMATCH"}:
+                        if error.code not in {"STAGE_MISMATCH", "SIZE_MISMATCH", "STAGE_CLOCK"}:
                             raise
-                        if not recipe.get("allow_vae_fallback"):
+                        if not imported_parent and not recipe.get("allow_vae_fallback"):
                             raise
                 kind = "imported_seed" if imported_parent else "rebuilt_generated"
                 if kind == "rebuilt_generated" and not recipe.get("allow_vae_fallback"):
@@ -247,7 +252,7 @@ class EasyH3NativeAudioLock(io.ComfyNode):
                          outputs=[io.Latent.Output("latent")])
 
     @classmethod
-    def execute(cls, latent: dict[str, Any], native_state: dict[str, Any], audio: dict[str, Any],
+    def execute(cls, latent: dict[str, Any], native_state: dict[str, Any], audio: dict[str, Any] | None,
                 audio_vae: Any, intervals_json: str) -> io.NodeOutput:
         from ..utils.h3_native_lock import lock_native_audio
 
@@ -350,7 +355,7 @@ class EasyH3NativeArtifact(io.ComfyNode):
         recipe = meta["recipe"]
         record = {"continuity_mode": meta["continuity_mode"], "seed": recipe.get("seed", 0),
                   "sampling_pass": "first" if recipe.get("first_pass_only") else "second" if recipe["sampling_mode"] == "dual" else "single",
-                  "audio_locked": compact[segment_index].get("audio_locked", False),
+                  "audio_locked": locked_audio is not None,
                   "raw_audio_sample_rate": raw_audio["sample_rate"], "native_recipe": recipe,
                   **({"previous_frame_source": meta["previous_frame_source"]} if meta.get("previous_frame_source") else {}),
                   "fallback_history": meta["fallback_history"]}
@@ -360,17 +365,24 @@ class EasyH3NativeArtifact(io.ComfyNode):
                 media["video"] = _h3_project_source_path(video_path, Path(folder_paths.get_output_directory()).resolve())
             elif audio is not None:
                 media["audio"] = Path(work) / "delivered.wav"
-                save_h3_audio(audio, media["audio"])
+                save_h3_audio(audio, media["audio"], subtype="FLOAT")
             else:
                 raise NativePlanError("OUTPUT_MISSING", "No delivered media was produced; the prior version is intact.")
             if locked_audio is not None:
                 media["locked_audio"] = Path(work) / "locked.wav"
-                save_h3_audio(locked_audio, media["locked_audio"])
+                save_h3_audio(locked_audio, media["locked_audio"], subtype="FLOAT")
             media["raw_audio"] = Path(work) / "raw.wav"
-            save_h3_audio(raw_audio, media["raw_audio"])
+            save_h3_audio(raw_audio, media["raw_audio"], subtype="FLOAT")
             if last_frame is not None:
                 media["last_frame"] = Path(work) / "last.png"
                 save_tail_image(last_frame, media["last_frame"])
             commit_native_generation(directory, segment_index, fields, record, latents, media)
+            staged_video = media.get("video")
+            if (staged_video is not None and staged_video.name.startswith(".staging_video_")
+                    and staged_video.parent.resolve() == directory.resolve()):
+                try:
+                    staged_video.unlink()
+                except OSError as error:
+                    logging.warning("Native generation saved; could not remove temporary video %s: %s", staged_video.name, error)
         _notify_multitrack_project_refresh(name, "after_save", segment_index)
         return io.NodeOutput(name)

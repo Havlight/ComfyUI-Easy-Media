@@ -181,3 +181,60 @@ def test_masked_reuses_verified_sources_and_freezes_second_pass_audio(monkeypatc
     if mode == 'dual':
         assert masks[-1]['inputs']['refine'] is True
     assert not any(node['class_type'] in {'VAEEncode', 'VAEEncodeAudio'} for node in result.expand.values())
+
+
+def test_native_lock_video_rejects_task_modes_that_ignore_video(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs()
+    inputs['tracks_info'][0]['tracks'].append({'id': 'video', 'type': 'video', 'audio_locked': True,
+        'segments': [{'start_frame': 0, 'end_frame': 481, 'content': {'media_type': 'video'}}]})
+    with pytest.raises(ValueError, match='LOCK_VIDEO_MODE'):
+        module.EasyMultiTrackProject.execute(**inputs)
+
+
+@pytest.mark.parametrize('imported', [False, True])
+def test_source_resize_rebuilds_both_stage_clocks_without_reencoding_native_audio(monkeypatch, tmp_path, imported):
+    module = _load_minimax_node(monkeypatch)
+    monkeypatch.setattr(module.folder_paths, 'get_output_directory', lambda: str(tmp_path))
+    spec = importlib.util.spec_from_file_location('easy_media.nodes.h3_native', Path(__file__).resolve().parents[1] / 'nodes/h3_native.py')
+    runtime = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, runtime)
+    spec.loader.exec_module(runtime)
+    model = types.SimpleNamespace(model=types.SimpleNamespace(
+        model_config=type('MiniMaxH3', (), {})(), latent_format=type('MiniMaxH3AV', (), {})()))
+    info = native_inputs()['tracks_info'][0]
+    info.update(width=32, height=32)
+    tasks = info['tracks'][0]['segments']
+    tasks[0]['end_frame'] = 56
+    tasks[1].update(start_frame=56, end_frame=73)
+    plans = runtime.compile_native_plan(info)
+    recipe = {'sampling_mode': 'dual', 'first_width': 32, 'first_height': 32,
+              'target_width': 32, 'target_height': 32}
+    canvas, _ = module._empty_av_latent(32, 32, 56)
+    high_meta = runtime.new_native_metadata(plans[0], 'imported_seed' if imported else 'dual_high_final', recipe,
+                                            source_kind='imported_seed' if imported else 'native_sampler')
+    high = runtime.stamp_native_result(runtime.prepare_native_canvas(canvas, high_meta), high_meta)
+    low_meta = runtime.new_native_metadata(plans[0], 'dual_low_prediction', recipe)
+    low = runtime.stamp_native_result(runtime.prepare_native_canvas(canvas, low_meta), low_meta)
+    source = tmp_path / 'source.mp4'
+    source.write_bytes(b'video-reader-is-mocked')
+    runtime.EasyH3NativeArtifact.execute('resize-test', 0, info, high,
+        {'waveform': torch.zeros(1, 2, 74666), 'sample_rate': 32000}, low_latent=low, video_path=str(source))
+    calls = {'video': 0, 'audio': 0}
+    class VideoVAE:
+        def encode(self, images):
+            calls['video'] += 1
+            return torch.zeros(1, 24, 12, images.shape[1] // 16, images.shape[2] // 16)
+    class AudioVAE:
+        audio_sample_rate = 32000
+        def encode(self, waveform):
+            calls['audio'] += 1
+            return torch.zeros(1, 32, 2, 65)
+    monkeypatch.setattr(runtime, 'read_delivered_seed', lambda *args: (
+        torch.zeros(39, 32, 32, 3), {'waveform': torch.zeros(1, 2, 52000), 'sample_rate': 32000}))
+    recipe.update(target_width=64, target_height=64, parent_plan=plans[0].as_dict(), allow_vae_fallback=not imported)
+    output = runtime.EasyH3NativePrepare.execute(canvas, model, 'resize-test', json.dumps(plans[1].as_dict()),
+        json.dumps(recipe), vae=VideoVAE(), audio_vae=AudioVAE())
+    assert calls == {'video': 2, 'audio': 1}
+    assert output.values[3]['high']['audio_origin_units'] == output.values[3]['low']['audio_origin_units']
+    assert bool(output.values[3]['high']['fallback_history']) is not imported

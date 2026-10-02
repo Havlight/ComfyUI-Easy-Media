@@ -10,8 +10,12 @@ from ..modules.motion_context.core import _noise_mask_streams, _official_nested_
 from .h3_native_timing import NativePlanError, round_ratio
 
 
-def lock_native_audio(latent: dict[str, Any], metadata: dict[str, Any], audio: dict[str, Any],
+def lock_native_audio(latent: dict[str, Any], metadata: dict[str, Any], audio: dict[str, Any] | None,
                       audio_vae: Any, intervals: list[list[int]]) -> dict[str, Any]:
+    # A locked video can have no audio stream. Match the existing audio-lock
+    # selector: retain generated audio without encoding an invented source.
+    if audio is None:
+        return latent
     video, base_audio = _streams_from_latent(latent)
     ticks = base_audio.shape[-1]
     if ticks != metadata['audio_ticks']:

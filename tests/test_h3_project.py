@@ -393,7 +393,12 @@ def test_delete_project_rejects_symbolic_link_directory(tmp_path):
     outside.mkdir()
     marker = outside / "keep.json"
     marker.write_text("{}", encoding="utf-8")
-    (projects_root / "demo").symlink_to(outside, target_is_directory=True)
+    try:
+        (projects_root / "demo").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symlinks; native path protection is also tested on Linux")
+        raise
 
     with pytest.raises(ValueError, match="symbolic link"):
         delete_h3_project("demo", tmp_path)
@@ -658,15 +663,11 @@ def test_load_h3_project_data_marks_shot_and_context(monkeypatch, tmp_path):
     assert [clip["continuity_mode"] for clip in data["clips"]] == ["shot", "context"]
     assert [clip["audio_locked"] for clip in data["clips"]] == [True, False]
     assert [clip["source_end_frame"] for clip in data["clips"]] == [120, 96]
-    assert data["clips"][0]["file_path"] == str(
-        (project_dir / "video_0_1.mp4").relative_to(tmp_path)
-    )
+    assert data["clips"][0]["file_path"] == (project_dir / "video_0_1.mp4").relative_to(tmp_path).as_posix()
     assert data["clips"][0]["media_revision"] == str(
         (project_dir / "video_0_1.mp4").stat().st_mtime_ns
     )
-    assert data["clips"][0]["video_files"][0]["locked_audio_path"] == str(
-        (project_dir / "locked_audio_0_1.wav").relative_to(tmp_path)
-    )
+    assert data["clips"][0]["video_files"][0]["locked_audio_path"] == (project_dir / "locked_audio_0_1.wav").relative_to(tmp_path).as_posix()
 
 
 def test_load_h3_project_data_migrates_context_swap(monkeypatch, tmp_path):
@@ -1015,3 +1016,17 @@ def test_audio_only_project_combine_reports_unsupported_mode(monkeypatch, tmp_pa
 
     assert (project_dir / "project.json").read_bytes() == original_manifest
     assert not list(project_dir.glob("*.mp4"))
+
+
+def test_float_audio_sidecar_preserves_samples_without_pcm_clipping(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    import torch
+    from utils.h3_project import save_h3_audio
+
+    waveform = torch.tensor([[[1.125, -1.25, .000000019, .5]]], dtype=torch.float32)
+    path = tmp_path / 'native.wav'
+    save_h3_audio({'waveform': waveform, 'sample_rate': 32000}, path, subtype='FLOAT')
+    loaded, rate = sf.read(path, dtype='float32', always_2d=True)
+    assert rate == 32000
+    assert np.array_equal(loaded[:, 0], waveform[0, 0].numpy())

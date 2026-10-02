@@ -87,7 +87,7 @@ def validate_h3_project_outputs(
             raise ValueError(H3_AUDIO_ONLY_COMBINE_ERROR)
 
 
-def save_h3_audio(audio: dict[str, Any] | None, path: Path) -> None:
+def save_h3_audio(audio: dict[str, Any] | None, path: Path, *, subtype: str = "PCM_24") -> None:
     """Atomically save a single H3 segment as a lossless PCM WAV."""
     import soundfile as sf
 
@@ -110,7 +110,7 @@ def save_h3_audio(audio: dict[str, Any] | None, path: Path) -> None:
     try:
         sf.write(
             str(temporary), waveform[0].detach().cpu().float().numpy().T,
-            sample_rate, format="WAV", subtype="PCM_24",
+            sample_rate, format="WAV", subtype=subtype,
         )
         temporary.replace(path)
     except (OSError, RuntimeError, TypeError, ValueError) as error:
@@ -951,11 +951,13 @@ def _project_child_path(project_dir: Path, filename: Any) -> Path:
 
 def delete_h3_project_video(project_name: str, segment_index: int, file_path: str) -> dict[str, Any]:
     """Serialize native version edits with generation publication."""
-    from .h3_native_artifacts import native_project_transaction
-
     directory = h3_project_directory(project_name)
     _, manifest = _load_h3_manifest(project_name)
-    guard = native_project_transaction(directory) if manifest.get("h3_native") else nullcontext()
+    guard = nullcontext()
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import native_project_transaction
+
+        guard = native_project_transaction(directory)
     with guard:
         return _delete_h3_project_video(project_name, segment_index, file_path)
 
@@ -1059,11 +1061,13 @@ def select_h3_project_video(
     file_path: str,
 ) -> dict[str, Any]:
     """Serialize native version edits with generation publication."""
-    from .h3_native_artifacts import native_project_transaction
-
     directory = h3_project_directory(project_name)
     _, manifest = _load_h3_manifest(project_name)
-    guard = native_project_transaction(directory) if manifest.get("h3_native") else nullcontext()
+    guard = nullcontext()
+    if manifest.get("h3_native"):
+        from .h3_native_artifacts import native_project_transaction
+
+        guard = native_project_transaction(directory)
     with guard:
         return _select_h3_project_video(project_name, segment_index, file_path)
 
@@ -1317,7 +1321,7 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             # Reconcile that stale snapshot with the current manifest instead of
             # failing an otherwise valid render containing newly generated clips.
             continue
-        requested_path = str(clip.get("file_path", ""))
+        requested_path = str(clip.get("file_path", "")).replace("\\", "/")
         snapshot_updated_at = clip.get("updated_at")
         if snapshot_updated_at is None and isinstance(requested, dict):
             snapshot_updated_at = requested.get("updated_at")

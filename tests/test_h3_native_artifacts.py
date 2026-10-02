@@ -339,3 +339,9 @@ def test_masked_source_is_immutable_video_is_hard_and_audio_releases_over_eight_
     assert torch.all(audio_mask[..., 64] == 1)
     for original, source in zip(before, native._streams_from_latent(context)):
         assert torch.equal(original, source)
+
+
+def test_locked_video_without_audio_keeps_native_generated_streams():
+    lock = importlib.import_module('native_artifact_unit.utils.h3_native_lock')
+    latent = _latent()
+    assert lock.lock_native_audio(latent, latent['h3_native'], None, object(), [[0, 243]]) is latent

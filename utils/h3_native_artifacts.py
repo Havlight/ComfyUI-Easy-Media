@@ -45,7 +45,9 @@ def save_native_latent(latent: dict[str, Any], path: Path) -> dict[str, Any]:
     temporary = path.with_name(f".{path.name}.tmp")
     try:
         save_file(tensors, str(temporary), metadata={"h3_native": json.dumps(meta, sort_keys=True, allow_nan=False)})
-        with temporary.open("rb") as saved:
+        # Windows FlushFileBuffers requires a writable handle even though the
+        # safetensors writer has already closed and flushed its own handle.
+        with temporary.open("r+b") as saved:
             os.fsync(saved.fileno())
         checksum = file_checksum(temporary)
         temporary.replace(path)

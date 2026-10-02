@@ -70,3 +70,10 @@ it('aligns generation markers without moving source media or the playhead', () =
   input.task_markers = [{ id: 'cut', frame: 120 }]
   expect(reconcileH3NativeTimeline(input).task_markers).toEqual([{ id: 'cut', frame: 124 }])
 })
+
+it('rejects a short native import without stretching its source', () => {
+  const imported = segment('source', 0, 24)
+  imported.content.task_mode = 'passthrough'
+  expect(() => reconcileH3NativeTimeline(data([imported]))).toThrow('at least 39 frames')
+  expect(imported.end_frame).toBe(24)
+})

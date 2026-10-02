@@ -53,6 +53,9 @@ export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
     }
     const requested = segment.end_frame - segment.start_frame
     const passthrough = segment.content.task_mode === 'passthrough'
+    if (passthrough && requested < H3_NATIVE_CONTEXT_FRAMES) {
+      throw new H3NativeTimingError('SEED_SHORT', 'A native source task needs at least 39 frames; extend it or keep the legacy timeline.', segment.id)
+    }
     const continuation = !!previous && isH3Continuation(segment)
     const duration = passthrough ? Math.max(1, Math.round(requested)) : snapH3NativeDuration(requested, continuation)
     if (continuation && previous && previous.end_frame - previous.start_frame < H3_NATIVE_CONTEXT_FRAMES

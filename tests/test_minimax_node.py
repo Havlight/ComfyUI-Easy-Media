@@ -6221,3 +6221,16 @@ def test_minimax_prompt_override_node_has_complete_chinese_localization():
     assert translation["inputs"]["video_track_lock"]["name"] == "视频轨锁定"
     assert translation["inputs"]["audio_track_lock"]["name"] == "音频轨锁定"
     assert translation["outputs"] == {"0": {"name": "提示词覆盖"}}
+
+
+def test_linked_project_context_preserves_custom_second_schedule_at_runtime(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    second_sigmas = torch.tensor([0.72, 0.5, 0.3, 0.14, 0.06, 0.0])
+    result = module._project_module.EasyH3ProjectStaticPrepare.execute(
+        model_loader=_h3_project_inputs()['model_loader'][0],
+        sampling_mode='dual', run_second_pass=True, has_context_second_pass=True,
+        sampling_plan='custom', sampler='first', sigmas=torch.tensor([1.0, 0.0]),
+        sampler_2nd='second', sigmas_2nd=second_sigmas)
+    assert result.values[11] == 'second'
+    assert result.values[12] is second_sigmas
+    assert result.values[13] is second_sigmas

@@ -466,6 +466,7 @@
     "addLocal": "Add local file"
   },
   "h3Native": {
+    "locateTask": "Select task",
     "staleVersion": "Regenerate: parent version changed",
     "fallbackVersion": "Includes VAE fallback",
     "reviewTiming": "Review timeline changes",
