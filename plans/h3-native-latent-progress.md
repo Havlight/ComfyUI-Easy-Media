@@ -31,9 +31,17 @@ PYTHONPATH=tests:../.. python -m pytest -q --tb=short -c /dev/null \
 - 新增 Python **16 項**、前端 **16 項**測試；連同前端既有測試共 **179 項通過**。release build 成功。
 - planner 尚未接入 UI 或 sampler；後續提交會沿用此契約，避免只在 UI 表面吸附。
 
+## Raw latent 與版本交易
+
+- 新增完整 AV safetensors 保存，內嵌時間／階段／provenance；載入核對整檔 SHA-256 與 manifest，一律保留原始 dtype。
+- 接續工作 slice 複製至 CPU，使用 delivered seam 的 video phase 與獨立 audio clock，不修改父 tensor。
+- 版本寫入先完成 sidecars／media，再原子切換 manifest；失敗回復、跨 writer 鎖、磁碟容量檢查、stable ID 重排與父版本失效傳遞均有測試。
+- 新增 **13 項**實際 torch／safetensors 測試；連同時間測試共 **29 項通過**。
+- 本提交是共用底層，後續才接入 Project 圖與既有版本 UI。
+
 ## 待完成
 
-- 完整 native artifacts、來源和階段 lineage、原子版本保存。
+- 將 native artifacts、階段 lineage、原子保存接入執行圖與版本操作。
 - 全部時間軸編輯入口與遷移。
 - 原生 Context／Drift、Dual／SelfLift、嚴格政策與明確 fallback。
 - UI、音訊組裝、Lock、last frame 和回歸驗證。
