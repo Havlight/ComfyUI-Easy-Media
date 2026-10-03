@@ -19,6 +19,7 @@ from ..utils.h3_native_artifacts import (
     commit_native_generation, file_checksum, load_native_latent, media_version_id, native_child_path,
     read_native_manifest, refresh_native_dependencies,
 )
+from ..utils.h3_native_lock import validate_native_locked_video
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
 from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
 from ..utils.h3_native_preflight import (
@@ -138,9 +139,7 @@ class EasyH3NativePreflight(io.ComfyNode):
                         if not raw_videos:
                             raise NativePlanError('LOCK_VIDEO_SOURCE', 'The locked video has no readable source.')
                         for video in raw_videos:
-                            components = video.get_components()
-                            if components.images.shape[0] != plan.raw_frames or float(components.frame_rate) != 24:
-                                raise NativePlanError('LOCK_VIDEO_RANGE', 'The locked video must cover the native raw window at 24 fps without padding or stretching.')
+                            validate_native_locked_video(video, plan.raw_frames)
                 except (OSError, KeyError, TypeError, ValueError, RuntimeError) as error:
                     errors.append(f'Task {index + 1}: {error}')
         if errors:

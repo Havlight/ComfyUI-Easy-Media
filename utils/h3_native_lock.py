@@ -1,4 +1,4 @@
-"""External audio lock on the inherited native audio clock, after context copy."""
+"""Native video lock validation and external audio lock on the inherited clock."""
 from __future__ import annotations
 
 from typing import Any
@@ -8,6 +8,55 @@ import torch.nn.functional as F
 
 from ..modules.motion_context.core import _noise_mask_streams, _official_nested_tensor, _streams_from_latent
 from .h3_native_timing import NativePlanError, round_ratio, sample_at_frame
+
+
+def validate_native_locked_video(video: Any, expected_frames: int) -> None:
+    """Check the actual raw window without materializing file-backed RGB tensors."""
+    import av
+    from comfy_api.latest import InputImpl
+
+    range_error = 'The locked video must cover the native raw window at 24 fps without padding or stretching.'
+    # The generic VIDEO.get_stream_source() can encode a whole in-memory video.
+    # Only use streaming for the concrete file adapter; preserve other adapters.
+    if not isinstance(video, InputImpl.VideoFromFile):
+        components = video.get_components()
+        if components.images.shape[0] != expected_frames or float(components.frame_rate) != 24:
+            raise NativePlanError('LOCK_VIDEO_RANGE', range_error)
+        return
+
+    try:
+        start_time, duration = video.get_active_trim_window()
+        with av.open(video.get_stream_source(), mode='r') as container:
+            if not container.streams.video:
+                raise NativePlanError('LOCK_VIDEO_SOURCE', 'The locked video has no readable video stream.')
+            stream = container.streams.video[0]
+            # Match VideoFromFile.get_components() FPS and trim boundaries.
+            if float(stream.average_rate or 1) != 24:
+                raise NativePlanError('LOCK_VIDEO_RANGE', range_error)
+            stream.thread_count = 1
+            start_pts = int(start_time / stream.time_base)
+            end_pts = int((start_time + duration) / stream.time_base) if duration else None
+            if start_pts:
+                container.seek(start_pts, stream=stream)
+            count = 0
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    raise NativePlanError('LOCK_VIDEO_DECODE', 'The locked video has a frame without a timestamp.')
+                if frame.pts < start_pts:
+                    continue
+                if end_pts is not None and frame.pts >= end_pts:
+                    break
+                count += 1
+                if count > expected_frames:
+                    raise NativePlanError('LOCK_VIDEO_RANGE', range_error)
+            # Header frame counts and duration estimates can hide a short decode.
+            # Iterate actual frames, retaining only the decoder's bounded buffers.
+            if count != expected_frames:
+                raise NativePlanError('LOCK_VIDEO_RANGE', range_error)
+    except NativePlanError:
+        raise
+    except (av.error.FFmpegError, OSError, ValueError, RuntimeError) as error:
+        raise NativePlanError('LOCK_VIDEO_DECODE', f'The locked video could not be decoded: {error}') from error
 
 
 def native_locked_audio_view(metadata: dict[str, Any], audio: dict[str, Any] | None) -> dict[str, Any] | None:
