@@ -87,3 +87,40 @@ def test_edited_parent_content_needs_regeneration(tmp_path):
     with pytest.raises(timing.NativePlanError, match='PARENT_EDITED'):
         preflight.preflight_native_sources(tmp_path, manifest, plans, [1], recipe(), set(),
             [{'user_prompt': 'changed'}, {}], set())
+
+
+def test_timeline_status_marks_edited_parent_and_descendants_without_changing_manifest(tmp_path):
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _latent()
+    _commit(tmp_path, first, plans)
+    _commit(tmp_path, _latent(plans[1], first['h3_native']), plans, index=1)
+    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
+            'tracks': [{'type': 'task', 'segments': [{'id': p.segment_id, 'start_frame': p.start_frame, 'end_frame': p.end_frame,
+                'content': {'continuity_mode': p.continuity_mode}} for p in plans]}]}
+    manifest = artifacts.read_native_manifest(tmp_path)
+    before = copy.deepcopy(manifest)
+    assert [s['status'] for s in status.native_timeline_status(info, manifest)] == ['saved', 'saved']
+    tasks = info['tracks'][0]['segments']
+    tasks[0]['end_frame'] += 17
+    tasks[1]['start_frame'] += 17
+    tasks[1]['end_frame'] += 17
+    assert all(s['status'] != 'saved' for s in status.native_timeline_status(info, manifest))
+    assert manifest == before
+
+
+def test_source_fingerprint_ignores_materialization_but_tracks_source_edits():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    info = {'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90,
+        'content': {'images': [{'id': 'image', 'file_path': 'portrait.png'}]}}]},
+        {'type': 'video', 'segments': [{'id': 'source', 'start_frame': 0, 'end_frame': 90,
+            'content': {'file_path': 'source.mp4', 'shared_reference': False}}]}]}
+    materialized = copy.deepcopy(info)
+    materialized['tracks'][0]['segments'][0]['content']['images'][0]['media_index'] = 3
+    materialized['tracks'][1]['segments'][0]['content']['media_index'] = 1
+    materialized['tracks'][1]['segments'][0]['color'] = 'changed'
+    assert status.native_task_fingerprint(info, 0) == status.native_task_fingerprint(materialized, 0)
+    materialized['tracks'][1]['segments'][0]['content']['file_path'] = 'replacement.mp4'
+    assert status.native_task_fingerprint(info, 0) != status.native_task_fingerprint(materialized, 0)

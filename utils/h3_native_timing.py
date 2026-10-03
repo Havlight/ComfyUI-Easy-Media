@@ -161,6 +161,7 @@ def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
     output.setdefault("frame_rate", 24)
     tasks = []
     for ti, track in enumerate(output.get("tracks", [])):
+        track.setdefault("id", f"legacy-track-{ti}")
         if track.get("type") != "task":
             continue
         for si, task in enumerate(track.get("segments", [])):

@@ -789,7 +789,9 @@ def _build_tracks_info_and_media_outputs(
     if not isinstance(tracks, list):
         raise ValueError("TRACK_DATA.tracks must be a list.")
     native_timing = None
-    if format_name == "MiniMax":
+    if format_name == "MiniMax" and (data.get("h3_native") is not None or any(
+        track.get("type") == "task" and track.get("segments") for track in tracks
+    )):
         from ..utils.h3_native_timing import normalize_native_timeline, native_policy
 
         data = normalize_native_timeline(data)
@@ -839,7 +841,9 @@ def _build_tracks_info_and_media_outputs(
     else:
         timeline_total_length = total_length
     effective_total_length = task_duration_length or timeline_total_length
-    if format_name == "MiniMax":
+    if native_timing is not None and task_duration_length > 0:
+        output_total_length = effective_total_length
+    elif format_name == "MiniMax":
         output_total_length = _video_frame_count_from_duration(
             effective_total_length,
             frame_rate,

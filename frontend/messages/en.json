@@ -466,6 +466,9 @@
     "addLocal": "Add local file"
   },
   "h3Native": {
+    "regenerateTasks": "{count} tasks need regeneration; saved versions are retained.",
+    "statusUnavailable": "Saved-result status unavailable; execution will still validate sources.",
+
     "locateTask": "Select task",
     "staleVersion": "Regenerate: parent version changed",
     "fallbackVersion": "Includes VAE fallback",

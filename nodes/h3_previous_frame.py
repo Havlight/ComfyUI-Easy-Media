@@ -53,7 +53,8 @@ class EasyH3PreviousFrame(io.ComfyNode):
             if pinned.get('video_sha256') and file_checksum(path) != pinned['video_sha256']:
                 raise NativePlanError('SOURCE_CHANGED', 'The previous-frame video changed after preflight.')
             image = read_video_frames(path, video_frame_count(path) - 1, 1, fps=None)
-            source = json.dumps(video_identity(directory, pinned['segment_index'], pinned['generation'], record))
+            source = json.dumps({**video_identity(directory, pinned['segment_index'], pinned['generation'], record),
+                                 'segment_id': parent_segment_id[0]})
         else:
             image, source = load_previous_frame(project_name[0], segment_index[0], resume[0])
         result = expand_image_inputs(images)

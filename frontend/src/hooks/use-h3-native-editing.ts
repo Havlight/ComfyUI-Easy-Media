@@ -59,11 +59,14 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
     if (format !== 'MiniMax') return
     const key = format + serialized
     if (converted.current.has(key)) return
-    converted.current.add(key)
     try {
       const before = currentRef.current
       const next = prepare(before)
-      if (JSON.stringify(next) !== serialized) apply(next, before)
+      if (JSON.stringify(next) !== serialized) {
+        converted.current.add(key)
+        if (converted.current.size > 256) converted.current.delete(converted.current.values().next().value!)
+        apply(next, before)
+      }
     } catch (cause: unknown) { report(cause) }
   }, [format, serialized])
 

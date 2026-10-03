@@ -14,6 +14,7 @@ from test_minimax_node import _h3_project_inputs, _h3_sampling_mode, _load_minim
 
 def native_inputs(mode="single", fallback=False, **options):
     inputs = _h3_project_inputs(project_name="native-test", sampling_mode=_h3_sampling_mode(mode, **options))
+    inputs["allow_vae_fallback"] = [fallback]
     info = inputs["tracks_info"][0]
     info["h3_native"] = {"version": 1, "allow_vae_fallback": fallback}
     first = info["tracks"][0]["segments"][0]
@@ -58,8 +59,8 @@ def test_native_strict_rejects_pixel_upscale_before_project_changes(monkeypatch)
     module = _load_minimax_node(monkeypatch)
     def no_writes(*args, **kwargs):
         pytest.fail("preflight must not initialize or clear existing project state")
-    monkeypatch.setattr(module._project_module, "initialize_h3_project", no_writes)
-    monkeypatch.setattr(module._project_module, "clear_h3_project_segments_from", no_writes)
+    monkeypatch.setattr(module._project_module, "initialize_h3_project", no_writes, raising=False)
+    monkeypatch.setattr(module._project_module, "clear_h3_project_segments_from", no_writes, raising=False)
     inputs = native_inputs("dual", upscale_by=[1.25], upscale_model=["None"])
     inputs.update(project_save=["override"], segment_count=[-1])
     with pytest.raises(ValueError, match="PIXEL_UPSCALE"):
@@ -239,6 +240,7 @@ def test_source_resize_rebuilds_both_stage_clocks_without_reencoding_native_audi
 def test_project_fallback_explicit_false_overrides_legacy_editor_preference(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs(fallback=True)
+    inputs.pop("allow_vae_fallback")
     inputs['tracks_info'][0]['tracks'][0]['segments'][1]['content']['images'] = [{'source_type': 'previous_frame'}]
     module.EasyMultiTrackProject.execute(**inputs)
     inputs['allow_vae_fallback'] = [False]
@@ -282,3 +284,25 @@ def test_runtime_gate_rejects_invalid_second_schedule_before_task_work(monkeypat
     with pytest.raises(ValueError, match='SCHEDULE'):
         runtime.EasyH3NativePreflight.execute(native_inputs()['tracks_info'][0], 'missing-project', json.dumps(config),
             model, object(), object(), sigmas=torch.tensor([1.0, 0.0]), second_sigmas=torch.tensor(bad))
+
+@pytest.mark.parametrize('duration', [120, 124, 125])
+@pytest.mark.parametrize('method', ['shot', 'context', 'context_drift'])
+@pytest.mark.parametrize('mode', ['single', 'dual', 'selflift'])
+def test_locked_raw_windows_are_native_in_all_sampling_modes(monkeypatch, duration, method, mode):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs(mode, **({'upscale_by': [1.0]} if mode == 'dual' else {}))
+    info = inputs['tracks_info'][0]
+    tasks = info['tracks'][0]['segments']
+    tasks[0]['end_frame'] = duration
+    tasks[1].update(start_frame=duration, end_frame=duration * 2)
+    for task in tasks:
+        task['content']['task_mode'] = 'ref'
+    tasks[1]['content']['continuity_mode'] = method
+    info['tracks'].append({'id': 'locked-video', 'type': 'video', 'audio_locked': True,
+        'segments': [{'start_frame': 0, 'end_frame': duration * 2 + 34, 'content': {'media_type': 'video'}}]})
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    prepares = [json.loads(n['inputs']['plan_json']) for n in graph.values() if n['class_type'] == 'easy h3NativePrepare']
+    assert all(p['raw_frames'] % 17 == 5 for p in prepares)
+    assert prepares[1]['context_frames'] == (0 if method == 'shot' else 39)
+    assert all(n['class_type'] != 'easy h3ContextMediaTrim' for n in graph.values())
+    assert sum(n['class_type'] == 'easy h3NativeMediaView' for n in graph.values()) == 2

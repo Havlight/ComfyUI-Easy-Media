@@ -109,7 +109,7 @@ def test_load_conversion_aligns_generation_only_and_preserves_legacy_policy():
     converted = timing.normalize_native_timeline(data)
     assert converted["h3_native"] == {"version": 2, "allow_vae_fallback": True}
     assert [(p.start_frame, p.end_frame) for p in timing.compile_native_plan(converted)] == [(0, 243), (243, 481)]
-    assert converted["tracks"][1] == media
+    assert converted["tracks"][1]["segments"] == media["segments"]
     assert data["tracks"][0]["segments"][0]["end_frame"] == 240
     assert timing.normalize_native_timeline(converted) == converted
 

@@ -104,6 +104,7 @@ def _load_basic_module(monkeypatch):
     utils.parse_subtitle_text = lambda *args, **kwargs: []
     utils.resize_image = lambda image, *args, **kwargs: image
     utils.merge_video_track_with_ffmpeg = lambda *args, **kwargs: None
+    utils.render_single_video_segment_with_ffmpeg = lambda *args, **kwargs: None
     utils.canonicalize_multitrack_slot_content = lambda value: value
     utils.multitrack_is_shared_reference = lambda value: False
     utils.multitrack_is_muted_image = lambda value: False

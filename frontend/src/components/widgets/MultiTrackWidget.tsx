@@ -1,3 +1,4 @@
+import { useH3TimelineStatus } from '@/hooks/use-h3-timeline-status'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -260,6 +261,7 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   const missingModelDirectoryName = missingModel?.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? ''
 
   const nativeEditing = useH3NativeEditing(committedData, resolutionInput.format, commitTrackChange)
+  const savedStatus = useH3TimelineStatus(app, node, committedData, resolutionInput.format === 'MiniMax')
   const commitNormalizedTrackChange = nativeEditing.commitEdit
 
   function setSingleSelectedSegment(segmentId: string | null) {
@@ -1452,6 +1454,14 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
                 onClick={() => { nativeEditing.dismissNotice(); undoTrackChange() }}>{t('h3Native.undo')}</Button>
             </div>
           )}
+          {savedStatus.affected.length > 0 && (
+            <div role="status" className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1 text-muted-foreground">
+              <span>{t('h3Native.regenerateTasks', { count: savedStatus.affected.length })}</span>
+              <Button variant="ghost" size="sm" className="h-6 text-[10px]"
+                onClick={() => handleSelectSegment(savedStatus.affected[0], 'replace')}>{t('h3Native.locateTask')}</Button>
+            </div>
+          )}
+          {savedStatus.error && <div className="shrink-0 px-2 py-1 text-muted-foreground" title={savedStatus.error}>{t('h3Native.statusUnavailable')}</div>}
           {nativeEditing.error && (
             <div role="alert" className="flex shrink-0 items-center justify-between gap-2 bg-destructive/10 px-2 py-1 text-destructive">
               <span>{t('h3Native.editFailed')} [{nativeEditing.error.code}] {nativeEditing.error.message}</span>

@@ -13,6 +13,7 @@ from typing import Any
 from .h3_native import new_native_metadata, validate_native_context_contract, validate_native_latent
 from .h3_native_artifacts import file_checksum, load_native_latent, native_child_path, refresh_native_dependencies
 from .h3_native_sources import read_delivered_seed
+from .h3_native_status import task_content_signature
 from .h3_native_timing import NativePlanError, NativeTaskPlan, audio_clock
 
 
@@ -123,7 +124,7 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                 source = None if planned is not None else existing(parent.segment_id, index - 1)
                 record = source['record'] if source else {}
                 source_recipe = record.get('native_recipe', {})
-                if source_recipe.get('task_content') is not None and source_recipe['task_content'] != contents[index - 1]:
+                if source_recipe.get('task_content') is not None and task_content_signature(source_recipe['task_content']) != task_content_signature(contents[index - 1]):
                     raise NativePlanError('PARENT_EDITED', 'The predecessor content changed; regenerate it before continuing.', plan.segment_id)
                 imported = False
                 checked_video = False

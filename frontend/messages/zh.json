@@ -466,6 +466,9 @@
     "addLocal": "添加本地文件"
   },
   "h3Native": {
+    "regenerateTasks": "{count} 個任務需重新生成；已保存的版本仍保留。",
+    "statusUnavailable": "暫時無法檢查已保存結果；執行時仍會檢查來源。",
+
     "locateTask": "選取片段",
     "staleVersion": "需重新生成：前段版本已變更",
     "fallbackVersion": "含 VAE 回退",

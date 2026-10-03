@@ -61,7 +61,7 @@ class EasyH3NativePreflight(io.ComfyNode):
                 model: Any, vae: Any, audio_vae: Any, second_model: Any = None,
                 sigmas: torch.Tensor | None = None, second_sigmas: torch.Tensor | None = None,
                 context_second_sigmas: torch.Tensor | None = None, project_static: Any = None) -> io.NodeOutput:
-        from ..utils.h3_project import h3_task_entries, h3_task_is_passthrough, h3_task_type, h3_generation_mode
+        from ..utils.h3_project import h3_task_entries, h3_task_is_passthrough, h3_task_type, h3_generation_mode, h3_locked_video_track
         from ..utils.h3_previous_frame import previous_frame_position
         from .project import EasyH3ProjectStaticPrepare
         from .basic import MultiTrackTaskOutput
@@ -95,11 +95,22 @@ class EasyH3NativePreflight(io.ComfyNode):
                         or not torch.isfinite(schedule).all() or torch.any(schedule < 0)
                         or torch.any(schedule[1:] > schedule[:-1]) or not schedule[0] > schedule[-1]):
                     raise NativePlanError('SCHEDULE', f'The {name} schedule must be finite, nonnegative and descending.')
-            if config['run_second_pass'] and recipe['upscale_model'] != 'None':
+            if (config['run_second_pass'] or recipe['sampling_mode'] == 'selflift') and recipe['upscale_model'] != 'None':
                 if not folder_paths.get_full_path('latent_upscale_models', recipe['upscale_model']):
                     raise NativePlanError('UPSCALER_MISSING', 'The selected latent upscaler is unavailable.')
         directory = _project_directory(project_name)
-        state = preflight_native_sources(directory, read_native_manifest(directory), plans, selected,
+        manifest = read_native_manifest(directory)
+        from ..utils.h3_native_status import native_timeline_status
+        status = {item['segment_id']: item['status'] for item in native_timeline_status(tracks_info, manifest)}
+        selected_ids = {plans[i].segment_id for i in selected}
+        for index in selected:
+            parent_ids = {plans[index].parent_segment_id}
+            if index in previous_frames and index:
+                parent_ids.add(plans[index - 1].segment_id)
+            for sid in parent_ids - selected_ids - {None}:
+                if status.get(sid) in {'edited', 'parent_changed'}:
+                    raise NativePlanError('PARENT_EDITED', 'The predecessor or its source changed; include it in this run.', sid)
+        state = preflight_native_sources(directory, manifest, plans, selected,
                                          recipe, previous_frames, contents, passthrough)
         # Resolve every task's references before the first sampler. Reuse the
         # static preparation cache when each task executes later.
@@ -112,7 +123,24 @@ class EasyH3NativePreflight(io.ComfyNode):
                         task_index=index, task_start_frame=plan.start_frame,
                         task_duration_frames=plan.end_frame-plan.start_frame, fps=24,
                         generation_mode='reference' if index in passthrough else h3_generation_mode(h3_task_type(entries[index], tracks_info)))
-                    MultiTrackTaskOutput.execute(tracks_info=prepared.result[1], task_index=index, prompt_format='default')
+                    task_info = prepared.result[1]
+                    output = MultiTrackTaskOutput.execute(tracks_info=task_info, task_index=index, prompt_format='default').result
+                    from .minimax import MAX_REF_IMAGES, MAX_REF_VIDEOS, MAX_REF_AUDIOS
+                    for label, values, limit in (('image', output[4], MAX_REF_IMAGES),
+                                                 ('audio', output[5], MAX_REF_AUDIOS), ('video', output[6], MAX_REF_VIDEOS)):
+                        count = len(values) + int(label == 'image' and index in previous_frames)
+                        if count > limit and (h3_generation_mode(h3_task_type(entries[index], tracks_info)) == 'reference' or output[5] or output[6] or index in previous_frames):
+                            raise NativePlanError('REFERENCE_LIMIT', f'Too many {label} references: {count}; maximum {limit}.')
+                    locked_video = h3_locked_video_track(entries[index], tracks_info)
+                    if locked_video is not None and index not in passthrough:
+                        raw_info = EasyH3NativeLockedVideoInfo.execute(task_info, json.dumps(plan.as_dict()), locked_video['id']).result[0]
+                        raw_videos = MultiTrackTaskOutput.execute(tracks_info=raw_info, task_index=0, prompt_format='default').result[6]
+                        if not raw_videos:
+                            raise NativePlanError('LOCK_VIDEO_SOURCE', 'The locked video has no readable source.')
+                        for video in raw_videos:
+                            components = video.get_components()
+                            if components.images.shape[0] != plan.raw_frames or float(components.frame_rate) != 24:
+                                raise NativePlanError('LOCK_VIDEO_RANGE', 'The locked video must cover the native raw window at 24 fps without padding or stretching.')
                 except (OSError, KeyError, TypeError, ValueError, RuntimeError) as error:
                     errors.append(f'Task {index + 1}: {error}')
         if errors:
@@ -237,7 +265,9 @@ class EasyH3NativePrepare(io.ComfyNode):
         if previous_frame_source:
             identity = json.loads(previous_frame_source)
             manifest = read_native_manifest(_project_directory(project_name))
-            segment = manifest.get("segments", {}).get(str(identity["segment_index"]), {})
+            segment = next((item for item in manifest.get("segments", {}).values()
+                            if identity.get("segment_id") and item.get("segment_id") == identity["segment_id"]),
+                           manifest.get("segments", {}).get(str(identity["segment_index"]), {}))
             record = segment.get("generations", {}).get(str(identity["generation"]), {})
             if record.get("video") != identity["video"]:
                 raise NativePlanError("REFERENCE_VERSION", "The previous-frame version changed during preparation.")
@@ -250,27 +280,6 @@ class EasyH3NativePrepare(io.ComfyNode):
                         if ancestor not in metadata["fallback_history"]:
                             metadata["fallback_history"].append(ancestor)
         return io.NodeOutput(prepare_native_canvas(latent, high_meta), high_source, low_source, state)
-
-
-class EasyH3NativeMasked(io.ComfyNode):
-    """Hard native video prefix and an eight-tick half-cosine audio release."""
-
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(node_id="easy h3NativeMasked", display_name="H3 Native Masked Context", category="EasyUse/H3/dev",
-                         is_dev_only=True, inputs=[io.Latent.Input("latent"), io.Latent.Input("context_latent"),
-                                                 io.Boolean.Input("refine", default=False)],
-                         outputs=[io.Latent.Output("latent")])
-
-    @classmethod
-    def execute(cls, latent: dict[str, Any], context_latent: dict[str, Any], refine: bool = False) -> io.NodeOutput:
-        from ..modules.motion_context.drift_control_av import prepare_context_swap_latent
-
-        if not context_latent.get("h3_native_source"):
-            raise NativePlanError("MASKED_SOURCE", "Masked context requires a verified native source adapter.")
-        prepared, _, _ = prepare_context_swap_latent(latent, context_latent, 39,
-                                                     continue_audio=not refine, freeze_audio=refine)
-        return io.NodeOutput(prepared)
 
 
 class EasyH3NativeDriftModel(io.ComfyNode):
