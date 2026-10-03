@@ -38,7 +38,7 @@ export function isH3Continuation(segment: MultiTrackSegment): boolean {
  */
 export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
   if (!candidate.h3_native) return candidate
-  if (candidate.h3_native.version !== 1 || typeof candidate.h3_native.allow_vae_fallback !== 'boolean') {
+  if (![1, 2].includes(candidate.h3_native.version) || (candidate.h3_native.allow_vae_fallback !== undefined && typeof candidate.h3_native.allow_vae_fallback !== 'boolean')) {
     throw new H3NativeTimingError('POLICY_VERSION', 'Unsupported native timing policy.')
   }
   if (candidate.frame_rate !== 24) throw new H3NativeTimingError('FORMAT', 'Native H3 requires 24 fps.')
@@ -54,7 +54,7 @@ export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
     const requested = segment.end_frame - segment.start_frame
     const passthrough = segment.content.task_mode === 'passthrough'
     if (passthrough && requested < H3_NATIVE_CONTEXT_FRAMES) {
-      throw new H3NativeTimingError('SEED_SHORT', 'A native source task needs at least 39 frames; extend it or keep the legacy timeline.', segment.id)
+      throw new H3NativeTimingError('SEED_SHORT', 'A native source task needs at least 39 frames; extend it before generating.', segment.id)
     }
     const continuation = !!previous && isH3Continuation(segment)
     const duration = passthrough ? Math.max(1, Math.round(requested)) : snapH3NativeDuration(requested, continuation)
@@ -70,7 +70,7 @@ export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
       end_frame: start + duration,
       content: { ...segment.content, continuity_mode: continuation
         ? segment.content.continuity_mode === 'context_swap' ? 'context_drift' : segment.content.continuity_mode
-        : 'shot' },
+        : segment.content.continuity_mode === 'context_masked' ? 'context_masked' : 'shot' },
     }
     const owner = candidate.tracks.find((track) => track.segments.some((item) => item.id === segment.id))
     if (owner?.locked && (next.start_frame !== segment.start_frame || next.end_frame !== segment.end_frame
@@ -95,6 +95,9 @@ export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
         throw new H3NativeTimingError('MARKER_IMPORT', 'Split imported source tasks explicitly.', task.id)
       }
       const frame = h3NativeSplitFrame(start, task.end_frame, marker.frame, continuation)
+      if (frame !== marker.frame && candidate.tracks.some((track) => track.locked && track.segments.some((item) => item.id === task.id))) {
+        throw new H3NativeTimingError('TRACK_LOCKED', 'Unlock the task track before aligning its marker.', task.id)
+      }
       markerMap.set(marker.id, { ...marker, frame })
       start = frame
       continuation = true

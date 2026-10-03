@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-NATIVE_VERSION = 1
+NATIVE_VERSION = 2
 CONTEXT_FRAMES = 39
 FRAME_STEP = 17
 MAX_RAW_FRAMES = 3592
@@ -28,11 +28,11 @@ def native_policy(info: dict[str, Any]) -> dict[str, Any] | None:
     value = info.get("h3_native")
     if value is None:
         return None
-    if not isinstance(value, dict) or value.get("version") != NATIVE_VERSION:
+    if not isinstance(value, dict) or value.get("version") not in {1, NATIVE_VERSION}:
         raise NativePlanError("POLICY_VERSION", "Unsupported native timing policy; upgrade the workflow.")
-    if not isinstance(value.get("allow_vae_fallback"), bool):
+    if "allow_vae_fallback" in value and not isinstance(value["allow_vae_fallback"], bool):
         raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
-    return {"version": NATIVE_VERSION, "allow_vae_fallback": value["allow_vae_fallback"]}
+    return {"version": NATIVE_VERSION, "allow_vae_fallback": value.get("allow_vae_fallback", False)}
 
 
 def round_ratio(numerator: int, denominator: int) -> int:
@@ -98,7 +98,7 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
         if mode not in CONTINUITY_MODES:
             raise NativePlanError("METHOD", f"Unsupported continuation method: {mode}.", sid)
         passthrough = content.get("task_mode") == "passthrough"
-        context = mode != "shot" and not passthrough
+        context = mode != "shot" and not passthrough and not (mode == "context_masked" and not result)
         previous = result[-1] if result else None
         if previous and start < previous.end_frame:
             raise NativePlanError("OVERLAP", "Generation tasks cannot overlap; context is managed internally.", sid)
@@ -144,37 +144,80 @@ def native_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-def reconcile_native_override(data: dict[str, Any]) -> dict[str, Any]:
-    """Prompt override changes generation tasks only; external media retain timing."""
+def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert old H3 data at the boundary; all generated tasks use one geometry.
+
+    Keep media timing, historical preferences and retired method identities.
+    Validation of supported execution methods is a separate preflight step.
+    """
     from copy import deepcopy
 
-    if native_policy(data) is None:
-        return data
-    output = deepcopy(data)
-    output["task_markers"] = []
-    tasks = native_task_segments(output)
-    by_id: dict[str, dict[str, Any]] = {}
+    output = {**data, "tracks": deepcopy(data.get("tracks", [])),
+              "task_markers": deepcopy(data.get("task_markers", []))}
+    policy = native_policy(output) or {"version": NATIVE_VERSION, "allow_vae_fallback": False}
+    output["h3_native"] = policy
+    if float(output.get("frame_rate", 24)) != 24:
+        raise NativePlanError("FORMAT", "H3 generation requires a 24 fps timeline; convert its frame rate first.")
+    output.setdefault("frame_rate", 24)
+    tasks = []
+    for ti, track in enumerate(output.get("tracks", [])):
+        if track.get("type") != "task":
+            continue
+        for si, task in enumerate(track.get("segments", [])):
+            task.setdefault("id", f"legacy-task-{track.get('id', ti)}-{si}")
+            tasks.append((task, track))
+    tasks.sort(key=lambda pair: (pair[0]["start_frame"], pair[0]["id"]))
     previous = None
     shift = 0
-    for task in tasks:
+    seen: set[str] = set()
+    for task, track in tasks:
+        sid = task["id"]
+        if not isinstance(sid, str) or not sid or sid in seen:
+            raise NativePlanError("SEGMENT_ID", "Each task needs a unique stable ID.")
+        seen.add(sid)
+        start, end = task["start_frame"], task["end_frame"]
+        if type(start) is not int or type(end) is not int or start < 0 or end <= start:
+            raise NativePlanError("RANGE", "Use nonnegative integer half-open frame ranges.", sid)
         content = task.setdefault("content", {})
         mode = content.get("continuity_mode", "shot")
-        context = previous is not None and mode != "shot" and content.get("task_mode") != "passthrough"
-        start = previous["end_frame"] if context else max(previous["end_frame"] if previous else 0, task["start_frame"] + shift)
-        duration = task["end_frame"] - task["start_frame"]
-        if content.get("task_mode") != "passthrough":
-            duration = snap_duration(duration, context)
-        end = start + duration
-        shift = end - task["end_frame"]
-        task.update(start_frame=start, end_frame=end)
-        content["continuity_mode"] = mode if context else "shot"
-        previous = by_id[task["id"]] = task
-    for track in output.get("tracks", []):
-        if track.get("type") == "task":
-            track["segments"] = [by_id[s["id"]] for s in track.get("segments", [])]
-    output["total_length"] = max(output.get("total_length", 0), previous["end_frame"] if previous else 0)
-    compile_native_plan(output)
+        mode = {"context_swap": "context_drift", "context_test": "context"}.get(mode, mode)
+        passthrough = content.get("task_mode") == "passthrough"
+        continuation = previous is not None and mode != "shot" and not passthrough
+        duration = end - start
+        if passthrough and duration < CONTEXT_FRAMES:
+            raise NativePlanError("SEED_SHORT", "A source task needs at least 39 frames.", sid)
+        if not passthrough:
+            duration = snap_duration(duration, continuation)
+        new_start = previous["end_frame"] if continuation else max(previous["end_frame"] if previous else 0, start + shift)
+        new_end = new_start + duration
+        new_mode = mode if continuation or mode == "context_masked" else "shot"
+        if track.get("locked") and (new_start != start or new_end != end or new_mode != content.get("continuity_mode", "shot")):
+            raise NativePlanError("TRACK_LOCKED", "Unlock the task track before aligning its timing.", sid)
+        task.update(start_frame=new_start, end_frame=new_end)
+        content["continuity_mode"] = new_mode
+        previous = task
+        shift = new_end - end
+    for task, track in tasks:
+        start = task["start_frame"]
+        continuation = task.get("content", {}).get("continuity_mode", "shot") != "shot"
+        for marker in sorted(output.get("task_markers", []), key=lambda item: item["frame"]):
+            if not start < marker["frame"] < task["end_frame"]:
+                continue
+            if task.get("content", {}).get("task_mode") == "passthrough":
+                raise NativePlanError("MARKER_IMPORT", "Split imported source tasks explicitly.", task["id"])
+            frame = native_split_frame(start, task["end_frame"], marker["frame"], continuation)
+            if frame != marker["frame"] and track.get("locked"):
+                raise NativePlanError("TRACK_LOCKED", "Unlock the task track before aligning its marker.", task["id"])
+            marker["frame"] = frame
+            start, continuation = frame, True
+    output["total_length"] = max(output.get("total_length", 0),
+        max((s["end_frame"] for t in output.get("tracks", []) for s in t.get("segments", [])), default=0))
     return output
+
+
+def reconcile_native_override(data: dict[str, Any]) -> dict[str, Any]:
+    """Prompt override uses the same transaction as editor/load normalization."""
+    return normalize_native_timeline(data)
 
 
 def audio_clock(plan: NativeTaskPlan, parent: dict[str, Any] | None = None) -> dict[str, int]:

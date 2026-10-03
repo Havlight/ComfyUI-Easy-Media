@@ -33,28 +33,30 @@ describe('native editor transactions', () => {
     expect(result.current.data.h3_native?.allow_vae_fallback).toBe(false)
   })
 
-  it('keeps legacy geometry until migration is reviewed, and can undo the upgrade', () => {
+  it('automatically aligns legacy data without confirmation and can undo/redo the whole conversion', () => {
     const initial = initialData(false)
     initial.tracks[0].segments[0].end_frame = 240
     const { result } = renderHook(() => useEditor(initial))
-    act(() => result.current.previewMigration())
-    expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
-    expect(result.current.migration?.tracks[0].segments[0].end_frame).toBe(243)
-    act(() => result.current.applyMigration())
-    expect(result.current.data.h3_native?.allow_vae_fallback).toBe(false)
+    expect(result.current.data.tracks[0].segments[0].end_frame).toBe(243)
+    expect(result.current.data.h3_native?.version).toBe(2)
+    expect(result.current.notice).toBe(1)
     act(() => result.current.undo())
     expect(result.current.data.h3_native).toBeUndefined()
     expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
+    act(() => result.current.redo())
+    expect(result.current.data.tracks[0].segments[0].end_frame).toBe(243)
   })
 
   it('does not put a rejected short split into undo history', () => {
     const initial = initialData()
     initial.tracks[0].segments[0].end_frame = 39
     const { result } = renderHook(() => useEditor(initial))
+    const accepted = result.current.data
+    const couldUndo = result.current.canUndo
     act(() => result.current.commitEdit(() => splitTrackSegmentAtFrame(result.current.data, 'a', 20)))
     expect(result.current.error?.code).toBe('SPLIT_SHORT')
-    expect(result.current.data).toEqual(initial)
-    expect(result.current.canUndo).toBe(false)
+    expect(result.current.data).toEqual(accepted)
+    expect(result.current.canUndo).toBe(couldUndo)
   })
 
   it('keeps source positions and native rules when VAE fallback is enabled', () => {
@@ -74,11 +76,11 @@ describe('native editor transactions', () => {
     initial.tracks[0].segments = []
     const { result } = renderHook(() => useEditor(initial))
     act(() => result.current.commitEdit(initialData(false)))
-    expect(result.current.data.h3_native).toEqual({ version: 1, allow_vae_fallback: false })
+    expect(result.current.data.h3_native).toEqual({ version: 2 })
   })
 })
 
-it('keeps native policy inactive for other formats and reviews timing when switching back', () => {
+it('keeps native policy inactive for other formats and automatically aligns when switching back', () => {
   const { result, rerender } = renderHook(({ format }) => {
     const [data, setData] = useState(initialData())
     return { data, ...useH3NativeEditing(data, format, setData) }
@@ -90,6 +92,31 @@ it('keeps native policy inactive for other formats and reviews timing when switc
   expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
   expect(result.current.data.h3_native?.allow_vae_fallback).toBe(false)
   rerender({ format: 'MiniMax' })
-  expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
-  expect(result.current.migration?.tracks[0].segments[0].end_frame).toBe(243)
+  expect(result.current.data.tracks[0].segments[0].end_frame).toBe(243)
+})
+
+
+it('commits multi-task ripple immediately and undoes all affected tasks together', () => {
+  const initial = initialData()
+  initial.tracks[0].segments.push(...[0, 1].map((i) => ({ ...initial.tracks[0].segments[0], id: `b${i}`,
+    start_frame: 243 + i * 238, end_frame: 481 + i * 238,
+    content: { media_type: 'none' as const, continuity_mode: 'context' as const } })))
+  const { result } = renderHook(() => useEditor(initial))
+  const before = result.current.data
+  const requested = structuredClone(before)
+  requested.tracks[0].segments[0].end_frame = 260
+  act(() => result.current.commitEdit(requested))
+  expect(result.current.data.tracks[0].segments.map((s) => s.end_frame)).toEqual([260, 498, 736])
+  expect(result.current.notice).toBe(2)
+  act(() => result.current.undo())
+  expect(result.current.data).toEqual(before)
+})
+
+it('refuses automatic conversion of a locked task without moving media', () => {
+  const initial = initialData(false)
+  initial.tracks[0].locked = true
+  initial.tracks[0].segments[0].end_frame = 240
+  const { result } = renderHook(() => useEditor(initial))
+  expect(result.current.error?.code).toBe('TRACK_LOCKED')
+  expect(result.current.data).toEqual(initial)
 })

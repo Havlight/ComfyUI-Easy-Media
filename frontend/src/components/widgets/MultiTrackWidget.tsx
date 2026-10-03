@@ -81,7 +81,6 @@ import { adjustMultiTrackEditorNodeHeight } from '@/lib/timeline-node-size'
 import type { MultiTrack, MultiTrackSegment, MultiTrackSegmentContent, MultiTrackSourceType, MultiTrackTaskImage, MultiTrackType, TrackData } from '@/types/multitrack'
 import { MultiTrackRuler, MULTITRACK_LEFT_GUTTER, MULTITRACK_RIGHT_RESERVE } from './multitrack/MultiTrackRuler'
 import { MultiTrackToolbar } from './multitrack/MultiTrackToolbar'
-import { H3NativeControls } from './multitrack/H3NativeControls'
 import { PreviewArea } from './multitrack/PreviewArea'
 import { SplitTaskSegmentDialog } from './multitrack/SplitTaskSegmentDialog'
 import { TrackArea } from './multitrack/TrackArea'
@@ -1446,10 +1445,12 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
           className="relative flex h-full w-full min-w-0 max-w-full flex-col overflow-hidden rounded text-foreground font-sans text-xs select-none"
           aria-busy={isSmartSplitting || isRecognizingSubtitles}
         >
-          {resolutionInput.format === 'MiniMax' && (
-            <H3NativeControls data={data} isNew={nativeEditing.isNewH3} migration={nativeEditing.migration}
-              onChange={commitNormalizedTrackChange} onMigrate={nativeEditing.previewMigration}
-              onApply={nativeEditing.applyMigration} onCancel={nativeEditing.cancelMigration} />
+          {resolutionInput.format === 'MiniMax' && nativeEditing.notice !== null && (
+            <div role="status" className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1 text-muted-foreground">
+              <span>{t('h3Native.alignedTasks', { count: nativeEditing.notice })}</span>
+              <Button variant="ghost" size="sm" className="h-6 text-[10px]" disabled={!canUndo}
+                onClick={() => { nativeEditing.dismissNotice(); undoTrackChange() }}>{t('h3Native.undo')}</Button>
+            </div>
           )}
           {nativeEditing.error && (
             <div role="alert" className="flex shrink-0 items-center justify-between gap-2 bg-destructive/10 px-2 py-1 text-destructive">

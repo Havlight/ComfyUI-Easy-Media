@@ -789,12 +789,12 @@ def _build_tracks_info_and_media_outputs(
     if not isinstance(tracks, list):
         raise ValueError("TRACK_DATA.tracks must be a list.")
     native_timing = None
-    if format_name == "MiniMax" and data.get("h3_native") is not None:
-        from ..utils.h3_native_timing import compile_native_plan, native_policy
+    if format_name == "MiniMax":
+        from ..utils.h3_native_timing import normalize_native_timeline, native_policy
 
+        data = normalize_native_timeline(data)
+        tracks = data.get("tracks", [])
         native_timing = native_policy(data)
-        # Validate original integer ranges before media loading or normalization.
-        compile_native_plan({**data, "format": format_name})
 
     materialized_types = (
         {"image", "audio", "video"}

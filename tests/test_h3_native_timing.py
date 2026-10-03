@@ -98,3 +98,32 @@ def test_native_markers_expand_legal_stable_tasks():
     info['task_markers'][0]['frame'] = 120
     with pytest.raises(ValueError, match='MARKER_GRID'):
         timing.compile_native_plan(info)
+
+
+def test_load_conversion_aligns_generation_only_and_preserves_legacy_policy():
+    data = _info({"id": "a", "start_frame": 0, "end_frame": 240, "content": {}},
+                 {"id": "b", "start_frame": 240, "end_frame": 480, "content": {"continuity_mode": "context"}})
+    data["h3_native"]["allow_vae_fallback"] = True
+    media = {"type": "video", "locked": True, "segments": [{"start_frame": 0, "end_frame": 480}]}
+    data["tracks"].append(media)
+    converted = timing.normalize_native_timeline(data)
+    assert converted["h3_native"] == {"version": 2, "allow_vae_fallback": True}
+    assert [(p.start_frame, p.end_frame) for p in timing.compile_native_plan(converted)] == [(0, 243), (243, 481)]
+    assert converted["tracks"][1] == media
+    assert data["tracks"][0]["segments"][0]["end_frame"] == 240
+    assert timing.normalize_native_timeline(converted) == converted
+
+
+def test_load_conversion_does_not_bypass_track_locks():
+    data = _info({"id": "a", "start_frame": 0, "end_frame": 240, "content": {}})
+    data["tracks"][0]["locked"] = True
+    with pytest.raises(timing.NativePlanError, match="TRACK_LOCKED"):
+        timing.normalize_native_timeline(data)
+
+
+def test_load_conversion_aligns_markers_using_the_same_split_contract():
+    data = _info({"id": "a", "start_frame": 0, "end_frame": 240, "content": {}})
+    data["task_markers"] = [{"id": "cut", "frame": 120}]
+    converted = timing.normalize_native_timeline(data)
+    assert converted["task_markers"][0]["frame"] == 124
+    assert len(timing.compile_native_plan(converted)) == 2

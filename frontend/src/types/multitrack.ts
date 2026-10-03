@@ -1,8 +1,9 @@
 export type MultiTrackType = 'task' | 'video' | 'audio' | 'subtitle'
 
 export interface H3NativePolicy {
-  version: 1
-  allow_vae_fallback: boolean
+  version: 1 | 2
+  /** Legacy editor preference, retained only for Project migration. */
+  allow_vae_fallback?: boolean
 }
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
