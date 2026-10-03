@@ -28,7 +28,7 @@ def main() -> None:
     parser.add_argument('--upscale-model', default='None')
     parser.add_argument('--alternate-prompt')
     parser.add_argument('--seed', type=int, default=721)
-    parser.add_argument('--method', choices=('context', 'context_drift', 'context_masked'), default='context')
+    parser.add_argument('--method', choices=('context', 'context_drift'), default='context')
     parser.add_argument('--mode', choices=('single', 'dual', 'selflift'), default='single')
     parser.add_argument('--prompt', default='A woman wearing a blue jacket slowly turns and raises her hand in a sunny garden. Continuous camera movement, stable face, natural light. Leaves rustle softly.')
     args = parser.parse_args()
@@ -82,14 +82,14 @@ def main() -> None:
     info = node('7', 'easy multiTrackEditor', resolution='width x height (custom)',
                 **{'resolution.width': 320, 'resolution.height': 256, 'resolution.resize_method': 'stretch'},
                 format='MiniMax', track_data=json.dumps({'frame_rate': 24, 'total_length': end,
-                    'h3_native': {'version': 1, 'allow_vae_fallback': False},
+                    'h3_native': {'version': 2},
                     'task_markers': [], 'tracks': tracks}))
     sigmas = node('8', 'ManualSigmas', sigmas='1, .995, .9825, .9607, .9234, .8553, .7207, .4249, .2125, 0')
     sampler = node('9', 'KSamplerSelect', sampler_name='euler')
     second_sigmas = node('8b', 'ManualSigmas', sigmas='.72, .5, .3, .14, .06, 0')
     name = args.project_name or 'native-validation-' + uuid.uuid4().hex[:12]
     node('10', 'easy multitrackProject', tracks_info=info, model_loader=loader, project_name=name,
-         project_save='new', segment_start_number=args.start, segment_count=-1, seed=args.seed,
+         project_save='new', segment_start_number=args.start, segment_count=-1, seed=args.seed, allow_vae_fallback=False,
          sampling_plan='custom', sampling_mode=args.mode, **{'1st_pass_only': False},
          disable_2nd_noise=False, upscale_by=2.0 if args.upscale_model != 'None' and args.mode == 'dual' else 1.0, upscale_model=args.upscale_model, enabled_tiling='false',
          sampler=sampler, sigmas=sigmas,

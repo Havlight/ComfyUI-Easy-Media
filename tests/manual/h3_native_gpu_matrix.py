@@ -19,7 +19,7 @@ def main() -> None:
     for name in ('model', 'clip', 'lora', 'video-vae', 'audio-vae', 'output'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--modes', default='single,selflift,dual')
-    parser.add_argument('--methods', default='context,context_drift,context_masked')
+    parser.add_argument('--methods', default='context,context_drift')
     parser.add_argument('--upscaler', default='None')
     args = parser.parse_args()
     paths = {name: Path(getattr(args, name.replace('-', '_'))).resolve() for name in ('model', 'clip', 'lora', 'video-vae', 'audio-vae', 'output')}
