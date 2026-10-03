@@ -14,7 +14,7 @@ from comfy.utils import ProgressBar
 from ..utils import instrument_node_timing, log_node_info
 from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_preset
 from ..utils.h3_previous_frame import previous_frame_position
-from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy
+from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
 from ..utils.h3_project import (
     clear_h3_project_segments_from,
     compose_h3_project_video,
@@ -62,7 +62,7 @@ H3_CONTEXT_SOURCE_FRAMES = 22
 def _h3_native_output(
     graph: GraphBuilder, task_index: int, project_name: str, info: dict[str, Any],
     final_latent: Any, low_latent: Any, state: Any, vae: Any, audio_vae: Any,
-    locked_audio: Any, audio_only: bool, previous: Any,
+    locked_audio: Any, audio_only: bool, previous: Any, run_state: Any,
 ) -> Any:
     """Decode a delivered view while publishing the untouched raw sampler source."""
     result = graph.node("easy h3NativeResult", id=f"native_result_{task_index}",
@@ -90,7 +90,7 @@ def _h3_native_output(
     if locked_audio is not None:
         media["locked_audio"] = locked_audio
     return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
-                      segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio,
+                      segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio, run_state=run_state,
                       **({"low_latent": result.out(1)} if low_latent is not None else {}),
                       **({"previous": previous} if previous is not None else {}), **media).out(0)
 
@@ -1070,6 +1070,11 @@ class EasyMultiTrackProject(io.ComfyNode):
                     ],
                     tooltip="Enable shared high-resolution H3 spatial tiling.",
                 ),
+                io.Boolean.Input("allow_vae_fallback", default=False, optional=True, tooltip=(
+                    "Allow generated media to be re-encoded when its native source is unavailable or incompatible. "
+                    "Off: stop before sampling if the complete run cannot stay native. Initial external-media "
+                    "encoding and preview/output decoding are always allowed. Timing and lock rules always apply."
+                )),
             ],
             hidden=[io.Hidden.prompt, io.Hidden.unique_id],
             outputs=[
@@ -1123,8 +1128,16 @@ class EasyMultiTrackProject(io.ComfyNode):
             )
         if not uses_linked_prepare:
             _require_minimax_h3_model(model)
-        info = parse_tracks_info(kwargs.get("tracks_info"))
+        info = normalize_native_timeline(parse_tracks_info(kwargs.get("tracks_info")))
         native_config = native_policy(info)
+        # Missing input in an old API workflow inherits its explicit Editor policy.
+        # A supplied Project value always wins, including an explicit false.
+        if kwargs.get("allow_vae_fallback") is not None:
+            value = _first_input(kwargs["allow_vae_fallback"])
+            if not isinstance(value, bool):
+                raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
+            native_config["allow_vae_fallback"] = value
+        info["h3_native"] = native_config
         native_plans = compile_native_plan(info)
         hidden_inputs = getattr(cls, "hidden", None)
         validate_h3_project_outputs(
@@ -1357,6 +1370,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                     raise NativePlanError("GENERATED_REFERENCE", "Generated project media would be encoded as a reference. Use its native context or allow VAE fallback: " + ", ".join(generated_paths))
                 native_reference_reasons.append("GENERATED_REFERENCE")
             for task_index, entry in selected_entries:
+                if native_plans[task_index].continuity_mode == "context_masked" and not (h3_task_is_passthrough(entry) or is_passthrough):
+                    raise NativePlanError("METHOD_RETIRED", "Masked is retired. Choose Context or Drift before generating.", native_plans[task_index].segment_id)
                 if h3_task_is_passthrough(entry) or is_passthrough:
                     if native_plans[task_index].end_frame - native_plans[task_index].start_frame < 39:
                         raise NativePlanError("SEED_SHORT", "Native passthrough requires at least 39 delivered frames.", native_plans[task_index].segment_id)
@@ -1402,7 +1417,7 @@ class EasyMultiTrackProject(io.ComfyNode):
             project_media_static = graph.node(
                 "easy h3ProjectStaticPrepare",
                 id="project_media_prepare",
-                tracks_info=tracks_info_link or info,
+                tracks_info=info,
             )
             model_inputs = {
                 "model_loader": selected_model_loader,
@@ -1465,12 +1480,32 @@ class EasyMultiTrackProject(io.ComfyNode):
                         graph, preset_name=preset_name, is_turbo=second_is_turbo,
                         has_custom_second_pass_sampling=custom_second)
         report_step(31)
-
+        run_recipe = {"sampling_mode": sampling_mode, "first_pass_only": first_pass_only,
+                      "first_width": first_pass_width, "first_height": first_pass_height,
+                      "target_width": target_width, "target_height": target_height,
+                      "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
+                      "upscale_model": selected_upscale_model,
+                      "allow_vae_fallback": native_config["allow_vae_fallback"]}
+        project_static = project_media_static.out(0) if uses_linked_prepare else {
+            "task_tracks_info_base": task_tracks_info_base, "shared_images": shared_images,
+            "shared_audio": shared_audio, "shared_video": shared_video,
+            "full_locked_audio": full_locked_audio, "_segment_cache": {},
+        }
+        preflight_inputs = {"tracks_info": info, "project_name": safe_project_name,
+                            "model": model, "second_model": second_model, "vae": vae, "audio_vae": audio_vae,
+                            "project_static": project_static,
+                            "config_json": json.dumps({"recipe": run_recipe, "selected": [i for i, _ in selected_entries],
+                                "run_second_pass": run_second_pass, "has_context_second_pass": has_context_second_pass})}
+        for name, value in (("sigmas", first_pass_sigmas), ("second_sigmas", second_pass_sigmas),
+                            ("context_second_sigmas", context_second_pass_sigmas if context_second_pass_sigmas is not None else second_pass_sigmas)):
+            if value is not None:
+                preflight_inputs[name] = value
+        run_state = graph.node("easy h3NativePreflight", id="native_preflight", **preflight_inputs).out(0)
         report_step(33)
 
         previous_hires_context_latent: Any | None = None
         previous_low_context_latent: Any | None = None
-        previous_artifact: Any | None = None
+        previous_artifact: Any | None = run_state
         last_project_output: Any | None = None
         report_step(35)
 
@@ -1588,7 +1623,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     previous_artifact = last_project_output = graph.node(
                         "easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=safe_project_name,
                         segment_index=task_index, tracks_info=output_info, latent=seeded.out(0), low_latent=seeded.out(1),
-                        video_path=passthrough.out(0), raw_audio=seeded.out(2),
+                        video_path=passthrough.out(0), raw_audio=seeded.out(2), run_state=run_state,
                         last_frame=graph.node("easy h3LastFrame", id=f"tail_frame_{task_index}", images=passthrough.out(1)).out(0),
                         **({"previous": previous_artifact} if previous_artifact is not None else {})).out(0)
                     previous_hires_context_latent = previous_low_context_latent = None
@@ -1662,7 +1697,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 previous_image = graph.node(
                     "easy h3PreviousFrame", id=f"previous_frame_{task_index}", images=task_images,
                     project_name=safe_project_name, segment_index=task_index, position=previous_position,
-                    resume=task_index == resume_task_index,
+                    resume=False, run_state=run_state, parent_segment_id=native_plans[task_index - 1].segment_id,
                     **({"previous": previous_artifact} if previous_artifact is not None else {}),
                 )
                 task_images, previous_frame_source = previous_image.out(0), previous_image.out(1)
@@ -1777,6 +1812,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                                              latent=initial_latent, model=model, second_model=second_model,
                                              project_name=safe_project_name,
                                              plan_json=json.dumps(native_plans[task_index].as_dict()), recipe_json=json.dumps(recipe),
+                                             run_state=run_state,
                                              sigmas=first_pass_sigmas,
                                              vae=vae, audio_vae=audio_vae,
                                              **({"previous_frame_source": previous_frame_source} if previous_frame_source is not None else {}),
@@ -2183,7 +2219,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     graph, task_index, safe_project_name, output_info, final_latent,
                     low_stage_context_latent if has_second_pass or is_selflift else None,
                     native_state, vae, audio_vae, task_locked_audio if has_task_locked_audio else None,
-                    audio_only, previous_artifact)
+                    audio_only, previous_artifact, run_state)
                 previous_hires_context_latent = previous_low_context_latent = None
                 segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
                 report_segment_step(1.0)

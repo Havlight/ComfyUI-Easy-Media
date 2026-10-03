@@ -21,6 +21,9 @@ from ..utils.h3_native_artifacts import (
 )
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
 from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
+from ..utils.h3_native_preflight import (
+    generation_snapshot, native_stage_layout, preflight_native_sources, run_source, validate_parent_range,
+)
 from ..utils.h3_project import compact_h3_task_segments, safe_h3_project_name, save_h3_audio
 from ..utils.h3_previous_frame import save_tail_image
 from .minimax import _h3_project_source_path, _notify_multitrack_project_refresh
@@ -41,6 +44,82 @@ def _native_model_adapter(model: Any) -> str:
     return "comfy-minimax-h3-av-v1"
 
 
+class EasyH3NativePreflight(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativePreflight", display_name="H3 Run Preflight",
+            category="EasyUse/H3/dev", is_dev_only=True, not_idempotent=True,
+            inputs=[TYPE_TRACKS_INFO.Input("tracks_info"), io.String.Input("project_name"),
+                    io.String.Input("config_json"), io.Model.Input("model"), io.Model.Input("second_model", optional=True),
+                    io.Sigmas.Input("sigmas", optional=True), io.Sigmas.Input("second_sigmas", optional=True),
+                    io.Sigmas.Input("context_second_sigmas", optional=True), io.Vae.Input("vae"), io.Vae.Input("audio_vae"),
+                    io.AnyType.Input("project_static", optional=True)],
+            outputs=[io.AnyType.Output("run_state")])
+
+    @classmethod
+    def execute(cls, tracks_info: dict[str, Any], project_name: str, config_json: str,
+                model: Any, vae: Any, audio_vae: Any, second_model: Any = None,
+                sigmas: torch.Tensor | None = None, second_sigmas: torch.Tensor | None = None,
+                context_second_sigmas: torch.Tensor | None = None, project_static: Any = None) -> io.NodeOutput:
+        from ..utils.h3_project import h3_task_entries, h3_task_is_passthrough, h3_task_type, h3_generation_mode
+        from ..utils.h3_previous_frame import previous_frame_position
+        from .project import EasyH3ProjectStaticPrepare
+        from .basic import MultiTrackTaskOutput
+
+        config = json.loads(config_json)
+        recipe = config['recipe']
+        selected = config['selected']
+        plans = compile_native_plan(tracks_info)
+        entries = h3_task_entries(tracks_info)
+        contents = [entry.get('task', {}).get('content', {}) for entry in entries]
+        passthrough = {i for i in selected if recipe['sampling_mode'] == 'passthrough' or h3_task_is_passthrough(entries[i])}
+        previous_frames = {i for i in selected if i not in passthrough and previous_frame_position(contents[i]) is not None}
+        _native_model_adapter(model)
+        if second_model is not None:
+            _native_model_adapter(second_model)
+        if vae is None or audio_vae is None:
+            raise NativePlanError('VAE_COMPONENT', 'The first loader must provide video and audio VAEs.')
+        if int(getattr(audio_vae, 'audio_sample_rate', 32000)) % 40:
+            raise NativePlanError('LOCK_ADAPTER', 'The audio VAE must use an integer number of samples per latent tick.')
+        if recipe['sampling_mode'] == 'selflift' and not (0.25 <= recipe['lowres_scale'] <= 1 and 0 < recipe['transition_ratio'] < 1):
+            raise NativePlanError('SELFLIFT_CONFIG', 'SelfLift needs lowres_scale between 0.25 and 1, and transition_ratio between 0 and 1.')
+        if any(i not in passthrough for i in selected):
+            for name, schedule, required in (
+                ('first', sigmas, True),
+                ('second', second_sigmas, config['run_second_pass']),
+                ('context second', context_second_sigmas, config['has_context_second_pass']),
+            ):
+                if not required and schedule is None:
+                    continue
+                if (not isinstance(schedule, torch.Tensor) or schedule.ndim != 1 or schedule.numel() < 2
+                        or not torch.isfinite(schedule).all() or torch.any(schedule < 0)
+                        or torch.any(schedule[1:] > schedule[:-1]) or not schedule[0] > schedule[-1]):
+                    raise NativePlanError('SCHEDULE', f'The {name} schedule must be finite, nonnegative and descending.')
+            if config['run_second_pass'] and recipe['upscale_model'] != 'None':
+                if not folder_paths.get_full_path('latent_upscale_models', recipe['upscale_model']):
+                    raise NativePlanError('UPSCALER_MISSING', 'The selected latent upscaler is unavailable.')
+        directory = _project_directory(project_name)
+        state = preflight_native_sources(directory, read_native_manifest(directory), plans, selected,
+                                         recipe, previous_frames, contents, passthrough)
+        # Resolve every task's references before the first sampler. Reuse the
+        # static preparation cache when each task executes later.
+        errors = []
+        if project_static is not None:
+            for index in selected:
+                try:
+                    plan = plans[index]
+                    prepared = EasyH3ProjectStaticPrepare.execute(project_static=project_static,
+                        task_index=index, task_start_frame=plan.start_frame,
+                        task_duration_frames=plan.end_frame-plan.start_frame, fps=24,
+                        generation_mode='reference' if index in passthrough else h3_generation_mode(h3_task_type(entries[index], tracks_info)))
+                    MultiTrackTaskOutput.execute(tracks_info=prepared.result[1], task_index=index, prompt_format='default')
+                except (OSError, KeyError, TypeError, ValueError, RuntimeError) as error:
+                    errors.append(f'Task {index + 1}: {error}')
+        if errors:
+            raise NativePlanError('PREFLIGHT_MEDIA', '\n' + '\n'.join(errors))
+        return io.NodeOutput(state)
+
+
 class EasyH3NativePrepare(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -52,7 +131,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                                  io.Sigmas.Input("sigmas", optional=True), io.Sigmas.Input("second_sigmas", optional=True),
                                  io.Vae.Input("vae", optional=True), io.Vae.Input("audio_vae", optional=True),
                                  io.String.Input("previous_frame_source", optional=True),
-                                 io.AnyType.Input("previous", optional=True)],
+                                 io.AnyType.Input("previous", optional=True), io.AnyType.Input("run_state", optional=True)],
                          outputs=[io.Latent.Output("latent"), io.Latent.Output("high_context"),
                                   io.Latent.Output("low_context"), io.AnyType.Output("native_state")])
 
@@ -60,7 +139,7 @@ class EasyH3NativePrepare(io.ComfyNode):
     def execute(cls, latent: dict[str, Any], model: Any, project_name: str, plan_json: str,
                 recipe_json: str, second_model: Any = None, previous: Any = None,
                 sigmas: torch.Tensor | None = None, second_sigmas: torch.Tensor | None = None,
-                vae: Any = None, audio_vae: Any = None, previous_frame_source: str | None = None) -> io.NodeOutput:
+                vae: Any = None, audio_vae: Any = None, previous_frame_source: str | None = None, run_state: dict[str, Any] | None = None) -> io.NodeOutput:
         del previous
         adapter = _native_model_adapter(model)
         if second_model is not None:
@@ -75,29 +154,19 @@ class EasyH3NativePrepare(io.ComfyNode):
                     raise NativePlanError("SCHEDULE", "Sampling schedules must be finite one-dimensional sigma sequences.")
                 recipe[key] = schedule.detach().cpu().tolist()
         mode = recipe["sampling_mode"]
-        high_stage = {"single": "single_final", "dual": "dual_high_final", "selflift": "selflift_high_final"}[mode]
-        low_stage = {"dual": "dual_low_prediction", "selflift": "selflift_low_prediction"}.get(mode)
-        if recipe.get("first_pass_only"):
-            high_stage = "dual_low_prediction"
+        layout = native_stage_layout(recipe)
+        high_stage, high_size = layout["high"]
+        low_stage = layout.get("low", (None, None))[0]
         high_source = low_source = None
         high_parent = low_parent = None
         if plan.parent_segment_id:
             directory = _project_directory(project_name)
             manifest = read_native_manifest(directory)
             refresh_native_dependencies(manifest)
-            saved_parent = next((s for s in manifest.get("segments", {}).values()
-                                 if s.get("segment_id") == plan.parent_segment_id), None)
-            if saved_parent is None and not manifest.get("h3_native"):
-                saved_parent = manifest.get("segments", {}).get(str(recipe.get("parent_index")))
-            if not saved_parent:
-                raise NativePlanError("SOURCE_MISSING", "Generate or restore the required predecessor first.", plan.segment_id)
-            generation_id = str(saved_parent.get("active_generation"))
-            generation = saved_parent.get("generations", {}).get(generation_id)
-            if not isinstance(generation, dict) or generation.get("native_stale"):
-                raise NativePlanError("STALE_SOURCE", "The predecessor is missing or depends on a replaced version; regenerate it.", plan.segment_id)
+            source = (run_source(run_state, plan.parent_segment_id) if run_state is not None
+                      else generation_snapshot(manifest, plan.parent_segment_id, recipe.get("parent_index", 0)))
+            generation_id, generation = source["generation"], source["record"]
             descriptors = generation.get("native", {})
-            high_size = ((recipe["first_height"] // 16, recipe["first_width"] // 16) if recipe.get("first_pass_only")
-                         else (recipe["target_height"] // 16, recipe["target_width"] // 16))
             seed_window = None
             imported_parent = False
 
@@ -105,6 +174,8 @@ class EasyH3NativePrepare(io.ComfyNode):
                 nonlocal seed_window, imported_parent
                 if label in descriptors:
                     saved = load_native_latent(directory, descriptors[label])
+                    if recipe.get("parent_plan"):
+                        validate_parent_range(validate_native_latent(saved), NativeTaskPlan(**recipe["parent_plan"]))
                     if label == "high":
                         imported_parent = validate_native_latent(saved)["source_kind"] == "imported_seed"
                     try:
@@ -126,6 +197,8 @@ class EasyH3NativePrepare(io.ComfyNode):
                     raise NativePlanError("SOURCE_ADAPTER", "This saved version has no completed delivered video to rebuild; regenerate it.")
                 source_plan = NativeTaskPlan(**recipe["parent_plan"])
                 path = native_child_path(directory, generation["video"])
+                if source.get("video_sha256") and file_checksum(path) != source["video_sha256"]:
+                    raise NativePlanError("SOURCE_CHANGED", "The delivered source changed after preflight.", plan.segment_id)
                 if seed_window is None:
                     seed_window = read_delivered_seed(path, source_plan.end_frame - source_plan.start_frame)
                 seed_recipe = {**recipe, "source_file": path.name, "source_sha256": file_checksum(path), "source_generation": generation_id}
@@ -144,11 +217,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                 raise NativePlanError("PARENT_RANGE", "The predecessor's delivered range changed; regenerate it before continuing.", plan.segment_id)
             high_source = slice_native_context(full_high, plan, high_stage, high_size)
             if low_stage:
-                if mode == "selflift":
-                    scale = recipe["lowres_scale"]
-                    low_size = tuple(max(2, round(size * scale / 2) * 2) for size in high_size)
-                else:
-                    low_size = (recipe["first_height"] // 16, recipe["first_width"] // 16)
+                low_size = layout["low"][1]
                 full_low = load_stage("low", low_stage, low_size)
                 low_parent = validate_native_latent(full_low)
                 low_source = slice_native_context(full_low, plan, low_stage, low_size)
@@ -332,14 +401,16 @@ class EasyH3NativeArtifact(io.ComfyNode):
                                  TYPE_TRACKS_INFO.Input("tracks_info"), io.Latent.Input("latent"),
                                  io.Latent.Input("low_latent", optional=True), io.Audio.Input("raw_audio"),
                                  io.Audio.Input("audio", optional=True), io.Audio.Input("locked_audio", optional=True), io.String.Input("video_path", default="", optional=True),
-                                 io.Image.Input("last_frame", optional=True), io.AnyType.Input("previous", optional=True)],
+                                 io.Image.Input("last_frame", optional=True), io.AnyType.Input("previous", optional=True),
+                                 io.AnyType.Input("run_state", optional=True)],
                          outputs=[io.String.Output("project_name")])
 
     @classmethod
     def execute(cls, project_name: str, segment_index: int, tracks_info: dict[str, Any], latent: dict[str, Any],
                 raw_audio: dict[str, Any], low_latent: dict[str, Any] | None = None,
                 audio: dict[str, Any] | None = None, video_path: str = "", last_frame: torch.Tensor | None = None,
-                previous: Any = None, locked_audio: dict[str, Any] | None = None) -> io.NodeOutput:
+                previous: Any = None, locked_audio: dict[str, Any] | None = None,
+                run_state: dict[str, Any] | None = None) -> io.NodeOutput:
         del previous
         name = safe_h3_project_name(project_name)
         plans = compile_native_plan(tracks_info)
@@ -377,7 +448,13 @@ class EasyH3NativeArtifact(io.ComfyNode):
             if last_frame is not None:
                 media["last_frame"] = Path(work) / "last.png"
                 save_tail_image(last_frame, media["last_frame"])
-            commit_native_generation(directory, segment_index, fields, record, latents, media)
+            saved = commit_native_generation(directory, segment_index, fields, record, latents, media)
+            if run_state is not None:
+                published = read_native_manifest(directory)
+                segment = next(item for item in published['segments'].values() if item.get('segment_id') == meta['segment_id'])
+                version = next(key for key, item in segment['generations'].items()
+                               if item.get('native', {}).get('high', {}).get('metadata', {}).get('artifact_id') == meta['artifact_id'])
+                run_state['produced'][meta['segment_id']] = {'segment_index': segment_index, 'generation': version, 'record': saved}
             staged_video = media.get("video")
             if (staged_video is not None and staged_video.name.startswith(".staging_video_")
                     and staged_video.parent.resolve() == directory.resolve()):

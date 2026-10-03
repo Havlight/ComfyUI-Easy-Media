@@ -109,6 +109,20 @@ def slice_native_context(
     expected_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     meta = validate_native_latent(latent)
+    video, audio = _streams_from_latent(latent)
+    start, end, clock = validate_native_context_contract(meta, plan, expected_stage, expected_size,
+                                                         tuple(video.shape[-2:]))
+    parts = (video[:, :, start:end].detach().to("cpu", copy=True).contiguous(),
+             audio[..., clock["source_audio_start"]:clock["source_audio_end"]].detach().to("cpu", copy=True).contiguous())
+    return {"samples": _official_nested_tensor(parts), "h3_native_source": deepcopy(meta),
+            "h3_native_slice": {"video_start": start, "video_end": end, **clock}}
+
+
+def validate_native_context_contract(
+    meta: dict[str, Any], plan: NativeTaskPlan, expected_stage: str,
+    expected_size: tuple[int, int] | None, actual_size: tuple[int, int],
+) -> tuple[int, int, dict[str, int]]:
+    """The same stage/phase checks for planned sources and materialized tensors."""
     if meta["segment_id"] != plan.parent_segment_id:
         raise NativePlanError("PARENT_ID", "The source task changed; regenerate the required predecessor.", plan.segment_id)
     external_seed = meta["stage"] == "imported_seed" and meta["source_kind"] in {"imported_seed", "rebuilt_generated"}
@@ -116,15 +130,11 @@ def slice_native_context(
     compatible_final = meta["stage"] in final_stages and expected_stage in final_stages
     if meta["stage"] != expected_stage and not external_seed and not compatible_final:
         raise NativePlanError("STAGE_MISMATCH", f"Need {expected_stage}, found {meta['stage']}; regenerate the predecessor in the selected mode.", plan.segment_id)
-    video, audio = _streams_from_latent(latent)
-    if expected_size is not None and tuple(video.shape[-2:]) != expected_size:
+    if expected_size is not None and actual_size != expected_size:
         raise NativePlanError("SIZE_MISMATCH", "The native source resolution changed; regenerate its stage.", plan.segment_id)
     start, end = source_video_slice(plan, meta)
     clock = audio_clock(plan, meta)
-    parts = (video[:, :, start:end].detach().to("cpu", copy=True).contiguous(),
-             audio[..., clock["source_audio_start"]:clock["source_audio_end"]].detach().to("cpu", copy=True).contiguous())
-    return {"samples": _official_nested_tensor(parts), "h3_native_source": deepcopy(meta),
-            "h3_native_slice": {"video_start": start, "video_end": end, **clock}}
+    return start, end, clock
 
 
 def trim_native_media(

@@ -171,16 +171,12 @@ def test_native_locked_video_requests_raw_source_window_and_never_stretches(monk
 
 
 @pytest.mark.parametrize('mode', ['single', 'dual', 'selflift'])
-def test_masked_reuses_verified_sources_and_freezes_second_pass_audio(monkeypatch, mode):
+def test_retired_masked_blocks_generation_in_every_sampling_mode(monkeypatch, mode):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs(mode, **({'upscale_by': [1.0]} if mode == 'dual' else {}))
     inputs['tracks_info'][0]['tracks'][0]['segments'][1]['content']['continuity_mode'] = 'context_masked'
-    result = module.EasyMultiTrackProject.execute(**inputs)
-    masks = [node for node in result.expand.values() if node['class_type'] == 'easy h3NativeMasked']
-    assert len(masks) == (2 if mode == 'dual' else 1)
-    if mode == 'dual':
-        assert masks[-1]['inputs']['refine'] is True
-    assert not any(node['class_type'] in {'VAEEncode', 'VAEEncodeAudio'} for node in result.expand.values())
+    with pytest.raises(ValueError, match='METHOD_RETIRED'):
+        module.EasyMultiTrackProject.execute(**inputs)
 
 
 def test_native_lock_video_rejects_task_modes_that_ignore_video(monkeypatch):
@@ -238,3 +234,51 @@ def test_source_resize_rebuilds_both_stage_clocks_without_reencoding_native_audi
     assert calls == {'video': 2, 'audio': 1}
     assert output.values[3]['high']['audio_origin_units'] == output.values[3]['low']['audio_origin_units']
     assert bool(output.values[3]['high']['fallback_history']) is not imported
+
+
+def test_project_fallback_explicit_false_overrides_legacy_editor_preference(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs(fallback=True)
+    inputs['tracks_info'][0]['tracks'][0]['segments'][1]['content']['images'] = [{'source_type': 'previous_frame'}]
+    module.EasyMultiTrackProject.execute(**inputs)
+    inputs['allow_vae_fallback'] = [False]
+    with pytest.raises(ValueError, match='GENERATED_IMAGE'):
+        module.EasyMultiTrackProject.execute(**inputs)
+
+
+def test_all_samplers_depend_on_whole_run_preflight(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs('dual', upscale_by=[1.0])
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    gate = next(key for key, value in graph.items() if value['class_type'] == 'easy h3NativePreflight')
+    def dependencies(key, seen=None):
+        seen = seen or set()
+        if key in seen:
+            return seen
+        seen.add(key)
+        for value in graph[key]['inputs'].values():
+            if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str) and value[0] in graph:
+                dependencies(value[0], seen)
+        return seen
+    samplers = [key for key, value in graph.items() if value['class_type'] in {'SamplerCustomAdvanced', 'easy h3SamplerCustomAdvanced'}]
+    assert len(samplers) == 4
+    assert all(gate in dependencies(key) for key in samplers)
+
+@pytest.mark.parametrize('bad', [[1.0, float('nan'), 0.0], [0.0, 1.0], [1.0, -0.1], [1.0]])
+def test_runtime_gate_rejects_invalid_second_schedule_before_task_work(monkeypatch, bad):
+    module = _load_minimax_node(monkeypatch)
+    spec = importlib.util.spec_from_file_location('easy_media.nodes.h3_native', Path(__file__).resolve().parents[1] / 'nodes/h3_native.py')
+    runtime = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, runtime)
+    spec.loader.exec_module(runtime)
+    basic = types.ModuleType('easy_media.nodes.basic')
+    basic.MultiTrackTaskOutput = object()
+    monkeypatch.setitem(sys.modules, basic.__name__, basic)
+    model = types.SimpleNamespace(model=types.SimpleNamespace(
+        model_config=type('MiniMaxH3', (), {})(), latent_format=type('MiniMaxH3AV', (), {})()))
+    config = {'selected': [0, 1], 'run_second_pass': True, 'has_context_second_pass': True,
+              'recipe': {'sampling_mode': 'dual', 'target_width': 32, 'target_height': 32,
+                         'first_width': 32, 'first_height': 32, 'upscale_model': 'None', 'allow_vae_fallback': False}}
+    with pytest.raises(ValueError, match='SCHEDULE'):
+        runtime.EasyH3NativePreflight.execute(native_inputs()['tracks_info'][0], 'missing-project', json.dumps(config),
+            model, object(), object(), sigmas=torch.tensor([1.0, 0.0]), second_sigmas=torch.tensor(bad))

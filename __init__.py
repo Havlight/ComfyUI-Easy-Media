@@ -112,6 +112,7 @@ class EasyMediaExtension(ComfyExtension):
             EasyH3LockedAudioDurationAlign,
             EasyH3LockedAudioSelect,
             EasyH3ProjectArtifact,
+            EasyH3NativePreflight,
             EasyH3NativePrepare,
             EasyH3NativeSeed,
             EasyH3NativeAudioLock,
