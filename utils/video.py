@@ -535,14 +535,16 @@ def merge_video_track_with_ffmpeg(
             if not math.isfinite(volume_db):
                 volume_db = 0.0
             volume_filter = "volume=0" if muted else f"volume={volume_db:g}dB"
-            if segment.get("audio_locked") is True:
-                timeline_sample_rate = 44100
+            if segment.get("audio_locked") is True or segment.get("audio_exact_rate"):
+                timeline_sample_rate = int(segment.get("audio_exact_rate", 44100))
                 source_start_sample = round(
                     source_start_frame * timeline_sample_rate / frame_rate
                 )
                 source_end_sample = round(
                     source_end_frame * timeline_sample_rate / frame_rate
                 )
+                source_start_sample = int(segment.get("audio_source_start_sample", source_start_sample))
+                source_end_sample = int(segment.get("audio_source_end_sample", source_end_sample))
                 timeline_start_sample = round(
                     start_frame * timeline_sample_rate / frame_rate
                 )

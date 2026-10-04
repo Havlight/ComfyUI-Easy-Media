@@ -1562,3 +1562,22 @@ describe('TaskSegmentEditor', () => {
       .toBe('__slot__:image')
   })
 })
+
+it('accepts native seconds, steps legal durations and cancels with Escape', () => {
+  const segment = { ...taskSegment(), end_frame: 243, content: { ...taskSegment().content, continuity_mode: 'shot' as const } }
+  const onDurationChange = vi.fn()
+  render(<TooltipProvider><TaskSegmentEditor segment={segment} format="MiniMax" frameRate={24}
+    nativePolicy={{ version: 1, allow_vae_fallback: false }} onContentChange={vi.fn()} onDurationChange={onDurationChange} /></TooltipProvider>)
+  fireEvent.click(screen.getByRole('button', { name: 'Edit task duration' }))
+  const input = screen.getByRole('textbox', { name: 'Duration' })
+  fireEvent.change(input, { target: { value: '10s' } })
+  fireEvent.keyDown(input, { key: 'ArrowUp' })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(onDurationChange).toHaveBeenCalledWith(260 / 24)
+  onDurationChange.mockClear()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit task duration' }))
+  const secondInput = screen.getByRole('textbox', { name: 'Duration' })
+  fireEvent.change(secondInput, { target: { value: '20s' } })
+  fireEvent.keyDown(secondInput, { key: 'Escape' })
+  expect(onDurationChange).not.toHaveBeenCalled()
+})

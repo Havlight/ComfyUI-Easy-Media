@@ -99,6 +99,29 @@ async def handle_h3_project(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Failed to load H3 project: {error}"}, status=500)
 
 
+@PromptServer.instance.routes.post("/easy-media/project/timeline-status")
+async def handle_h3_timeline_status(request: web.Request) -> web.Response:
+    """Read-only status: keep timeline editing independent of saved media."""
+    from .utils.h3_native_artifacts import read_native_manifest, refresh_native_dependencies
+    from .utils.h3_native_status import native_timeline_status
+    from .nodes.basic import _build_tracks_info_and_media_outputs
+
+    try:
+        body = await request.json()
+        name = safe_h3_project_name(body.get("project_name", ""))
+        # Use the same defaults, slot descriptors and shared references as the
+        # Editor output, without opening files or materializing runtime media.
+        info = _build_tracks_info_and_media_outputs(body["tracks_info"], None, None, None,
+            {"resolution": "width x height (custom)", "width": 320, "height": 256},
+            "MiniMax", materialize_media=False)[0]
+        directory = Path(folder_paths.get_output_directory()).resolve() / "easy_media" / "projects" / name
+        manifest = read_native_manifest(directory)
+        refresh_native_dependencies(manifest)
+        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest)})
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        return web.json_response({"error": str(error)}, status=400)
+
+
 @PromptServer.instance.routes.get("/easy-media/projects")
 async def handle_h3_projects(_request: web.Request) -> web.Response:
     try:

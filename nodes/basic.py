@@ -788,6 +788,15 @@ def _build_tracks_info_and_media_outputs(
     tracks = data.get("tracks", [])
     if not isinstance(tracks, list):
         raise ValueError("TRACK_DATA.tracks must be a list.")
+    native_timing = None
+    if format_name == "MiniMax" and (data.get("h3_native") is not None or any(
+        track.get("type") == "task" and track.get("segments") for track in tracks
+    )):
+        from ..utils.h3_native_timing import normalize_native_timeline, native_policy
+
+        data = normalize_native_timeline(data)
+        tracks = data.get("tracks", [])
+        native_timing = native_policy(data)
 
     materialized_types = (
         {"image", "audio", "video"}
@@ -832,7 +841,9 @@ def _build_tracks_info_and_media_outputs(
     else:
         timeline_total_length = total_length
     effective_total_length = task_duration_length or timeline_total_length
-    if format_name == "MiniMax":
+    if native_timing is not None and task_duration_length > 0:
+        output_total_length = effective_total_length
+    elif format_name == "MiniMax":
         output_total_length = _video_frame_count_from_duration(
             effective_total_length,
             frame_rate,
@@ -1121,6 +1132,8 @@ def _build_tracks_info_and_media_outputs(
         ] if isinstance(data.get("task_markers", []), list) else [],
         "tracks": normalized_tracks,
     }
+    if native_timing is not None:
+        tracks_info["h3_native"] = native_timing
     audio_result = (audio_out or [None]) if format_name == "MiniMax" else audio_out
     video_result = (video_out or [None]) if format_name == "MiniMax" else video_out
     if materialized_types:
@@ -1953,6 +1966,10 @@ class MultiTrackEditor(io.ComfyNode):
             data = build_minimax_multitrack_data_from_prompt_override(data, prompt_override)
         elif prompt_override_has_value(prompt_override):
             data = build_multitrack_data_from_prompt_override(data, prompt_override)
+        if format == "MiniMax" and prompt_override_has_value(prompt_override) and data.get("h3_native"):
+            from ..utils.h3_native_timing import reconcile_native_override
+
+            data = reconcile_native_override(data)
         materialize_media = multitrack_slot_media_types(data)
         tracks_info, images_out, audio_out, video_out = _build_tracks_info_and_media_outputs(
             data,
@@ -2119,6 +2136,11 @@ def _task_for_marker_range(tasks: list[dict], start_frame: int, end_frame: int) 
 
 
 def _multitrack_task_entries(info: dict) -> list[dict]:
+    if info.get("h3_native") is not None:
+        from ..utils.h3_native_timing import native_task_segments
+
+        return [{"task": task, "start_frame": task["start_frame"], "end_frame": task["end_frame"]}
+                for task in native_task_segments(info)]
     tasks = _multitrack_task_segments(info)
     markers = info.get("task_markers", [])
     if not isinstance(markers, list) or not markers:

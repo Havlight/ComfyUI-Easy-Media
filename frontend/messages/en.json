@@ -4,7 +4,7 @@
     "save": "Save",
     "add": "Add",
     "delete": "Delete",
-    "syncPlay":"Sync Play"
+    "syncPlay": "Sync Play"
   },
   "compareVideo": {
     "empty": "Choose source and output videos to compare, or run the node with inputs.",
@@ -67,6 +67,7 @@
     "selectClipFilesHint": "Select one video for the project, or two to compare.",
     "selectClipFileFailed": "Video selection could not be saved",
     "continuityShot": "Shot",
+    "continuityContextMasked": "Context Masked",
     "continuityContext": "Context",
     "continuityContextDrift": "Drift Context",
     "emptyPreview": "Refresh the project to preview its generated clips.",
@@ -308,6 +309,7 @@
     "timelineZoom": "Timeline zoom"
   },
   "multitrackContinuityModes": {
+    "context_masked": "Context Masked",
     "shot": "Shot",
     "context": "Context",
     "context_drift": "Drift Control Context"
@@ -354,8 +356,8 @@
   },
   "audioTrack": {
     "addMarker": "Add marker",
-    "importFile": "Import audio file\u2026",
-    "importUrl": "Import from URL\u2026",
+    "importFile": "Import audio file…",
+    "importUrl": "Import from URL…",
     "enterUrl": "Enter audio URL:",
     "frameLabel": "Frame {n}",
     "markerAriaLabel": "Marker: {label}",
@@ -374,8 +376,8 @@
     "dropZone": "Image track drop zone",
     "addSegment": "Add image",
     "deleteSegment": "Delete selected segment",
-    "importFile": "Import image file\u2026",
-    "importUrl": "Import from URL\u2026",
+    "importFile": "Import image file…",
+    "importUrl": "Import from URL…",
     "enterUrl": "Enter image URL:",
     "placeholder": "Image Track",
     "placeholderHint": "Double-click to add content",
@@ -434,7 +436,7 @@
     "tabOutputs": "Outputs",
     "tabHistory": "History",
     "filter": "Multi",
-    "selectAll":"SelectAll",
+    "selectAll": "SelectAll",
     "confirm": "Confirm",
     "tabLocal": "Local",
     "tabUrl": "URL",
@@ -462,5 +464,24 @@
     "slotAudio": "Audio {n}",
     "slotVideo": "Video {n}",
     "addLocal": "Add local file"
+  },
+  "h3Native": {
+    "regenerateTasks": "{count} tasks need regeneration; saved versions are retained.",
+    "statusUnavailable": "Saved-result status unavailable; execution will still validate sources.",
+
+    "locateTask": "Select task",
+    "staleVersion": "Regenerate: parent version changed",
+    "fallbackVersion": "Includes VAE fallback",
+    "frames": "frames",
+    "dismiss": "Dismiss",
+    "editFailed": "The timeline edit could not be applied.",
+    "durationDetail": "{frames} frames · {seconds} seconds. Enter seconds with s; arrow keys step through legal durations.",
+    "lastFrameFallback": "Previous-frame reference requires Allow VAE fallback on the Project node.",
+    "passthroughStatus": "Source passthrough · Provenance and downstream context will be checked at execution.",
+    "contextStatus": "Native timing aligned · 39-frame / 1.625 s context; no added output length. Source and model compatibility checked at execution.",
+    "shotStatus": "Native timing aligned · No context overlap; model compatibility checked at execution.",
+    "alignedTasks": "Aligned {count} tasks; saved results may need regeneration.",
+    "undo": "Undo",
+    "retiredMethod": "Masked is retired. Choose Context or Drift before generating."
   }
 }

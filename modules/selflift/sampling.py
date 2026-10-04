@@ -332,7 +332,7 @@ def _euler_step(
     return state + (state - denoised.to(state)) * step
 
 
-def _resize_keyframes(conditioning: Any, height: int, width: int) -> Any:
+def _resize_keyframes(conditioning: Any, height: int, width: int, native_context: dict[str, Any] | None = None) -> Any:
     """Resize H3 keyframe latents for the low-resolution sampling prefix."""
     resized_conditioning = []
     for embedding, metadata in conditioning:
@@ -345,6 +345,14 @@ def _resize_keyframes(conditioning: Any, height: int, width: int) -> Any:
         for keyframe in keyframes:
             updated = dict(keyframe)
             latent = updated.get("latent")
+            if "easy_media_native_context_step" in updated:
+                if native_context is None:
+                    raise ValueError("Native SelfLift needs the saved low-stage guide source.")
+                source = _streams(native_context["samples"])[0][0]
+                if tuple(source.shape[-2:]) != (height, width):
+                    raise ValueError("Native SelfLift low-stage guide resolution changed.")
+                index = updated.pop("easy_media_native_context_step")
+                latent = updated["latent"] = source[:, :, index:index + 1].clone()
             if latent is not None and latent.shape[-2:] != (height, width):
                 updated["latent"] = torch.nn.functional.interpolate(
                     latent.float(),
@@ -454,7 +462,7 @@ def progressive_sample_h3(
     )
     callback = _prepare_sampling_callback(model, step_count, preview_callback)
     disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
-    positive_low = _resize_keyframes(positive, low_height, low_width)
+    positive_low = _resize_keyframes(positive, low_height, low_width, low_context_latent)
 
     transition: dict[str, Any] = {}
     low_evaluations = 0

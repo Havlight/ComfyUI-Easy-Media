@@ -51,6 +51,7 @@ def runtime(monkeypatch):
     patcher.is_model_patcher_output = lambda value: False
     monkeypatch.setitem(sys.modules, "comfy.model_patcher", patcher)
     comfy = types.ModuleType("comfy")
+    comfy.__path__ = [str(comfy_root / "comfy")]
     comfy.model_management = types.SimpleNamespace(soft_empty_cache=lambda: None)
     monkeypatch.setitem(sys.modules, "comfy", comfy)
     _load("comfy_execution.graph_utils", comfy_root / "comfy_execution/graph_utils.py", monkeypatch)

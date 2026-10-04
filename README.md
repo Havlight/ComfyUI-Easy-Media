@@ -67,17 +67,19 @@ MultiTrack Editor ── TRACKS_INFO ──→ MultiTrack Project ── PROJECT
 
 Select the `MiniMax` format, set the target dimensions and frame rate, enter prompts for each task segment, and add reference images, video, or audio as needed. See the [MultiTrack Editor overview](#multitrack-editor) below for tracks, task modes, and media editing.
 
-The new **continuity mode** determines how a task follows the previous segment. It is configured separately from task modes such as text-to-video, image-to-video, and reference-to-video:
+**Native H3 timelines:** Both new and existing H3 workflows align generation tasks automatically. Edits apply immediately, including dependent timing changes, and can be undone together; no upgrade button or adjustment dialog is needed. **Allow VAE fallback** now lives on **MultiTrack Project**, defaults to off, and controls generated-media re-encoding without disabling alignment. An explicit preference from an older Editor is migrated once. See the [native continuation guide](plans/h3-native-latent-guide.md) for editing, mode switching, Lock and migration.
+
+The **continuity mode** determines how a task follows the previous segment. It is configured separately from task modes such as text-to-video, image-to-video, and reference-to-video:
 
 | Continuity Mode | Generation Behavior | Use Cases |
 |-----------------|---------------------|-----------|
 | **Shot (`shot`)** | Generates independently, without inheriting motion or audio context from the previous segment | New shots, scene changes, and deliberate cuts |
 | **Context (`context`)** | Uses the tail of the previous result's audio/video latent to continue motion and sound | Continuous action, long takes, and ongoing audio |
-| **Drift Control Context (`context_drift`)** | In the first pass, applies Drift-Control to the copied video prefix: a denoise mask recalculated for each sampling step allows more change away from the seam and tapers to a fixed boundary. This limits visual drift while carrying motion forward; audio transitions softly. The second pass uses the standard high-resolution anchor without Drift-Control. | Change a subject or appearance while retaining the previous motion |
+| **Drift Control Context (`context_drift`)** | In the first pass, applies Drift-Control to the copied video prefix: a denoise mask recalculated for each sampling step allows more change away from the seam and tapers to a fixed boundary. This limits visual drift while carrying motion forward; audio transitions softly. Dual uses the standard high-resolution anchor in its second pass; native SelfLift installs a separate Drift wrapper on each stage MODEL. | Change a subject or appearance while retaining the previous motion |
 
 The first segment starts in Shot mode. Set subsequent segments individually or select multiple tasks to change them together. For example, “Shot → Context → Context → Shot” creates three connected segments followed by a new shot. This setting affects **generation**, rather than adding a crossfade during assembly. Context does not guarantee seamless continuity across arbitrary scene or prompt changes.
 
-**Previous tail frame** is a separate toggle above the image panel for segments after the first. It adds a movable reference card, works with every continuity mode, and follows the selected task mode's normal image behavior. Project resolves it from the preceding segment's selected completed version; the final frame is saved as `last_frame_<segment>_<version>.png` beside its latent. Existing versions extract this image from their saved video when first needed. Keep clean character references first unless you intentionally want the generated frame in `image1`.
+**Previous tail frame** is a separate toggle above the image panel for segments after the first. It adds a movable reference card, works with every continuity mode (native timelines require VAE fallback), and follows the selected task mode's normal image behavior. Project resolves it from the preceding segment's selected completed version; the final frame is saved as `last_frame_<segment>_<version>.png` beside its latent. Existing versions extract this image from their saved video when first needed. Keep clean character references first unless you intentionally want the generated frame in `image1`.
 
 #### 2. MultiTrack Project: Encoding, Sampling, and Segment Loops
 
@@ -89,7 +91,7 @@ Read task and load media on demand → Encode prompts and reference conditioning
     → Save segment and context → Process next task → Output project name
 ```
 
-Each segment uses its own prompts, references, and continuity mode. With Context enabled, the first pass uses the previous segment's context at the corresponding resolution; the second pass uses its final high-resolution result to preserve the join. Each segment is saved before the next one runs. You can choose a starting segment and count, or save a first-pass preview and resume the second pass later. See [MultiTrack Project details](#multitrack-project) for settings, upscaler dependencies, and the context implementation's source and adaptations.
+Each segment uses its own prompts, references, and continuity mode. With Context enabled, the first pass uses the previous segment's context at the corresponding resolution; the second pass uses its final high-resolution result to preserve the join. Each segment is saved before the next one runs. You can choose a starting segment and count, or save a first-pass preview. Disabling first-pass preview regenerates both stages to verify lineage. Before the first sampler, Project checks every selected task and its source dependencies; incompatible sources or settings stop the run before partial generation. See [MultiTrack Project details](#multitrack-project) for settings, upscaler dependencies, and the context implementation's source and adaptations.
 
 #### 3. MultiTrack Project Video Combine: Preview, Select, and Export
 
@@ -191,11 +193,12 @@ If an older workflow connects directly to the editor's media outputs, insert `Mu
 | `model_loader` | First-pass H3 model and shared CLIP, video VAE, and audio VAE; video projects also require the audio VAE |
 | `model_loader_2nd` | Optional second-pass H3 model; defaults to the first-pass model. Even when connected, encoding and VAEs still come from the first-pass loader |
 | `sampling_plan` | Built-in presets such as `ultra_light`, `light`, `medium`, and `high` select samplers and sigmas for Turbo / non-Turbo models; use `custom` for manual settings |
-| `sampling_mode` | `single`, `dual`, or `selflift`; SelfLift expands `transition_ratio`, `lowres_scale`, and the optional `highres_tiling` switch. Pixel/VAE correction is disabled for ordinary segments and uses an internal conservative preset for context continuation. SelfLift also saves separate low- and high-resolution context lineages |
+| `sampling_mode` | `single`, `dual`, or `selflift`; SelfLift expands `transition_ratio`, `lowres_scale`, and the optional `highres_tiling` switch. Uses a latent-only recipe (`rho=0`). SelfLift also saves separate low- and high-resolution context lineages |
 | `sampler` / `sigmas` | Connect both to override first-pass sampling. Second-pass overrides use `sampler_2nd` / `sigmas_2nd`, also as a pair. `custom` requires both inputs for every sampling pass that runs |
 | `upscale_by` | Second-pass scale relative to the editor dimensions; default `1.250`, three decimal places, step `0.001` |
+| `allow_vae_fallback` | Defaults to off. Permit generated-media re-encoding when a compatible native source is unavailable; initial external encoding and output decoding are always allowed. Corrupt sources, stale dependencies and invalid Lock ranges still fail |
 | `disable_2nd_noise` | Disables added second-pass noise; it does not skip the second pass |
-| `1st_pass_only` | In `dual` mode, runs and checkpoints **only the first pass of the first selected segment**. Disable it on the next run to resume that segment at the second pass |
+| `1st_pass_only` | In `dual` mode, runs and checkpoints **only the first pass of the first selected segment**. Disabling this option regenerates both passes |
 
 Alignment uses Python `round`, matching [the H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py); it is not always upward, and exact ties round to the even integer. For example, `1344 × 768` at `1.250` becomes `1680 × 960` before alignment and **`1664 × 960`** for the second pass. Both upscaling paths use this size, and project records and combined exports retain the resulting dimensions. Single-pass generation and first-pass-only previews keep the editor dimensions; audio-only projects (`32 × 32`) do not upscale. Existing workflows retain their saved multiplier rather than automatically adopting the new default.
 
@@ -206,7 +209,7 @@ To customize presets, copy [h3_sample.json.example](./presets/h3_sample.json.exa
 | `upscale_model` | Upscaling Path | Dependencies |
 |-----------------|----------------|--------------|
 | An H3 latent upscaler model | Calls the bundled `easy minimaxH3LatentUpscaler` node to upscale the video latent directly to the scaled, aligned second-pass dimensions | Place the [H3 upscaler weights](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) in `ComfyUI/models/latent_upscale_models/`; the external custom-node package is not required |
-| `None` | Decode the first-pass video with the VAE → Resize images → Re-encode with the VAE → Second pass | Requires `ImageResizeKJv2` from [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) |
+| `None` with `upscale_by > 1` | Decode the first-pass video with the VAE → Resize images → Re-encode with the VAE → Second pass; requires **Allow VAE fallback** | Requires `ImageResizeKJv2` from [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) |
 
 `upscale_model` selects **H3 latent upscaler weights**, which serve a different purpose from the H3 generation model in `model_loader_2nd`. Direct latent upscaling avoids the intermediate video VAE decode/encode round trip, but the second pass still runs at the target resolution; its VRAM requirements do not decrease proportionally. Easy Media includes the inference node and runtime; only the checkpoint is downloaded separately.
 
@@ -218,16 +221,16 @@ For example, download `minimax_h3_latent_upscaler_3d_fp16.safetensors` from the 
 
 Context conditioning is based on [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context), adapted inside Easy Media for project loops and dual sampling. The current hard-continuity implementation requires native H3 audio/video keyframe support in ComfyUI (0.34.0+). Check ComfyUI compatibility when upgrading.
 
-In addition to attaching the previous segment's context conditioning, the project pipeline applies these adaptations:
+All H3 Project generation now saves full raw AV sidecars separately from delivered media, uses a 39-frame context, and preserves separate low/high stage lineage. A Shot samples `17k+5` frames; a continuation adds `17n` delivered frames after its internal 39-frame prefix. The decoded prefix is removed once before saving each clip, so Video Combine does not repeat the overlap.
 
-- **First-pass hard continuity:** Preserves native audio/video keyframes and existing multimedia references, while copying the previous segment's audio/video tail into the current starting latent. Separate video and audio masks lock and gradually release the copied region, allowing new content to emerge around the join.
-- **Separate low- and high-resolution context:** In dual sampling, the first pass inherits the previous segment's first-pass context. After upscaling, the second pass copies the previous final high-resolution video tail into the current high-resolution latent, rather than merely enlarging the low-resolution join. Context second-pass sampling freezes the current audio to retain continuity established in the first pass.
-- **Context-specific second-pass sigmas:** Built-in presets provide `sigmas_2nd_context = 0.50, 0.30, 0.14, 0.06, 0.0` for second passes with previous-segment context. Explicit custom second-pass sampler or sigma inputs prevent this substitution.
-- **Synchronized trimming and clean continuation sources:** By default, the project takes the previous segment's last 22 frames as context and reserves 34 extra generation frames to satisfy H3's temporal grid. After decoding, it removes the repeated prefix and excess tail, retaining the task's required frame count. It then re-encodes context from the actual delivered audio/video range so subsequent segments do not inherit discarded tail frames.
-- **Memory-bounded high-resolution context:** Before the next segment starts, the high-resolution continuation latent is reduced to the 22-frame video/audio tail, detached from the full sampling result, and moved to CPU. Project artifacts store the same context-only high-resolution payload after second-pass completion. The complete low-resolution first-pass latent remains saved so a `1st pass only` run can resume its second pass later; runtime context handoffs use a separate trimmed copy.
-- **Automatic handoff and resuming across runs:** Context passes automatically between segments in one run. When starting from a later segment, the project loads context from the previous segment's active saved version, without manually wiring Save / Load Latent nodes.
+- **Context (default):** Native AV guides plus a short video anchor carry motion and sound forward. It does not require decoding and rebuilding the previous generated result.
+- **Drift:** Copies native context and applies sampling-step-dependent video masks, allowing the prefix to change progressively. Dual uses a standard high-resolution anchor in its second pass; SelfLift wraps the low/high MODEL stages separately. Drift also copies latent data—it is not merely an image reference.
+- **Separate stages:** Dual and SelfLift retain low and high sources. A high-resolution result cannot stand in for missing low-stage sampling history. Changing MODEL/LoRA or sigmas preserves the selected settings; a mode or resolution change may require regenerating predecessors or explicitly allowing fallback.
+- **Preflight and pinned versions:** Project checks the entire selected run before sampling, including sources that earlier selected tasks will produce. Existing sources are pinned to immutable versions. Runtime checks remain necessary for tensor failures, changed files or hardware errors.
+- **Editing and historical results:** Editing keeps old videos and reports affected tasks in the Editor. The status hint is advisory, while preflight is authoritative. Masked is retired from the method choices; historical Masked clips remain readable, and regenerating such a task requires choosing Context or Drift.
+- **Recoverable saves:** Both `new` and `override` add a new generation. Source files have checksums, writes are atomic, referenced versions are protected from deletion, and changing a parent version marks affected descendants stale.
 
-> **Note:** Context continuation requires the previous segment's saved latents; an MP4 alone is insufficient. After changing editor dimensions, scaling factor, or the previous segment's version, check the downstream context chain. Regenerate first-pass checkpoints and context latents created with the old reduced-first-pass sizing before resuming with the new sizing behavior. Existing later segments are not automatically regenerated when an earlier segment changes.
+Old MP4s remain usable in Video Combine. Old context-only artifacts may not satisfy the native source contract; regenerate the required predecessors or permit a documented VAE rebuild. The legacy Project generation engine and its implicit round trips are no longer selected by workflow age.
 
 #### Generation Ranges, Regeneration, and Version Retention
 
@@ -237,7 +240,7 @@ In addition to attaching the previous segment's context conditioning, the projec
 | `segment_start_number` | Starting segment, **counting from 1**, unlike the zero-based `task_index` in MultiTrack Task Output |
 | `segment_count` | Maximum segments to generate in this run; `-1` processes all remaining segments from the start |
 | `project_save = new` | Preserves existing results in the same project and adds versions for regenerated segments, allowing comparison |
-| `project_save = override` | Replaces the corresponding segment version. With `segment_count = -1`, clears saved segments from the start onward before regeneration; a first-pass checkpoint being resumed is preserved |
+| `project_save = override` | Adds a recoverable generation, just like `new`; the name is retained for saved-workflow compatibility, and no longer clears later results |
 
 For example, to regenerate only segment 3, set `segment_start_number = 3` and `segment_count = 1`. Choose `project_save = new` to retain the old result for comparison. If segment 3 uses Context, the project must contain compatible context from segment 2. After accepting the new segment 3, regenerate any later Context segments that depend on it.
 

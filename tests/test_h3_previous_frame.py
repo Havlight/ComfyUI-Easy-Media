@@ -107,7 +107,7 @@ def test_previous_image_stays_independent_of_context_chain(monkeypatch, mode):
         assert "low_context_latent" not in samplers[1]["inputs"]
         assert samplers[1]["inputs"]["rho"] == 0
         assert "low_context_latent" in samplers[2]["inputs"]
-        assert samplers[2]["inputs"]["rho"] == 0.1
+        assert samplers[2]["inputs"]["rho"] == 0.0
     else:
         contexts = [node for node in nodes.values() if node["class_type"] == "easy MiniMaxH3MotionContextHard"]
         assert len(contexts) == 1

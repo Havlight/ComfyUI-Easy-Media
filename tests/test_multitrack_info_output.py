@@ -221,7 +221,7 @@ def _load_basic_module():
     nodes_package = types.ModuleType("easy_media.nodes")
     nodes_package.__path__ = []
     utils_module = types.ModuleType("easy_media.utils")
-    utils_module.__path__ = []
+    utils_module.__path__ = [str(Path(__file__).resolve().parents[1] / "utils")]
     utils_module.FFMPEG_RESIZE_METHODS = frozenset({
         "stretch", "resize", "pad", "pad (white)", "crop",
     })
@@ -497,6 +497,20 @@ def _load_prompt_builder_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _h3_timeline_fixture(data):
+    """Use the native 24 fps clock while preserving fixture times in seconds."""
+    from copy import deepcopy
+    data = deepcopy(data)
+    scale = 24 / data.get('frame_rate', 24)
+    data['total_length'] = round(data.get('total_length', 0) * scale)
+    data['frame_rate'] = 24
+    for track in data.get('tracks', []):
+        for index, segment in enumerate(track.get('segments', [])):
+            segment['start_frame'] = round(segment.get('start_frame', index * 56) * scale)
+            segment['end_frame'] = round(segment.get('end_frame', (index + 1) * 56) * scale)
+    return data
 
 
 def test_multitrack_info_output_schema_has_only_required_outputs():
@@ -857,7 +871,7 @@ def test_multitrack_editor_uses_short_segment_range_instead_of_stale_default_len
 
     tracks_info = result.values[0]
     assert tracks_info["total_length"] == expected_total_length
-    assert tracks_info["timeline_total_length"] == 48
+    assert tracks_info["timeline_total_length"] == (56 if format_name == "MiniMax" else 48)
 
 
 def test_timeline_editor_aligns_minimax_frames_at_the_timeline_frame_rate():
@@ -991,8 +1005,8 @@ def test_multitrack_editor_minimax_total_length_sums_task_durations_and_skips_ga
     )
 
     tracks_info = result.values[0]
-    assert tracks_info["timeline_total_length"] == 144
-    assert tracks_info["total_length"] == 90
+    assert tracks_info["timeline_total_length"] == 160
+    assert tracks_info["total_length"] == 112
 
 
 def test_multitrack_editor_removes_legacy_volume_fields():
@@ -2725,13 +2739,13 @@ def test_multitrack_editor_minimax_stops_media_at_each_track_last_segment():
     result = module.MultiTrackEditor.execute(
         {"resolution": "32 x 32 (1:1)"},
         "MiniMax",
-        track_data,
+        _h3_timeline_fixture(track_data),
         audio=[audio],
         video=[video],
     )
 
     _tracks_info, _images, audio_out, video_out = result.values
-    assert video_out[0].get_components().images.shape[0] == 5
+    assert video_out[0].get_components().images.shape[0] == 60
     assert audio_out[0]["waveform"].shape[-1] == 7
 
 
@@ -3041,7 +3055,7 @@ def test_multitrack_editor_materializes_a_dedicated_minimax_speaker_reference():
     editor_result = module.MultiTrackEditor.execute(
         "640 x 360 (16:9)",
         "MiniMax",
-        track_data,
+        _h3_timeline_fixture(track_data),
         audio=[source_audio],
     )
     tracks_info, audio_output = editor_result.values[0], editor_result.values[2]
@@ -3102,7 +3116,7 @@ def test_shared_task_images_are_prefixed_deduplicated_and_reused():
     editor_result = module.MultiTrackEditor.execute(
         {"resolution": "2 x 2 (1:1)"},
         "MiniMax",
-        track_data,
+        _h3_timeline_fixture(track_data),
         image=[shared_image, first_local, second_local],
     )
     tracks_info, images = editor_result.values[0], editor_result.values[1]
@@ -3133,7 +3147,7 @@ def test_muted_shared_task_image_does_not_mute_other_tasks():
     ]}]}
 
     result = module.MultiTrackEditor.execute(
-        {"resolution": "2 x 2 (1:1)"}, "MiniMax", track_data,
+        {"resolution": "2 x 2 (1:1)"}, "MiniMax", _h3_timeline_fixture(track_data),
         image=[shared_image],
     )
     tracks_info, images = result.values[0], result.values[1]
@@ -3175,7 +3189,7 @@ def test_shared_video_is_available_to_a_non_overlapping_task():
     editor_result = module.MultiTrackEditor.execute(
         {"resolution": "32 x 32 (1:1)"},
         "MiniMax",
-        track_data,
+        _h3_timeline_fixture(track_data),
         video=[source_video],
     )
     tracks_info, videos = editor_result.values[0], editor_result.values[3]
@@ -5903,7 +5917,7 @@ def test_minimax_prompt_override_renumbers_and_skips_unreferenced_slots():
     result = module.MultiTrackEditor.execute(
         {"resolution": "1344 x 768 (16:9)"},
         "MiniMax",
-        {"total_length": 1, "frame_rate": 2, "tracks": []},
+        {"total_length": 1, "frame_rate": 24, "tracks": []},
         prompt_override=payload,
         image=images,
         audio=audios,
@@ -6091,7 +6105,7 @@ def test_minimax_prompt_override_video_reference_keeps_source_duration():
     result = module.MultiTrackEditor.execute(
         {"resolution": "32 x 32 (1:1)"},
         "MiniMax",
-        {"total_length": 1, "frame_rate": 1, "tracks": []},
+        {"total_length": 1, "frame_rate": 24, "tracks": []},
         prompt_override=payload,
         video=[source_video],
     )
@@ -6170,6 +6184,7 @@ def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
     ]}
     result = module.MultiImagesLoader.execute(
         {"resolution": "width x height (longest)", "resize_to_pixel": 120, "resize_method": "crop"},
+        -1,
         json.dumps(image_data),
     )
 
@@ -6182,6 +6197,22 @@ def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
 def test_multi_images_loader_rejects_more_than_25_images():
     module = _load_basic_module()
     with pytest.raises(ValueError, match="at most 25"):
-        module.MultiImagesLoader.execute("width x height (auto)", {
+        module.MultiImagesLoader.execute("width x height (auto)", -1, {
             "images": [{"source_type": "input", "file_path": "x.png"}] * 26,
         })
+
+
+def test_native_policy_survives_editor_serialization_and_normalizes_unaligned_api_input():
+    module = _load_basic_module()
+    data = {"total_length": 243, "frame_rate": 24,
+            "h3_native": {"version": 1, "allow_vae_fallback": False},
+            "tracks": [{"id": "task", "type": "task", "segments": [
+                {"id": "a", "start_frame": 0, "end_frame": 243, "content": {"media_type": "none"}}]}]}
+    result = module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)
+    assert result.values[0]["h3_native"] == {**data["h3_native"], "version": 2}
+    data["tracks"][0]["segments"][0]["end_frame"] = 240
+    for allow in (False, True):
+        data["h3_native"]["allow_vae_fallback"] = allow
+        aligned = module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)
+        assert aligned.values[0]['tracks'][0]['segments'][0]['end_frame'] == 243
+        assert aligned.values[0]['h3_native']['allow_vae_fallback'] is allow

@@ -13,6 +13,7 @@ import type { ProjectData } from '@/types/project'
 import { DEFAULT_PROJECT_DATA } from '@/types/project'
 import { suppressCompareVideoDefaultPreview } from '@/lib/compare-video-node'
 import { installWorkflowSubmission } from '@/lib/workflow-submission'
+import { installProjectFallbackMigration, migrateProjectFallbacks } from '@/lib/project-fallback-migration'
 import { installProjectSamplingPreview } from '@/lib/project-sampling-preview-node'
 
 declare const __COMFY_EASY_MEDIA_GLOBAL_CSS__: string;
@@ -63,6 +64,11 @@ comfyApp.registerExtension({
     installEasyMediaSyncPlay(nodeType, nodeData)
     suppressCompareVideoDefaultPreview(nodeType, nodeData)
     installProjectSamplingPreview(nodeType, nodeData, comfyApp)
+    installProjectFallbackMigration(nodeType, nodeData)
+  },
+
+  afterConfigureGraph() {
+    migrateProjectFallbacks(comfyApp.graph)
   },
 
   getNodeMenuItems(node) {
