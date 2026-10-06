@@ -1,6 +1,6 @@
 # H3 每片段 LoRA 實作計畫
 
-日期：2026-10-06。實作基線：`57b7d44`，已合併的 native H3 workflow。狀態：實作前計畫。
+日期：2026-10-06。實作基線：`57b7d44`，已合併的 native H3 workflow。狀態：實作中，P1 模型隔離驗證通過。
 
 新增獨立的 H3 Segment LoRA 節點，以片段範圍及採樣階段描述額外的 MODEL LoRA，接入 Project 統一執行。Editor 保持原有時間軸操作。第一個里程碑先驗證真實模型的隔離、切換與回復，再接入完整生成流程及介面。
 
@@ -248,3 +248,15 @@ P1 未通過的模型或階段，不以普通輸出成功代替驗證。先修�
 目前基線的既有驗證紀錄為後端 1000 passed／1 skipped、前端 608 passed，詳見 [原生工作流收斂紀錄](h3-native-workflow-consolidation.md)。這些數字不是新功能的驗收結果。
 
 實作參考：[現有 Project](../nodes/project.py)、[SelfLift sampling](../modules/selflift/sampling.py)、[原生狀態](../utils/h3_native_status.py)、[逐段記憶體回收](../utils/project_memory.py)。MODEL clone／patch 優先沿用已安裝版本的 ComfyUI；[官方 LoRA 實作](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/sd.py) 用於理解介面，最終相容性以使用者環境的 P1 實測為準。
+
+## P1 實測紀錄（2026-10-06）
+
+入口為 `tests/manual/h3_segment_loras_gpu.py`，報告位於 ComfyUI `output/easy_media/native-validation/segment-loras-isolation.json`。硬體 RTX 4090，PyTorch 2.9.1+cu130。
+
+- H3 INT8 `10Eros_Max_h3_hybrid_beta5_int8`（SHA-256 `488e0d51…`），基底保留官方 8-step Turbo LoRA（`6a56f41a…`）。額外 A 為 `h3-realism-people-t2v-i2v-r2v`（`acc52960…`，125 MiB），B 為 `gemi_minimax_v1`（`de2e5f26…`，148 MiB）；完整指紋在報告。
+- 兩輪 base → A → B → A → base，共 10 次固定 seed、零文字 conditioning、39 幀小 latent 的單步 Euler 運算。重複 A／B／base 的影音輸出最大差均為 0；A、B 相對基底均有非零效果。所有上游 patch 保持原樣。
+- Dual 及 SelfLift 各測共享 Loader、具有獨立上游 patch 的第二 Loader 模型，共四條路徑皆有限且 patch 未受污染。第二 Loader 使用同 checkpoint 的另一 MODEL 設定，本輪不代表已測第二種 checkpoint。
+- 第二輪 RSS 約 23.18–23.23 GiB，CUDA allocated 約 19.568 GiB；全測試 CUDA allocated 峰值約 19.825 GiB，reserved 約 20.924 GiB。重複少數組合沒有隨次數增加一份完整模型的現象。CPU RSS 包含完整模型及全域 Turbo，不能當作額外 LoRA 快取大小。
+- CPU 權重快取初始上限定為 512 MiB，可容納上述 A+B 約 273 MiB。超出上限的大檔可作當段工作集，不留在可逐出快取；正式 adapter 的容量、釋放及重用另由 P2 測試驗證。
+
+本輪未呼叫 VAE，僅驗證模型機制，不是畫質或完整 Editor 接續驗收。Context／Drift、真實節點接線、影片／音訊輸出、獨立第二 checkpoint、上採樣及長鏈記憶體仍由後續整合驗收覆蓋。
