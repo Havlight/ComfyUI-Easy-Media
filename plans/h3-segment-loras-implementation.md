@@ -1,6 +1,6 @@
 # H3 每片段 LoRA 實作計畫
 
-日期：2026-10-06。實作基線：`57b7d44`，已合併的 native H3 workflow。狀態：P1–P4 已實作，進行 P5 整合與回歸驗收。
+日期：2026-10-06。實作基線：`57b7d44`，已合併的 native H3 workflow。狀態：P1–P5 已完成；已完成全套回歸、實機 API 與瀏覽器驗證，品質限制如下。
 
 新增獨立的 H3 Segment LoRA 節點，以片段範圍及採樣階段描述額外的 MODEL LoRA，接入 Project 統一執行。Editor 保持原有時間軸操作。第一個里程碑先驗證真實模型的隔離、切換與回復，再接入完整生成流程及介面。
 
@@ -25,7 +25,7 @@ Editor ── tracks_info ──────────────────
 H3 Segment LoRA ── segment_loras ────────┘
 ```
 
-公開節點暫定 ID 為 `easy h3SegmentLoras`，輸出自訂型別 `H3_LORA_PLAN`。Project 增加可選輸入 `segment_loras`，加在既有 schema 輸入之後，保留舊 workflow 的 widget 序列位置。節點只輸出設定資料，不載入 MODEL，也不改寫 `TRACKS_INFO`。
+公開節點 ID 為 `easy h3SegmentLoras`，輸出自訂型別 `H3_LORA_PLAN`。Project 增加可選輸入 `segment_loras`，加在既有 schema 輸入之後，保留舊 workflow 的 widget 序列位置。節點只輸出設定資料，不載入 MODEL，也不改寫 `TRACKS_INFO`。
 
 ### LoRA 設定節點
 
@@ -193,7 +193,7 @@ runtime `patches_uuid` 可供記憶體快取使用，但不作為跨程序重啟
 
 ## 分段提交與驗收關卡
 
-開始程式實作時，從最新 `main` 建立或重用 `feat/h3-segment-loras`。本次文件整理只提交 P0，不代表開始後續功能實作。
+P0 先提交計畫；收到開始指示後，從本地 `main` 建立 `feat/h3-segment-loras`，按以下責任分段提交。
 
 | 階段 | 交付與建議 commit | 通過條件 |
 | --- | --- | --- |
@@ -274,3 +274,51 @@ Project 已接入每段兩階段 MODEL、整輪 LoRA 預檢、持久化有效設
 實際 API 已完成 Single 四段 A → B → A → 無額外 LoRA、Dual＋Drift＋learned latent upscale（共享 Loader），以及 SelfLift＋Drift（第二 checkpoint 為 `aiangelh3_v1Eros40Red60`）。缺檔、錯誤 shape、重複 LoRA、過期父段（包含允許 VAE 回退）皆在採樣前拒絕。中段重跑保留未選入的第 1 段版本。
 
 隔離 Chromium 已驗證真實 ComfyUI 的搜尋選檔、範圍與階段編輯、多 Project、鍵盤 undo／redo、graph 儲存重載與窄介面；測試入口 `tests/manual/h3_segment_loras_browser.py`。不使用日常瀏覽器 profile。報告及截圖位於 `output/easy_media/native-validation/segment-loras-ui-*`。上述為階段驗證，最終回歸、其餘矩陣及影片觀察在 P5 彙整。
+
+
+## P5 最終驗收紀錄
+
+2026-10-06，Windows embedded Python／PyTorch 2.9.1+cu130、RTX 4090。使用獨立 ComfyUI 8191 測試程序及資料庫；使用者原本的 8188 程序未被重啟。生成結果與 JSON 報告保留於 `ComfyUI/output/easy_media/native-validation/`，測試模型與影片不進 Git。
+
+### 自動化與 UI
+
+- 後端完整測試：**1,064 passed、1 skipped**。包含原生來源、Project schema、Lock、last frame、preview、版本／記憶體及 LoRA 測試。
+- 前端完整測試：**57 files、621 passed**；TypeScript `--noEmit` 與 release build 通過。
+- 真實瀏覽器：搜尋選檔、範圍、進階階段、多 Project、鍵盤 undo／redo、儲存重載、窄節點排列通過，無 page error。
+- Python／ComfyUI、React／TypeScript、i18n review 已完成。補上 Project 新輸入的 schema 預期、可辨認的上游 LoRA 重複提示，並讓 artifact 與 LoRA 共用串流 checksum utility。
+- 上游重複提示目前可辨認 `easy modelLoaderPack` 直接連接的核心 `LoraLoaderModelOnly`／`LoraLoader` MODEL 路徑；不沿未知第三方節點推測，也不阻止有意的疊加。
+
+### 實際生成矩陣
+
+全部經由 Editor → Project → Video Combine → SaveVideo，`allow_vae_fallback=false`。表中的通過指執行、階段套用及 artifact 契約通過；畫面觀察另列。
+
+| 場景 | 階段設定／接續 | 報告（同目錄） | 結果 |
+| --- | --- | --- | --- |
+| Single 四段 | A → B → A → 無額外 LoRA；Context | `segment-loras-single-api.json` | 通過 |
+| Dual，共用 Loader | 第一／第二階段分別指定 A/B，下一段交換；Drift；learned latent 2× upscale | `segment-loras-dual-api.json` | 通過 |
+| Dual，獨立第二 checkpoint | 僅第二階段額外 LoRA；Context；不縮放 | `segment-loras-dual-second-high-api.json` | 通過 |
+| SelfLift，獨立第二 checkpoint | 低／高階段分別指定 A/B，下一段交換；Drift | `segment-loras-selflift-api.json` | 通過 |
+| SelfLift，共用 Loader | 僅低階段額外 LoRA；Context；learned latent upscale | `segment-loras-selflift-shared-low-api.json` | 通過 |
+| 外部影音 Lock | Single；Context；A/B 切換 | `segment-loras-external-locks-api.json` | 通過 |
+| 無逐段 LoRA 對照 | Single Context、SelfLift 共用 Loader Context、SelfLift 獨立第二 checkpoint Drift | `segment-loras-baseline-api.json`、`segment-loras-selflift-shared-baseline-api.json`、`segment-loras-selflift-second-baseline-api.json` | 通過 |
+
+A/B 使用 P1 記錄的兩個一般 MODEL LoRA，獨立第二 checkpoint 為 `aiangelh3_v1Eros40Red60.safetensors`。Single/Dual 取 320×256，Dual learned upscale 交付 640×512；SelfLift 交付 320×256、lowres_scale=0.5、transition_ratio=0.6。所有報告的 `history.prompt` 保存完整設定及規則。模型隔離的相同輸入運算 A/B/A/基底回復仍以 P1/P2 報告為準，不能把不同 context 的影片拿來要求逐像素相等。
+
+實際 API 額外確認：最後一段缺檔、shape 不符、重複規則、過期父段（含開啟 VAE 回退）都在首個 sampler 前拒絕，且未修改原 manifest；第 2 段開始重跑保持絕對編號，保留未選入第 1 段。最終報告 `segment-loras-preflight-final-api.json`。無逐段 LoRA 的舊流程亦通過 invalid schedule、缺少 low stage 與過期父段拒絕，報告 `segment-loras-baseline-preflight-api.json`。
+
+### 裁切、音訊及畫質
+
+- 九個生成／對照案例的 MP4 均為 24 fps。兩段交付 **90 + 51 = 141 幀／5.875 秒**；四段為 **243 幀／10.125 秒**。每段原始採樣均為 90 幀，接續段移除 39 幀前綴一次；raw AV artifact 仍記錄 `native_sampler`，沒有 VAE fallback history。
+- ffprobe 與音訊解碼確認影音長度一致（容許容器時間基微差）、音訊值有限；保留波形 peak/RMS 及接縫 sample jump。這是時序與數值檢查，未作正式聽感評分。
+- 抽查第 86、89、90、93、105 幀的 Single／Dual 畫面，未見新增的前綴重播；LoRA 有改變外觀。這不是所有風格／動作都自然的保證。
+- **小尺寸 SelfLift 品質限制仍在**：Context 共用 Loader 的接縫可見朝向跳轉；Drift 加第二 checkpoint 可見紋理／姿態不穩定。相同設定、無逐段 LoRA 的兩個對照也呈現這類問題。因此本次不宣稱修復 SelfLift 接縫畫質，或替高強度角色切換背書。
+- 觀察資料為 `segment-loras-media-report.json` 與 `segment-loras-contact-sheet.png`。短鏈及兩輪固定組合測試支持模型隔離和有界快取設計；不等同於所有量化後端或數百段長片的壓力測試。
+
+### 可重現入口
+
+- `tests/manual/h3_segment_loras_gpu.py`：傳入 model、base-lora、lora-a、lora-b 與 report；`--managed` 使用正式 adapter。檔案及記憶體量測見 `segment-loras-isolation.json`／`segment-loras-adapter.json`。
+- `tests/manual/h3_native_api_smoke.py`：新增 `--segment-loras <plan.json>`、`--shared-loader`、`--second-model`；其餘 model／CLIP／VAE／mode／method 參數可由上述報告還原。
+- `tests/manual/h3_segment_loras_api.py --source-report <single-report.json> --report <result.json>`：必須使用隔離的 `native-validation-*` 專案，會驗證拒絕及新增續跑版本。
+- `tests/manual/h3_segment_loras_browser.py --executable <Chrome> --output <directory> [--test-deps <directory>]`：啟動獨立 headless profile，不開啟使用者日常瀏覽器、不排入生成。
+
+release 產物與功能碼分開提交。功能在 `feat/h3-segment-loras` 完成，尚未推送或合併到 GitHub；本地目前 checkout 可重啟 ComfyUI 後測試。

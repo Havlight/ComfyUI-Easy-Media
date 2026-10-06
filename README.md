@@ -192,6 +192,7 @@ If an older workflow connects directly to the editor's media outputs, insert `Mu
 |---------|-------------|
 | `model_loader` | First-pass H3 model and shared CLIP, video VAE, and audio VAE; video projects also require the audio VAE |
 | `model_loader_2nd` | Optional second-pass H3 model; defaults to the first-pass model. Even when connected, encoding and VAEs still come from the first-pass loader |
+| `segment_loras` | Optional H3 Segment LoRA plan: additional MODEL LoRAs by absolute task number and sampling stage |
 | `sampling_plan` | Built-in presets such as `ultra_light`, `light`, `medium`, and `high` select samplers and sigmas for Turbo / non-Turbo models; use `custom` for manual settings |
 | `sampling_mode` | `single`, `dual`, or `selflift`; SelfLift expands `transition_ratio`, `lowres_scale`, and the optional `highres_tiling` switch. Uses a latent-only recipe (`rho=0`). SelfLift also saves separate low- and high-resolution context lineages |
 | `sampler` / `sigmas` | Connect both to override first-pass sampling. Second-pass overrides use `sampler_2nd` / `sigmas_2nd`, also as a pair. `custom` requires both inputs for every sampling pass that runs |
@@ -216,6 +217,29 @@ To customize presets, copy [h3_sample.json.example](./presets/h3_sample.json.exa
 The standalone `easy minimaxH3LatentUpscaler` node exposes `enable_temporal_chunking` and `force_unload`. Both default to enabled; MultiTrack's internal latent-upscale path also enables both explicitly. Temporal chunking lowers peak memory for long latents, while forced unload releases the upscaler from VRAM after inference.
 
 For example, download `minimax_h3_latent_upscaler_3d_fp16.safetensors` from the model repository above, place it in the specified directory, restart ComfyUI, and select it under `upscale_model`. Its documentation specifies a 1–4× scaling range. Follow the selected model's supported range even if the project parameter accepts larger values.
+
+#### Per-Segment LoRAs
+
+Add **H3 Segment LoRA** (`easy h3SegmentLoras`) and connect its `segment_loras` output directly to **MultiTrack Project → segment_loras**. The Editor and existing Model Loader wiring stay the same. Restart ComfyUI and refresh its browser page after updating to register the new node and widget.
+
+Each row selects a LoRA from the registered model folders, a **starting task number**, a **count**, and a **strength**. Add more rows with **Add LoRA**; rows can be disabled or deleted. Count `-1` displays **Until end**. For example, start `3`, count `2` applies to tasks 3 and 4. Numbering follows the full normalized timeline after edits, splits and markers; resuming from task 6 does not renumber it to 1. It does not attach rules permanently to a shot ID.
+
+The advanced arrow on each row selects **All stages** (default), **First stage**, or **Second stage**:
+
+| Mode | First stage | Second stage |
+|------|-------------|--------------|
+| Single | The sampling pass | Unused |
+| Dual | First pass | Second pass, unless first-pass-only preview is enabled |
+| SelfLift | Low-resolution part | High-resolution part of the same sigma schedule |
+| Passthrough | Unused | Unused |
+
+Each stage adds its LoRAs independently to its own Loader MODEL. A shared Loader can still use different LoRAs in each stage; `model_loader_2nd`, custom samplers/sigmas, latent upscaling, Context, Drift and external locks retain their existing roles. Extra LoRAs do not change CLIP, VAEs, Turbo detection or sampling schedules. Keep acceleration/distillation LoRAs and their sampling setup in the base Loader.
+
+**Effective plan** shows the actual task/stage ranges for each connected Project. Editing previews do not load weights or decode media; dynamic inputs remain pending until execution. The entire selected run and its necessary saved parents are checked before the first sampler. Missing/incompatible files and overlapping duplicate LoRAs are rejected. Disabled, zero-strength, out-of-range and inactive-stage rules load no weights. Recognized upstream duplicates are reported at execution, but third-party Loader provenance cannot always be recovered.
+
+Strengths are **additional** to upstream LoRAs; zero does not remove a Loader patch. Changing an effective LoRA marks the saved task and its dependent results for regeneration. Restarting or renaming an identical file does not change its content identity. VAE fallback cannot bypass a bad LoRA or stale parent. LoRA changes between tasks do not themselves require a VAE round trip, and context trimming stays unchanged.
+
+The verified adapter supports **standard 2D H3 MODEL LoRAs**, including alpha, with complete core key mapping. CLIP weights, partial matches, DoRA and other unverified adapter formats fail explicitly. Evictable CPU weights have a 512 MiB cache budget; active models, tensors and normal ComfyUI allocations are additional. Short GPU tests cover INT8 H3, global Turbo, Single/Dual/SelfLift and independent second checkpoints. Large style changes and small-resolution SelfLift still need visual evaluation; successful sampling does not guarantee a smooth appearance transition. See the [implementation and validation record](plans/h3-segment-loras-implementation.md).
 
 #### Context Implementation: Source and Adaptations
 
@@ -340,7 +364,7 @@ bun run build:release
       <td>Add subtitle track to video track</td>
     </tr>
     <tr>
-      <td rowspan="7">🎬 MiniMax H3</td>
+      <td rowspan="8">🎬 MiniMax H3</td>
       <td>easy minimaxH3ToVideo</td>
       <td>Build MiniMax H3 text-to-video, reference-to-video, or first/last-frame conditioning and latent inputs</td>
     </tr>
@@ -363,6 +387,10 @@ bun run build:release
     <tr>
       <td>easy multitrackProject</td>
       <td>Build and execute multi-track MiniMax H3 project with optional first/second-pass sampling</td>
+    </tr>
+    <tr>
+      <td>easy h3SegmentLoras</td>
+      <td>Configure additional H3 MODEL LoRAs by task range and sampling stage</td>
     </tr>
     <tr>
       <td>easy multitrackProjectVideoCombine</td>
