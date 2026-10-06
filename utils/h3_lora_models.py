@@ -5,7 +5,6 @@ weights, retains context wrappers, or moves a variant onto the GPU.
 """
 from __future__ import annotations
 
-import hashlib
 import math
 import threading
 import weakref
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .h3_segment_loras import SegmentLoraError
+from .file_hash import file_checksum
 
 WEIGHT_CACHE_BYTES = 512 * 1024**2
 _LOCK = threading.RLock()
@@ -71,13 +71,10 @@ def file_identity(name: str, *, cached_only: bool = False) -> dict[str, Any] | N
             cached = _IDENTITIES.get(str(path))
             if cached_only:
                 return dict(cached) if cached and cached["stat"] == before else None
-        digest = hashlib.sha256()
-        with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(4 * 1024**2), b""):
-                digest.update(chunk)
+        checksum = file_checksum(path)
         if before != _stat(path):
             raise SegmentLoraError(f"LoRA changed while being read: {name}")
-        result = dict(lora=name, path=str(path), stat=before, sha256=digest.hexdigest())
+        result = dict(lora=name, path=str(path), stat=before, sha256=checksum)
         with _LOCK:
             _IDENTITIES[str(path)] = result
             _IDENTITIES.move_to_end(str(path))

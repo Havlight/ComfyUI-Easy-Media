@@ -16,14 +16,7 @@ import torch
 from ..modules.motion_context.core import _official_nested_tensor, _streams_from_latent
 from .h3_native import validate_native_latent
 from .h3_native_timing import NativePlanError
-
-
-def file_checksum(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+from .file_hash import file_checksum
 
 
 def native_child_path(directory: Path, filename: str) -> Path:
