@@ -20,6 +20,7 @@ from ..utils.h3_native_artifacts import (
     read_native_manifest, refresh_native_dependencies,
 )
 from ..utils.h3_native_lock import validate_native_locked_video
+from ..utils.h3_lora_preflight import preflight_project_loras, task_lora_recipe
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
 from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
 from ..utils.h3_native_preflight import (
@@ -102,8 +103,14 @@ class EasyH3NativePreflight(io.ComfyNode):
         directory = _project_directory(project_name)
         manifest = read_native_manifest(directory)
         from ..utils.h3_native_status import native_timeline_status
-        status = {item['segment_id']: item['status'] for item in native_timeline_status(tracks_info, manifest)}
+        loras = preflight_project_loras(tracks_info, config.get('segment_loras'), recipe,
+                                       selected, model, second_model if second_model is not None else model)
+        status = {item['segment_id']: item['status'] for item in native_timeline_status(tracks_info, manifest, loras['effects'])}
         selected_ids = {plans[i].segment_id for i in selected}
+        for index in loras['required']:
+            sid = plans[index].segment_id
+            if sid not in selected_ids and status.get(sid) in {'edited', 'parent_changed'}:
+                raise NativePlanError('PARENT_EDITED', f'Task {index + 1} or its source/LoRA settings changed; include it in this run.', sid)
         for index in selected:
             parent_ids = {plans[index].parent_segment_id}
             if index in previous_frames and index:
@@ -144,6 +151,15 @@ class EasyH3NativePreflight(io.ComfyNode):
                     errors.append(f'Task {index + 1}: {error}')
         if errors:
             raise NativePlanError('PREFLIGHT_MEDIA', '\n' + '\n'.join(errors))
+        state['segment_loras'] = loras
+        try:
+            from server import PromptServer
+            PromptServer.instance.send_sync('easy_media_segment_loras_resolved', {
+                'project_name': project_name, 'project_node_id': config.get('project_node_id', ''),
+                'tasks': loras['tasks'], 'rules': loras['rules'], 'conflicts': loras['conflicts'],
+            })
+        except (ImportError, AttributeError, RuntimeError) as error:
+            logging.warning('Unable to publish segment LoRA summary: %s', error)
         return io.NodeOutput(state)
 
 
@@ -173,6 +189,9 @@ class EasyH3NativePrepare(io.ComfyNode):
             _native_model_adapter(second_model)
         plan = NativeTaskPlan(**json.loads(plan_json))
         recipe = {**json.loads(recipe_json), "adapter": adapter}
+        if run_state is not None and 'segment_loras' in run_state:
+            task = next(item for item in run_state['segment_loras']['tasks'] if item['segment_id'] == plan.segment_id)
+            recipe.update(task_lora_recipe(task))
         recipe["model_patch_revision"] = str(getattr(model, "patches_uuid", "unavailable"))
         recipe["second_model_patch_revision"] = str(getattr(second_model, "patches_uuid", "unavailable"))
         for key, schedule in (("sigmas", sigmas), ("second_sigmas", second_sigmas)):
