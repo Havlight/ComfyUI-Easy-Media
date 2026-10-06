@@ -105,6 +105,8 @@ async def handle_h3_timeline_status(request: web.Request) -> web.Response:
     from .utils.h3_native_artifacts import read_native_manifest, refresh_native_dependencies
     from .utils.h3_native_status import native_timeline_status
     from .nodes.basic import _build_tracks_info_and_media_outputs
+    from .utils.h3_lora_preflight import compile_project_loras, preview_lora_effects
+    from .utils.h3_native_timing import compile_native_plan
 
     try:
         body = await request.json()
@@ -117,9 +119,39 @@ async def handle_h3_timeline_status(request: web.Request) -> web.Response:
         directory = Path(folder_paths.get_output_directory()).resolve() / "easy_media" / "projects" / name
         manifest = read_native_manifest(directory)
         refresh_native_dependencies(manifest)
-        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest)})
+        snapshot = body.get('project_snapshot')
+        effects = {plan.segment_id: None for plan in compile_native_plan(info)}
+        if isinstance(snapshot, dict) and snapshot.get('known') is True:
+            compiled = compile_project_loras(info, snapshot['segment_loras'], snapshot['recipe'])
+            effects = preview_lora_effects(compiled)
+        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest, effects)})
     except (OSError, KeyError, TypeError, ValueError) as error:
         return web.json_response({"error": str(error)}, status=400)
+
+
+@PromptServer.instance.routes.post("/easy-media/project/segment-loras-preview")
+async def handle_h3_segment_loras_preview(request: web.Request) -> web.Response:
+    """Shared range compiler only: no weight, video, VAE or manifest writes."""
+    from .nodes.basic import _build_tracks_info_and_media_outputs
+    from .utils.h3_lora_preflight import compile_project_loras
+    from .utils.h3_project import h3_task_entries, select_h3_task_entries
+
+    try:
+        body = await request.json()
+        snapshot = body['project_snapshot']
+        if snapshot.get('known') is not True:
+            return web.json_response({'pending': True, 'tasks': [], 'rules': [], 'conflicts': []})
+        info = _build_tracks_info_and_media_outputs(body['tracks_info'], None, None, None,
+            {"resolution": "width x height (custom)", "width": 320, "height": 256},
+            "MiniMax", materialize_media=False)[0]
+        selected = select_h3_task_entries(h3_task_entries(info), snapshot['start_segment'] - 1, snapshot['segment_count'])
+        recipe = snapshot['recipe']
+        if recipe['sampling_mode'] == 'dual' and recipe.get('first_pass_only'):
+            selected = selected[:1]
+        compiled = compile_project_loras(info, snapshot['segment_loras'], recipe, [i for i, _ in selected])
+        return web.json_response({'pending': False, **compiled})
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        return web.json_response({'error': str(error)}, status=400)
 
 
 @PromptServer.instance.routes.get("/easy-media/projects")

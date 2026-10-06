@@ -1,6 +1,6 @@
 # H3 每片段 LoRA 實作計畫
 
-日期：2026-10-06。實作基線：`57b7d44`，已合併的 native H3 workflow。狀態：實作中，P1 模型隔離驗證通過。
+日期：2026-10-06。實作基線：`57b7d44`，已合併的 native H3 workflow。狀態：P1–P4 已實作，進行 P5 整合與回歸驗收。
 
 新增獨立的 H3 Segment LoRA 節點，以片段範圍及採樣階段描述額外的 MODEL LoRA，接入 Project 統一執行。Editor 保持原有時間軸操作。第一個里程碑先驗證真實模型的隔離、切換與回復，再接入完整生成流程及介面。
 
@@ -266,3 +266,11 @@ P1 未通過的模型或階段，不以普通輸出成功代替驗證。先修�
 純資料編譯、相對路徑與 schema 驗證、階段展開、內容別名重複檢查、穩定效果指紋、CPU byte LRU 與弱參照模型描述已完成；針對規則及 adapter 的 41 個測試通過。真實 GPU 腳本以 `--managed` 使用正式 adapter 重跑兩輪隔離及 Dual／SelfLift 四條路徑，結果通過，報告為 `segment-loras-adapter.json`。此時權重快取只保留 A、B 兩檔約 273 MiB，沒有為相同檔案的不同強度複製一份快取。
 
 首版相容性明確限於 core key mapping 可完整對應的 H3 線性層標準 2D MODEL LoRA（含 alpha）。CLIP 權重、部分匹配、錯誤 shape、DoRA、mid／reshape 或其他未驗證 adapter 均在採樣前拒絕；不以成功讀取 safetensors 宣稱支援。
+
+### P3／P4 進度
+
+Project 已接入每段兩階段 MODEL、整輪 LoRA 預檢、持久化有效設定及 Context／previous-frame 依賴失效。受影響的後端測試 232 passed。LoRA UI 使用原有 graph history；相關前端測試 17 passed，TypeScript strict check 通過。
+
+實際 API 已完成 Single 四段 A → B → A → 無額外 LoRA、Dual＋Drift＋learned latent upscale（共享 Loader），以及 SelfLift＋Drift（第二 checkpoint 為 `aiangelh3_v1Eros40Red60`）。缺檔、錯誤 shape、重複 LoRA、過期父段（包含允許 VAE 回退）皆在採樣前拒絕。中段重跑保留未選入的第 1 段版本。
+
+隔離 Chromium 已驗證真實 ComfyUI 的搜尋選檔、範圍與階段編輯、多 Project、鍵盤 undo／redo、graph 儲存重載與窄介面；測試入口 `tests/manual/h3_segment_loras_browser.py`。不使用日常瀏覽器 profile。報告及截圖位於 `output/easy_media/native-validation/segment-loras-ui-*`。上述為階段驗證，最終回歸、其餘矩陣及影片觀察在 P5 彙整。
