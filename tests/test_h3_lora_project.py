@@ -80,6 +80,15 @@ def helpers(monkeypatch):
     return compiler, models, status
 
 
+def test_upstream_advisory_uses_only_selected_effective_stages(helpers):
+    compiler, _, _ = helpers
+    compiled = compiler.compile_project_loras(native_inputs()['tracks_info'][0],
+        plan(rule('a'), rule('b', stage='second')), {'sampling_mode': 'single'}, [1])
+    assert compiler.upstream_lora_warnings(compiled, {'first': ['a'], 'second': ['b']}) == [
+        {'stage': 'first', 'lora': 'a', 'tasks': [2]}]
+    assert compiler.upstream_lora_warnings(compiled, {}) == []
+
+
 def test_preflight_scope_absolute_resume_unique_file_model_pairs_and_content_aliases(helpers, monkeypatch):
     compiler, models, _ = helpers
     info = native_inputs()['tracks_info'][0]

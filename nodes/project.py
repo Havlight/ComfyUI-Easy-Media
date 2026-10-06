@@ -36,7 +36,7 @@ from ..utils.h3_project import (
     select_h3_task_entries,
     validate_h3_project_outputs,
 )
-from ..utils.models import detect_turbo_lora_from_prompt, detect_turbo_model
+from ..utils.models import detect_turbo_lora_from_prompt, detect_turbo_model, known_project_model_loras
 from ..utils.project_memory import (
     BOUNDARY_META,
     SEGMENT_META,
@@ -1327,6 +1327,8 @@ class EasyMultiTrackProject(io.ComfyNode):
         segment_loras = normalize_lora_plan(_first_input(kwargs.get("segment_loras")))
         lora_plan = compile_project_loras(info, segment_loras, run_recipe,
                                          [i for i, _ in selected_entries])
+        upstream_loras = known_project_model_loras(
+            getattr(hidden_inputs, "prompt", None), getattr(hidden_inputs, "unique_id", None)) if segment_loras['rules'] else {}
         project_static = project_media_static.out(0) if uses_linked_prepare else {
             "task_tracks_info_base": task_tracks_info_base, "shared_images": shared_images,
             "shared_audio": shared_audio, "shared_video": shared_video,
@@ -1337,6 +1339,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                             "project_static": project_static,
                             "config_json": json.dumps({"recipe": run_recipe, "selected": [i for i, _ in selected_entries],
                                 "segment_loras": segment_loras, "project_node_id": preview_node_id,
+                                "upstream_loras": upstream_loras,
                                 "run_second_pass": run_second_pass, "has_context_second_pass": has_context_second_pass})}
         for name, value in (("sigmas", first_pass_sigmas), ("second_sigmas", second_pass_sigmas),
                             ("context_second_sigmas", context_second_pass_sigmas if context_second_pass_sigmas is not None else second_pass_sigmas)):

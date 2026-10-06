@@ -20,7 +20,7 @@ from ..utils.h3_native_artifacts import (
     read_native_manifest, refresh_native_dependencies,
 )
 from ..utils.h3_native_lock import validate_native_locked_video
-from ..utils.h3_lora_preflight import preflight_project_loras, task_lora_recipe
+from ..utils.h3_lora_preflight import preflight_project_loras, task_lora_recipe, upstream_lora_warnings
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
 from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
 from ..utils.h3_native_preflight import (
@@ -152,11 +152,16 @@ class EasyH3NativePreflight(io.ComfyNode):
         if errors:
             raise NativePlanError('PREFLIGHT_MEDIA', '\n' + '\n'.join(errors))
         state['segment_loras'] = loras
+        loras['warnings'] = upstream_lora_warnings(loras, config.get('upstream_loras', {}))
+        for warning in loras['warnings']:
+            logging.warning('Segment LoRA %s, %s stage, tasks %s is also present upstream; strengths are additional.',
+                            warning['lora'], warning['stage'], warning['tasks'])
         try:
             from server import PromptServer
             PromptServer.instance.send_sync('easy_media_segment_loras_resolved', {
                 'project_name': project_name, 'project_node_id': config.get('project_node_id', ''),
                 'tasks': loras['tasks'], 'rules': loras['rules'], 'conflicts': loras['conflicts'],
+                'warnings': loras['warnings'],
             })
         except (ImportError, AttributeError, RuntimeError) as error:
             logging.warning('Unable to publish segment LoRA summary: %s', error)

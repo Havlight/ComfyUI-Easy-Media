@@ -110,3 +110,14 @@ def task_lora_recipe(task: dict[str, Any]) -> dict[str, Any]:
     return {'segment_loras': lora_effect(task), 'segment_lora_files': {
         stage: [{key: rule[key] for key in ('lora', 'sha256', 'strength')} for rule in rules]
         for stage, rules in task['stages'].items() if rules}}
+
+
+def upstream_lora_warnings(compiled: dict[str, Any], upstream: dict[str, list[str]]) -> list[dict[str, Any]]:
+    duplicates: dict[tuple[str, str], list[int]] = {}
+    for task in compiled['tasks']:
+        if task['selected']:
+            for stage, rules in task['stages'].items():
+                for rule in rules:
+                    if rule['lora'] in upstream.get(stage, []):
+                        duplicates.setdefault((stage, rule['lora']), []).append(task['number'])
+    return [dict(stage=stage, lora=name, tasks=tasks) for (stage, name), tasks in duplicates.items()]

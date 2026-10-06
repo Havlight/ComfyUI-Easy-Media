@@ -136,6 +136,7 @@ export function H3SegmentLorasWidget({ value, onChange, node, app }: Readonly<Re
         {preview.error && <p role="alert" className="text-destructive">{preview.error}</p>}
         {project && <p className="text-muted-foreground">{preview.resolved ? t('resolved') : !project.project_snapshot.known || summary?.pending ? t('pending') : t('preview')}</p>}
         {summary?.conflicts.map((conflict, index) => <p key={index} role="alert" className="text-destructive">{t('conflict', { task: conflict.index + 1, rows: conflict.rows.join(', '), stage: t(conflict.stage) })}</p>)}
+        {summary?.warnings?.map((warning, index) => <p key={index} role="status" className="text-muted-foreground">{t('upstreamDuplicate', { lora: warning.lora, tasks: warning.tasks.join(', '), stage: t(warning.stage) })}</p>)}
         {!!summary?.tasks.length && <div className="overflow-x-auto"><table className="w-full table-fixed text-left text-xs">
           <thead className="text-muted-foreground"><tr>{['task', 'first', 'second', 'run'].map((key) => <th key={key} className={cn('p-1 font-normal', key === 'task' && 'w-12', key === 'run' && 'w-20')}>{t(key)}</th>)}</tr></thead>
           <tbody>{summary.tasks.map((task) => <tr key={task.segment_id} className="border-t border-border align-top">

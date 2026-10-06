@@ -524,6 +524,7 @@
     "unselected": "Not selected",
     "base": "Loader only",
     "upstream": "Lists extra LoRAs only. Existing Loader patches remain. Ranges follow task numbers after edits.",
+    "upstreamDuplicate": "Tasks {tasks}, {stage}: {lora} is also present upstream. This strength is added to the existing Loader setting.",
     "countHelp": "Enter a positive count, or -1 for all remaining segments."
   }
 }

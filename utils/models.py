@@ -481,6 +481,41 @@ def _is_enabled(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() == "true"
 
 
+def known_project_model_loras(prompt: Any, current_node_id: Any) -> dict[str, list[str]]:
+    """Advisory filenames from recognized MODEL paths, never full provenance.
+
+    Stop at unknown adapters instead of following unrelated conditioning inputs.
+    Dynamic names/strengths and arbitrary third-party loaders remain unknown.
+    """
+    graph = _prompt_mapping(prompt)
+    current = _prompt_node(graph, current_node_id) if graph is not None else None
+    if current is None or not isinstance(current[1].get("inputs"), Mapping):
+        return {}
+    inputs = current[1]["inputs"]
+    result: dict[str, list[str]] = {}
+    for stage, port in (("first", "model_loader"), ("second", "model_loader_2nd")):
+        link = inputs.get(port, inputs.get("model_loader"))
+        node_id = _linked_node_id(link, graph)
+        seen: set[str] = set()
+        names: list[str] = []
+        while node_id is not None and node_id not in seen:
+            seen.add(node_id)
+            node = _prompt_node(graph, node_id)[1]
+            values = node.get("inputs")
+            if not isinstance(values, Mapping):
+                break
+            kind = node.get("class_type")
+            if kind in ("LoraLoaderModelOnly", "LoraLoader"):
+                name, strength = values.get("lora_name"), values.get("strength_model")
+                if isinstance(name, str) and type(strength) in (int, float) and strength != 0:
+                    names.append(name.replace("\\", "/"))
+            elif kind != "easy modelLoaderPack":
+                break
+            node_id = _linked_node_id(values.get("model"), graph)
+        result[stage] = list(dict.fromkeys(names))
+    return result
+
+
 def detect_turbo_lora_from_prompt(
     prompt: Any, current_node_id: Any
 ) -> TurboModelDetection | None:

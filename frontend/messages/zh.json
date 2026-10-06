@@ -524,6 +524,7 @@
     "unselected": "未選入",
     "base": "僅 Loader",
     "upstream": "此處只列額外 LoRA，保留 Loader 原有 patch。編輯時間軸後，範圍依新的任務編號套用。",
+    "upstreamDuplicate": "第 {tasks} 段，{stage}：上游已使用 {lora}，此處強度會額外疊加於 Loader 設定。",
     "countHelp": "輸入正整數；-1 表示後面全部片段。"
   }
 }

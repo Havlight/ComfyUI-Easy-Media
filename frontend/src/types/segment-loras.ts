@@ -25,6 +25,7 @@ export interface LoraTaskSummary {
 }
 export interface LoraSummary {
   pending?: boolean
+  warnings?: { stage: string; lora: string; tasks: number[] }[]
   tasks: LoraTaskSummary[]
   rules: { id: string; row: number; start: number; end: number; unused_reason: string | null; incomplete: boolean }[]
   conflicts: { index: number; stage: string; rows: number[]; lora: string }[]

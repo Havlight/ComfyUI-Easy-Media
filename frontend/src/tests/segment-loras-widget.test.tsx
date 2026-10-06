@@ -81,7 +81,7 @@ describe('segment LoRA controls', () => {
     await waitFor(() => expect(screen.getByText('All stages')).toBeTruthy())
   })
   it('provides localized labels for both supported message catalogs', () => {
-    for (const locale of ['en', 'zh']) for (const key of ['all', 'first', 'second', 'pending', 'upstream', 'countHelp']) {
+    for (const locale of ['en', 'zh']) for (const key of ['all', 'first', 'second', 'pending', 'upstream', 'upstreamDuplicate', 'countHelp']) {
       expect(translate(locale, `segmentLoras.${key}`)).not.toBe(`segmentLoras.${key}`)
     }
   })
