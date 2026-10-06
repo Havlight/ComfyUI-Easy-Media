@@ -8,6 +8,7 @@ from .minimax import *
 from .project import *
 from .h3_native import *
 from .h3_previous_frame import *
+from .h3_segment_loras import *
 from .video import *
 from .rtx_vsr import *
 from .subtitle import *

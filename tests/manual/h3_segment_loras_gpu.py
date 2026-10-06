@@ -21,8 +21,9 @@ def main() -> None:
     for name in ('model', 'base-lora', 'lora-a', 'lora-b', 'report'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--cycles', type=int, default=2)
+    parser.add_argument('--managed', action='store_true', help='Exercise the production bounded adapter')
     args = parser.parse_args()
-    paths = {key: Path(value).resolve() for key, value in vars(args).items() if key != 'cycles'}
+    paths = {key: Path(value).resolve() for key, value in vars(args).items() if key not in ('cycles', 'managed')}
     sys.argv = [sys.argv[0]]
     root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root.parent.parent))
@@ -42,6 +43,7 @@ def main() -> None:
     core = importlib.import_module('segment_lora_probe.modules.motion_context.core')
     lift = importlib.import_module('segment_lora_probe.modules.selflift.sampling')
     artifacts = importlib.import_module('segment_lora_probe.utils.h3_native_artifacts')
+    managed = importlib.import_module('segment_lora_probe.utils.h3_lora_models') if args.managed else None
     report: dict[str, Any] = {'passed': False, 'scope': 'identical-input model switching and stages; no quality claim',
         'torch': torch.__version__, 'gpu': torch.cuda.get_device_name(), 'runs': [],
         'files': {key: {'name': value.name, 'bytes': value.stat().st_size, 'sha256': artifacts.file_checksum(value)}
@@ -52,6 +54,13 @@ def main() -> None:
         paths['report'].write_text(json.dumps(report, indent=2), encoding='utf-8')
 
     def patch(model: Any, path: Path, strength: float) -> Any:
+        if managed is not None and path != paths['base_lora']:
+            stat = path.stat()
+            identity = dict(lora=path.name, path=str(path), sha256=artifacts.file_checksum(path),
+                            stat=[stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino])
+            managed.validate_model_lora(model, identity)
+            return managed.prepare_lora_model(model, [dict(lora=path.name, sha256=identity['sha256'], strength=strength)],
+                                               {path.name: identity}, 'first')
         weights = comfy.utils.load_torch_file(str(path), safe_load=True)
         output = comfy.sd.load_lora_for_models(model, None, weights, strength, 0)[0]
         assert output is not model and output.patches_uuid != model.patches_uuid
@@ -133,6 +142,8 @@ def main() -> None:
                 print(json.dumps(stages[-1]), flush=True)
         report.update(passed=True, stages=stages, encoder_calls=0,
                       peak_cuda_bytes=torch.cuda.max_memory_allocated(), cpu_weight_cache_budget_bytes=512 * 1024**2)
+        if managed is not None:
+            report['managed_cache'] = managed.lora_cache_stats()
         save()
     except Exception as error:
         report['error'] = f'{type(error).__name__}: {error}'

@@ -260,3 +260,9 @@ P1 未通過的模型或階段，不以普通輸出成功代替驗證。先修�
 - CPU 權重快取初始上限定為 512 MiB，可容納上述 A+B 約 273 MiB。超出上限的大檔可作當段工作集，不留在可逐出快取；正式 adapter 的容量、釋放及重用另由 P2 測試驗證。
 
 本輪未呼叫 VAE，僅驗證模型機制，不是畫質或完整 Editor 接續驗收。Context／Drift、真實節點接線、影片／音訊輸出、獨立第二 checkpoint、上採樣及長鏈記憶體仍由後續整合驗收覆蓋。
+
+### P2 進度
+
+純資料編譯、相對路徑與 schema 驗證、階段展開、內容別名重複檢查、穩定效果指紋、CPU byte LRU 與弱參照模型描述已完成；針對規則及 adapter 的 41 個測試通過。真實 GPU 腳本以 `--managed` 使用正式 adapter 重跑兩輪隔離及 Dual／SelfLift 四條路徑，結果通過，報告為 `segment-loras-adapter.json`。此時權重快取只保留 A、B 兩檔約 273 MiB，沒有為相同檔案的不同強度複製一份快取。
+
+首版相容性明確限於 core key mapping 可完整對應的 H3 線性層標準 2D MODEL LoRA（含 alpha）。CLIP 權重、部分匹配、錯誤 shape、DoRA、mid／reshape 或其他未驗證 adapter 均在採樣前拒絕；不以成功讀取 safetensors 宣稱支援。
