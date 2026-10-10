@@ -351,6 +351,7 @@ def _load_minimax_node(monkeypatch):
         }
     )
     models_module.detect_turbo_lora_from_prompt = lambda prompt, node_id: None
+    models_module.known_project_model_loras = lambda prompt, node_id: {}
 
     root = Path(__file__).parents[1]
     h3_presets_spec = importlib.util.spec_from_file_location(
@@ -1236,7 +1237,9 @@ def test_multitrack_h3_project_schema_exposes_pipeline_configuration(monkeypatch
         "upscale_model",
         "enabled_tiling",
         "allow_vae_fallback",
+        "segment_loras",
     ]
+    assert inputs["segment_loras"].kwargs["optional"] is True
     for name in (
         "sampler",
         "sigmas",

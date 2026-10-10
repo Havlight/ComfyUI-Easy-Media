@@ -246,6 +246,24 @@ def test_detect_turbo_model_does_not_treat_arbitrary_patches_as_turbo():
     assert result.patch_count == 1
 
 
+def test_known_project_loras_are_stage_specific_and_follow_only_model_paths():
+    prompt = {
+        "p": {"inputs": {"model_loader": ["pack", 0]}},
+        "pack": {"class_type": "easy modelLoaderPack", "inputs": {"model": ["a", 0], "clip": ["text", 0]}},
+        "a": {"class_type": "LoraLoader", "inputs": {"model": ["b", 0], "lora_name": "folder\\a", "strength_model": .5}},
+        "b": {"class_type": "LoraLoaderModelOnly", "inputs": {"lora_name": "off", "strength_model": 0}},
+        "text": {"class_type": "LoraLoader", "inputs": {"lora_name": "unrelated", "strength_model": 1}},
+    }
+    assert models.known_project_model_loras(prompt, "p") == {"first": ["folder/a"], "second": ["folder/a"]}
+    prompt["p"]["inputs"]["model_loader_2nd"] = ["pack2", 0]
+    prompt["pack2"] = {"class_type": "easy modelLoaderPack", "inputs": {"model": ["c", 0]}}
+    prompt["c"] = {"class_type": "LoraLoaderModelOnly", "inputs": {"lora_name": "second", "strength_model": -.3}}
+    assert models.known_project_model_loras(prompt, "p")["second"] == ["second"]
+    prompt["a"]["class_type"] = "UnknownAdapter"
+    assert models.known_project_model_loras(prompt, "p")["first"] == []
+    assert models.known_project_model_loras(None, "p") == {}
+
+
 def test_prompt_fallback_finds_nearest_core_turbo_lora_before_model_pack():
     prompt = {
         "100": {

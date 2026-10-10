@@ -15,6 +15,8 @@ import { suppressCompareVideoDefaultPreview } from '@/lib/compare-video-node'
 import { installWorkflowSubmission } from '@/lib/workflow-submission'
 import { installProjectFallbackMigration, migrateProjectFallbacks } from '@/lib/project-fallback-migration'
 import { installProjectSamplingPreview } from '@/lib/project-sampling-preview-node'
+import { initializeSegmentLoraSize } from '@/lib/segment-lora-node-size'
+import { EMPTY_LORA_PLAN, type SegmentLoraPlan } from '@/types/segment-loras'
 
 declare const __COMFY_EASY_MEDIA_GLOBAL_CSS__: string;
 
@@ -25,7 +27,7 @@ declare global {
 
 const [
   { createReactWidget },
-  { TimelineWidget, MultiTrackWidget, MultiImagesLoaderWidget, CompareVideoWidget, PromptEnhancerAccountWidget, ProjectVideoCombineWidget },
+  { TimelineWidget, MultiTrackWidget, MultiImagesLoaderWidget, CompareVideoWidget, PromptEnhancerAccountWidget, ProjectVideoCombineWidget, H3SegmentLorasWidget },
   { createDefaultTimelineData },
   { createDefaultTrackData },
 ] = await Promise.all([
@@ -65,6 +67,7 @@ comfyApp.registerExtension({
     suppressCompareVideoDefaultPreview(nodeType, nodeData)
     installProjectSamplingPreview(nodeType, nodeData, comfyApp)
     installProjectFallbackMigration(nodeType, nodeData)
+    initializeSegmentLoraSize(nodeType, nodeData)
   },
 
   afterConfigureGraph() {
@@ -78,6 +81,11 @@ comfyApp.registerExtension({
 
   getCustomWidgets() {
     return {
+      H3_LORA_RULES: createReactWidget<SegmentLoraPlan>(H3SegmentLorasWidget, {
+        defaultValue: JSON.stringify(EMPTY_LORA_PLAN),
+        keepResponsiveWidthInLiteGraph: true,
+        domWidgetOptions: { getMinHeight: () => 200, hideOnZoom: false, serialize: true },
+      }),
       TIMELINE: createReactWidget<TimelineData>(TimelineWidget, {
         defaultValue: DEFAULT_TIMELINE_VALUE,
         keepResponsiveWidthInLiteGraph: true,

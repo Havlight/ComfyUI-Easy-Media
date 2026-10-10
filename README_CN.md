@@ -195,6 +195,7 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 |------|------|
 | `model_loader` | 一采 H3 模型与共用的 CLIP、视频 VAE、音频 VAE；视频项目也需要音频 VAE |
 | `model_loader_2nd` | 可选的二采 H3 模型；不接时复用一采模型，接入后也仍使用一采加载器的编码器和 VAE |
+| `segment_loras` | 可选的 H3 Segment LoRA 计划，按全项目任务编号及采样阶段追加 MODEL LoRA |
 | `sampling_plan` | 内置 `ultra_light`、`light`、`medium`、`high` 等预设，根据 Turbo / 非 Turbo 模型选择采样器和 sigmas；也可用 `custom` 自定义 |
 | `sampling_mode` | 可选 `single`、`dual` 或 `selflift`；SelfLift 会展开 `transition_ratio`、`lowres_scale` 和 `highres_tiling`。普通片段关闭像素/VAE 修正，上下文续接自动使用内部保守预设；同时分别保存低、高分辨率上下文 |
 | `sampler` / `sigmas` | 成对接入以覆盖一采采样设置；二采对应 `sampler_2nd` / `sigmas_2nd`，也需成对接入。`custom` 需要为实际运行的每个采样阶段提供这两个输入 |
@@ -219,20 +220,41 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 
 例如可从上述模型仓库下载 `minimax_h3_latent_upscaler_3d_fp16.safetensors`，放入指定目录后重启 ComfyUI，再在 `upscale_model` 中选择。该模型文档给出的放大范围为 1–4 倍；即使项目参数允许更大数值，也应遵循所选放大模型的支持范围。
 
+#### 每片段 LoRA
+
+新增 **H3 Segment LoRA**（`easy h3SegmentLoras`），把 `segment_loras` 输出直接连接到 **MultiTrack Project → segment_loras**。Editor 与原有 Model Loader 接线保持原样。更新后重启 ComfyUI 并刷新浏览器，以注册新节点及控件。
+
+每列设置 **LoRA 文件、起始片段、片段数、强度**，支持搜索模型目录、添加、停用和删除。片段数 `-1` 显示为“直到最后”。例如起始 `3`、数量 `2` 作用于第 3、4 段。编号使用编辑、split、marker 展开后的完整任务顺序；从第 6 段续跑时，它仍是第 6 段。规则不会永久绑定某个镜头 ID。
+
+展开每列的进阶箭头，可选择 **全部阶段**（默认）、**第一阶段**、**第二阶段**：
+
+| 模式 | 第一阶段 | 第二阶段 |
+|------|----------|----------|
+| Single | 唯一采样 | 不使用 |
+| Dual | 一采 | 二采；仅一采预览时不使用 |
+| SelfLift | 低分辨率部分 | 同一份 sigma schedule 的高分辨率部分 |
+| Passthrough | 不使用 | 不使用 |
+
+两个阶段独立地在各自 Loader 的 MODEL 上追加 LoRA。即使共享 Loader，也可以设置不同的阶段 LoRA；`model_loader_2nd`、自定义 sampler/sigma、潜空间放大、Context、Drift 与外部影音 Lock 仍依原有规则运行。本节点不修改 CLIP、VAE、Turbo 判断或采样方案。加速/蒸馏 LoRA 及其配套采样设置继续放在基础 Loader。
+
+展开 **实际套用摘要** 可按连接的 Project 查看任务与阶段。编辑时不加载权重、不解码素材；无法静态解析的输入会等待执行时确认。第一轮采样之前，会检查本次所选任务及必要的已保存父版本。缺档、不兼容权重和重叠重复规则会明确报错；停用、强度 0、范围之外及未执行阶段不会加载权重。对可辨认的上游重复 LoRA，执行时提供提示，但无法从任意第三方 Loader 完整恢复来源。
+
+逐段强度是对上游的**额外叠加**，设为 0 不会移除 Loader 内的 LoRA。修改有效设置后，已有任务和依赖它的结果会提示需要重生成。相同文件内容不会仅因重启或改名而改变身份；VAE 回退不能绕过错误权重或过期父版本。片段间切换 LoRA 本身不要求 VAE round trip，也不改变 context 裁切规则。
+
+第一版验证范围是核心 key mapping 可完整对应的 **H3 标准二维 MODEL LoRA**（包含 alpha）；CLIP、部分匹配、DoRA 等未验证格式会明确拒绝。可逐出的 CPU 权重缓存上限为 512 MiB，在用模型、tensor 和 ComfyUI 自身占用另计。短链实机测试涵盖 INT8 H3、全局 Turbo、Single/Dual/SelfLift 和独立第二 checkpoint；大幅风格变化及小尺寸 SelfLift 仍需观察画质，采样成功不等于外观切换必然自然。完整结果见[实施与验证记录](plans/h3-segment-loras-implementation.md)。
+
 #### 上下文方式的来源与调整
 
 上下文条件逻辑基于 [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)，在 Easy Media 内部适配了项目循环和双采样。当前硬衔接实现要求 ComfyUI 支持 H3 原生音视频关键帧（ComfyUI 0.34.0+）；升级时应同时检查 ComfyUI 的兼容性。
 
-相较于只给当前任务附加上一段的上下文条件，项目流水线还做了以下处理：
+H3 Project 将完整原生 AV latent 与交付视频分别保存，使用 39 帧 context，并保留独立的低、高分辨率阶段来源。Shot 采样 `17k+5` 帧；接续段在内部 39 帧前缀之后交付 `17n` 帧。保存视频前只移除一次重复前缀，Video Combine 不重复拼入 overlap。
 
-- **一采硬衔接**：保留原生音视频关键帧与原有多媒体参考，将上一段尾部音视频潜空间复制到当前采样起始潜空间；在复制区域内分别设置视频、音频的锁定与渐进释放掩码，让接缝附近逐渐进入新内容。
-- **区分低分辨率与高分辨率上下文**：双采样时，一采继承上一段的一采上下文；二采放大后，再把上一段最终高分辨率视频尾部复制到当前高分辨率潜空间，避免仅放大低分辨率接缝。上下文二采会冻结当前音频，保留一采形成的声音连续性。
-- **上下文专用二采Sigmas**：当前内置预设提供 `sigmas_2nd_context = 0.50, 0.30, 0.14, 0.06, 0.0`，用于已有前段上下文的二采；显式接入自定义二采采样器或 sigmas 时，不会再替换为该Sigmas。
-- **同步裁剪与干净的续接源**：项目默认取上一段尾部 22 帧作为上下文，为满足 H3 时间网格额外预留 34 帧生成空间。解码后去掉重复开头和多余尾帧，保留当前任务所需帧数；再从实际交付的音视频范围重新编码上下文，避免连续续接时误用被裁掉的尾部。
-- **限制高分辨率上下文占用**：下一片段开始前，高分辨率续接潜空间只保留 Motion Context 所需的尾部 22 帧音视频数据，与完整采样结果解除存储引用后转移到 CPU；二采完成后项目文件同样只保存这份高分辨率上下文包。低分辨率一采 latent 仍完整保存，保证“只执行一采”后可在下次运行中继续二采；运行时的上下文传递则使用单独的裁剪副本。
-- **项目内自动传递与跨次续跑**：同一轮生成自动传递前段上下文；从中间片段开始生成时，从项目中读取前一段的活动版本上下文，无需手工连 Save / Load Latent 节点。
+- **Context（默认）**：使用原生 AV 引导与短视频锚点延续动作和声音，不需要重新解码、编码前段生成结果。
+- **Drift**：同样复制原生 context，并使用随采样步变化的视频 mask；Dual 二采采用标准高分辨率锚点，SelfLift 低、高阶段分别安装 Drift wrapper。
+- **阶段与预检**：高分辨率结果不能代替缺失的一采历史。Project 在首个 sampler 前检查所选整轮的时间、来源、Lock 与配置；执行时仍检查文件变化、tensor 和硬件错误。
+- **编辑与保存**：保留历史视频，Editor 提示需要重算的依赖。`new` 与 `override` 都追加可恢复版本，不再清除后续结果；被引用版本受删除保护。Masked 已从新方法选项移除，历史结果仍可读取。
 
-> **注意：** 上下文依赖前一段已保存的潜空间，只有 MP4 文件不足以恢复完整上下文。改变编辑器尺寸、放大倍率或更换前一段版本后，应重新检查后续上下文链。旧版按反算缩小尺寸生成的一采检查点和上下文潜空间，应重新生成后再按新尺寸规则续跑；已有后续片段不会因为前段改变而自动重新生成。
+旧 MP4 仍可用于 Video Combine。旧 context 文件可能不满足原生来源契约，需要重生成前段，或在 Project 明确允许 VAE 回退。时间对齐始终生效；外部素材首次编码和预览/输出解码始终允许。详见[原生接续指南](plans/h3-native-latent-guide.md)。
 
 #### 指定范围、重生成与版本保留
 
@@ -242,7 +264,7 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 | `segment_start_number` | 从第几段开始，**从 1 计数**；与多轨任务输出从 0 开始的 `task_index` 不同 |
 | `segment_count` | 本轮最多生成多少段；`-1` 表示从起始段处理到末尾 |
 | `project_save = new` | 在同一项目下保留既有结果，为重生成片段新增版本，便于后续对比 |
-| `project_save = override` | 覆盖对应片段版本；与 `segment_count = -1` 搭配时，会先清理起始段及之后的已保存片段，再重生成（续跑的一采检查点会保留） |
+| `project_save = override` | 与 `new` 一样追加可恢复版本；名称保留以兼容已有工作流，不再清除后续结果 |
 
 例如只重做第 3 段，可设 `segment_start_number = 3`、`segment_count = 1`；想保留旧结果对比，再选 `project_save = new`。若第 3 段为上下文模式，需要项目里有第 2 段兼容的上下文。确认第 3 段的新版本后，依赖它的后续上下文片段也应重新生成。
 
@@ -348,7 +370,7 @@ bun run build:release
       <td>将字幕轨道添加到视频轨道中</td>
     </tr>
     <tr>
-      <td rowspan="7">🎬 MiniMax H3</td>
+      <td rowspan="8">🎬 MiniMax H3</td>
       <td>easy minimaxH3ToVideo</td>
       <td>构建 MiniMax H3 文生视频、参考生视频或首尾帧生视频的条件与潜空间输入</td>
     </tr>
@@ -371,6 +393,10 @@ bun run build:release
     <tr>
       <td>easy multitrackProject</td>
       <td>构建并执行多轨 MiniMax H3 项目，支持可选的第一/第二遍采样</td>
+    </tr>
+    <tr>
+      <td>easy h3SegmentLoras</td>
+      <td>按任务范围和采样阶段设置额外 H3 MODEL LoRA</td>
     </tr>
     <tr>
       <td>easy multitrackProjectVideoCombine</td>

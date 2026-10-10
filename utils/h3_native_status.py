@@ -45,9 +45,13 @@ def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
-def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any]) -> list[dict[str, Any]]:
+def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
+                           lora_effects: dict[str, dict[str, Any] | None] | None = None) -> list[dict[str, Any]]:
+    from .h3_lora_preflight import task_dependencies
+
     plans = compile_native_plan(info)
     tasks = native_task_segments(info)
+    dependencies = task_dependencies(info)
     result: list[dict[str, Any]] = []
     states: dict[str, str] = {}
     for index, plan in enumerate(plans):
@@ -70,8 +74,18 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any]) -> li
             status = 'edited'
         elif recipe.get('task_content') is not None and task_content_signature(recipe['task_content']) != task_content_signature(tasks[index].get('content', {})):
             status = 'edited'
-        if status == 'saved' and plan.parent_segment_id and states.get(plan.parent_segment_id) != 'saved':
-            status = 'parent_changed'
+        if status == 'saved' and lora_effects is not None:
+            effect = lora_effects.get(plan.segment_id)
+            if effect is None:
+                status = 'pending'
+            elif effect != recipe.get('segment_loras', {}):
+                status = 'edited'
+        if status in {'saved', 'pending'}:
+            parent_states = {states.get(plans[parent].segment_id) for parent in dependencies[index]}
+            if parent_states - {'saved', 'pending'}:
+                status = 'parent_changed'
+            elif 'pending' in parent_states:
+                status = 'pending'
         states[plan.segment_id] = status
         if plan.continuity_mode == 'context_masked':
             status = 'retired'

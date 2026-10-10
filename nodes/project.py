@@ -15,6 +15,8 @@ from ..utils import instrument_node_timing, log_node_info
 from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_preset
 from ..utils.h3_previous_frame import previous_frame_position
 from ..utils.h3_native_status import native_task_fingerprint
+from ..utils.h3_segment_loras import normalize_lora_plan
+from ..utils.h3_lora_preflight import compile_project_loras
 from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
 from ..utils.h3_project import (
     compose_h3_project_video,
@@ -34,7 +36,7 @@ from ..utils.h3_project import (
     select_h3_task_entries,
     validate_h3_project_outputs,
 )
-from ..utils.models import detect_turbo_lora_from_prompt, detect_turbo_model
+from ..utils.models import detect_turbo_lora_from_prompt, detect_turbo_model, known_project_model_loras
 from ..utils.project_memory import (
     BOUNDARY_META,
     SEGMENT_META,
@@ -998,6 +1000,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                     "Off: stop before sampling if the complete run cannot stay native. Initial external-media "
                     "encoding and preview/output decoding are always allowed. Timing and lock rules always apply."
                 )),
+                io.Custom(io_type="H3_LORA_PLAN").Input("segment_loras", optional=True,
+                    tooltip="Additional MODEL LoRAs by absolute segment number and sampling stage."),
             ],
             hidden=[io.Hidden.prompt, io.Hidden.unique_id],
             outputs=[
@@ -1320,6 +1324,11 @@ class EasyMultiTrackProject(io.ComfyNode):
                       "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
                       "upscale_model": selected_upscale_model,
                       "allow_vae_fallback": native_config["allow_vae_fallback"]}
+        segment_loras = normalize_lora_plan(_first_input(kwargs.get("segment_loras")))
+        lora_plan = compile_project_loras(info, segment_loras, run_recipe,
+                                         [i for i, _ in selected_entries])
+        upstream_loras = known_project_model_loras(
+            getattr(hidden_inputs, "prompt", None), getattr(hidden_inputs, "unique_id", None)) if segment_loras['rules'] else {}
         project_static = project_media_static.out(0) if uses_linked_prepare else {
             "task_tracks_info_base": task_tracks_info_base, "shared_images": shared_images,
             "shared_audio": shared_audio, "shared_video": shared_video,
@@ -1329,6 +1338,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                             "model": model, "second_model": second_model, "vae": vae, "audio_vae": audio_vae,
                             "project_static": project_static,
                             "config_json": json.dumps({"recipe": run_recipe, "selected": [i for i, _ in selected_entries],
+                                "segment_loras": segment_loras, "project_node_id": preview_node_id,
+                                "upstream_loras": upstream_loras,
                                 "run_second_pass": run_second_pass, "has_context_second_pass": has_context_second_pass})}
         for name, value in (("sigmas", first_pass_sigmas), ("second_sigmas", second_pass_sigmas),
                             ("context_second_sigmas", context_second_pass_sigmas if context_second_pass_sigmas is not None else second_pass_sigmas)):
@@ -1558,8 +1569,14 @@ class EasyMultiTrackProject(io.ComfyNode):
                       **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),
                       "fallback_reasons": fallback_reasons, "rho": 0.0,
                       "allow_vae_fallback": native_config["allow_vae_fallback"]}
+            task_model, task_second_model = model, second_model
+            if any(lora_plan['tasks'][task_index]['stages'].values()):
+                lora_models = graph.node("easy h3SegmentLoraModels", id=f"segment_lora_models_{task_index}",
+                    model=model, second_model=second_model, run_state=run_state,
+                    task_index=task_index, previous=previous_artifact)
+                task_model, task_second_model = lora_models.out(0), lora_models.out(1)
             prepared_native = graph.node("easy h3NativePrepare", id=f"native_prepare_{task_index}",
-                                         latent=initial_latent, model=model, second_model=second_model,
+                                         latent=initial_latent, model=task_model, second_model=task_second_model,
                                          project_name=safe_project_name,
                                          plan_json=json.dumps(native_plans[task_index].as_dict()), recipe_json=json.dumps(recipe),
                                          run_state=run_state,
@@ -1583,14 +1600,14 @@ class EasyMultiTrackProject(io.ComfyNode):
             )
             # Apply external audio locks after copying context, on the inherited clock.
 
-            first_pass_sampling_model = model
+            first_pass_sampling_model = task_model
             if has_context_continuity:
                 report_segment_step(0.22)
                 if uses_swap:
                     context_swap = graph.node(
                         "easy MiniMaxH3ContextSwap",
                         id=f"first_pass_context_swap_noise_{task_index}",
-                        model=model,
+                        model=task_model,
                         latent=initial_latent,
                         context_latent=first_pass_context_latent,
                         sigmas=first_pass_sigmas,
@@ -1635,11 +1652,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 report_segment_step(0.38)
                 selflift_inputs: dict[str, Any] = {
                     "model": first_pass_sampling_model,
-                    "highres_model": (
-                        second_model
-                        if second_model_loader is not None
-                        else first_pass_sampling_model
-                    ),
+                    "highres_model": task_second_model,
                     "positive": positive,
                     "vae": vae,
                     "latent_image": initial_latent,
@@ -1657,7 +1670,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 if has_context_continuity and uses_swap:
                     selflift_inputs["highres_model"] = graph.node(
                         "easy h3NativeDriftModel", id=f"native_selflift_high_drift_{task_index}",
-                        model=second_model, latent=initial_latent, sigmas=first_pass_sigmas).out(0)
+                        model=task_second_model, latent=initial_latent, sigmas=first_pass_sigmas).out(0)
                 if has_sampling_preview:
                     selflift_inputs.update({
                         "preview_vae": preview_vae,
@@ -1806,7 +1819,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                         audio_latent=separated.out(1),
                     ).out(0)
 
-                second_pass_sampling_model = second_model
+                second_pass_sampling_model = task_second_model
                 if (
                     uses_context
                     and previous_hires_context_latent is not None

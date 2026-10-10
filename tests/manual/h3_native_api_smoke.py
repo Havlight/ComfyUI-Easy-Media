@@ -26,6 +26,9 @@ def main() -> None:
     parser.add_argument('--lock-audio', help='Absolute path to an external audio fixture')
     parser.add_argument('--lock-video', help='Absolute path to an external video fixture covering the whole timeline')
     parser.add_argument('--upscale-model', default='None')
+    parser.add_argument('--segment-loras', help='Version 1 segment LoRA plan JSON file')
+    parser.add_argument('--shared-loader', action='store_true', help='Use the first Loader for both stages')
+    parser.add_argument('--second-model', help='An independent checkpoint for the second Loader')
     parser.add_argument('--alternate-prompt')
     parser.add_argument('--seed', type=int, default=721)
     parser.add_argument('--method', choices=('context', 'context_drift'), default='context')
@@ -64,7 +67,8 @@ def main() -> None:
     video_vae = node('4', 'VAELoader', vae_name=model_name('VAELoader', 'vae_name', args.video_vae))
     audio_vae = node('5', 'VAELoader', vae_name=model_name('VAELoader', 'vae_name', args.audio_vae))
     loader = node('6', 'easy modelLoaderPack', model=model, clip=clip, vae=video_vae, audio_vae=audio_vae)
-    second_model = node('2b', 'LoraLoaderModelOnly', model=['1', 0], lora_name=model_name('LoraLoaderModelOnly', 'lora_name', args.lora), strength_model=.8)
+    second_base = node('1b', 'UNETLoader', unet_name=model_name('UNETLoader', 'unet_name', args.second_model), weight_dtype='default') if args.second_model else ['1', 0]
+    second_model = node('2b', 'LoraLoaderModelOnly', model=second_base, lora_name=model_name('LoraLoaderModelOnly', 'lora_name', args.lora), strength_model=.8)
     second_loader = node('6b', 'easy modelLoaderPack', model=second_model, clip=clip, vae=video_vae, audio_vae=audio_vae)
     segments = []
     end = 0
@@ -94,8 +98,11 @@ def main() -> None:
          disable_2nd_noise=False, upscale_by=2.0 if args.upscale_model != 'None' and args.mode == 'dual' else 1.0, upscale_model=args.upscale_model, enabled_tiling='false',
          sampler=sampler, sigmas=sigmas,
          **({'sampler_2nd': sampler, 'sigmas_2nd': second_sigmas} if args.mode == 'dual' else {}),
-         **({'model_loader_2nd': second_loader} if args.mode != 'single' else {}),
+         **({'model_loader_2nd': second_loader} if args.mode != 'single' and not args.shared_loader else {}),
          **({'sampling_mode.transition_ratio': .6, 'sampling_mode.lowres_scale': .5} if args.mode == 'selflift' else {}))
+    if args.segment_loras:
+        rules = json.loads(Path(args.segment_loras).read_text(encoding='utf8'))
+        nodes['10']['inputs']['segment_loras'] = node('13', 'easy h3SegmentLoras', rules=json.dumps(rules))
     video = node('11', 'easy multitrackProjectVideoCombine', project_name=['10', 0], project_data='{}')
     node('12', 'SaveVideo', video=video, filename_prefix='easy_media/native-validation/' + name, format='mp4', **{'format.codec': 'h264'})
     submitted = request('/prompt', {'prompt': nodes, 'client_id': name})

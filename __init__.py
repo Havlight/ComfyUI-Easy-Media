@@ -123,6 +123,8 @@ class EasyMediaExtension(ComfyExtension):
             EasyH3NativeArtifact,
             EasyH3LastFrame,
             EasyH3PreviousFrame,
+            EasyH3SegmentLoras,
+            EasyH3SegmentLoraModels,
             EasyH3ProjectStaticPrepare,
             EasyMultiTrackProject,
             EasyMultiTrackProjectVideoCombine,

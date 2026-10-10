@@ -30,6 +30,10 @@ def main() -> None:
     manifest = root / name / 'project.json'
     original = manifest.read_bytes()
     base = report['history']['prompt'][2]
+    if 'segment_loras' in base['10']['inputs']:
+        raise ValueError('Use h3_segment_loras_api.py for projects with managed segment LoRAs.')
+    snapshot = {'known': True, 'segment_loras': {'version': 1, 'rules': []},
+                'recipe': {'sampling_mode': 'single', 'first_pass_only': False}}
 
     def request(path: str, body: dict[str, Any] | None = None) -> Any:
         req = urllib.request.Request(args.url + path, data=json.dumps(body).encode() if body is not None else None,
@@ -38,12 +42,12 @@ def main() -> None:
             return json.load(response)
 
     data = json.loads(base['7']['inputs']['track_data'])
-    saved = request('/easy-media/project/timeline-status', {'project_name': name, 'tracks_info': data})
+    saved = request('/easy-media/project/timeline-status', {'project_name': name, 'tracks_info': data, 'project_snapshot': snapshot})
     assert all(task['status'] == 'saved' for task in saved['tasks']), saved
     changed = deepcopy(data)
     changed['tracks'][0]['segments'][0]['content']['user_prompt'] = 'A changed predecessor prompt'
-    edited = request('/easy-media/project/timeline-status', {'project_name': name, 'tracks_info': changed})
-    assert [t['status'] for t in edited['tasks']] == ['edited', 'parent_changed', 'parent_changed'], edited
+    edited = request('/easy-media/project/timeline-status', {'project_name': name, 'tracks_info': changed, 'project_snapshot': snapshot})
+    assert [t['status'] for t in edited['tasks']] == ['edited'] + ['parent_changed'] * (len(saved['tasks']) - 1), edited
     cases = []
     for kind, expected in [('invalid_schedule', 'SCHEDULE'), ('missing_low_stage', 'VAE_FALLBACK_REQUIRED'),
                            ('edited_parent', 'PARENT_EDITED')]:
