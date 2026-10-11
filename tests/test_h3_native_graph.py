@@ -85,52 +85,70 @@ def test_native_context_drift_keeps_native_source_and_dynamic_mask(monkeypatch):
     assert drift["inputs"]["context_length"] == "39"
     assert any(n["class_type"] == "easy h3NativePrepare" and n["inputs"].get("previous") for n in result.expand.values())
     # Ordinary Drift keeps the node's default seam taper and an unchanged graph.
-    assert "seam_taper_steps" not in drift["inputs"]
+    assert "seam_taper_steps" not in drift["inputs"] and "seam_taper_floor" not in drift["inputs"]
 
 
-@pytest.mark.parametrize("mode,options", [
-    ("single", {}), ("dual", {"upscale_by": [1.0]}), ("selflift", {"lowres_scale": [0.6]}),
-])
-def test_native_matched_drift_removes_the_clean_seam_taper(monkeypatch, mode, options):
+DRIFT_MODES = [("single", {}), ("dual", {"upscale_by": [1.0]}), ("selflift", {"lowres_scale": [0.6]})]
+# The Drift stages per sampling mode: the first pass, plus SelfLift's high stage.
+DRIFT_STAGES = {"single": 1, "dual": 1, "selflift": 2}
+
+
+def _task_content(inputs):
+    return inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"]
+
+
+def _taper(node):
+    return node["inputs"].get("seam_taper_steps"), node["inputs"].get("seam_taper_floor")
+
+
+@pytest.mark.parametrize("mode,options", DRIFT_MODES)
+def test_native_former_matched_mode_is_drift_without_a_taper(monkeypatch, mode, options):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs(mode, **options)
-    inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"]["continuity_mode"] = "context_drift_matched"
+    _task_content(inputs)["continuity_mode"] = "context_drift_matched"
     graph = module.EasyMultiTrackProject.execute(**inputs).expand
     swaps = [n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap"]
-    assert len(swaps) == 1 and swaps[0]["inputs"]["seam_taper_steps"] == 0
-    assert swaps[0]["inputs"]["context_length"] == "39"
+    assert len(swaps) == 1 and swaps[0]["inputs"]["context_length"] == "39"
     high = [n for n in graph.values() if n["class_type"] == "easy h3NativeDriftModel"]
-    assert [n["inputs"]["seam_taper_steps"] for n in high] == ([0] if mode == "selflift" else [])
+    assert len(swaps) + len(high) == DRIFT_STAGES[mode]
+    assert all(_taper(n) == (0, 0.0) for n in [*swaps, *high])
     plans = [json.loads(n["inputs"]["plan_json"]) for n in graph.values() if n["class_type"] == "easy h3NativePrepare"]
-    assert plans[1]["continuity_mode"] == "context_drift_matched" and plans[1]["context_frames"] == 39
-    assert all("seam_steps" not in n["inputs"] for n in [*swaps, *high])
+    assert plans[1]["continuity_mode"] == "context_drift" and plans[1]["context_frames"] == 39
 
 
-@pytest.mark.parametrize("mode,options", [("single", {}), ("selflift", {"lowres_scale": [0.6]})])
-def test_native_matched_drift_passes_task_seam_settings(monkeypatch, mode, options):
+@pytest.mark.parametrize("mode,options", DRIFT_MODES)
+def test_native_drift_taper_reaches_every_drift_stage(monkeypatch, mode, options):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs(mode, **options)
-    inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"].update(
-        continuity_mode="context_drift_matched", drift_seam_steps=2, drift_seam_noise=0.3)
+    _task_content(inputs).update(continuity_mode="context_drift", drift_taper_steps=3, drift_taper_floor=0.25)
     graph = module.EasyMultiTrackProject.execute(**inputs).expand
     drift_nodes = [n for n in graph.values() if n["class_type"] in {"easy MiniMaxH3ContextSwap", "easy h3NativeDriftModel"}]
-    assert drift_nodes and all(
-        (n["inputs"]["seam_taper_steps"], n["inputs"]["seam_steps"], n["inputs"]["seam_noise_cap"]) == (0, 2, 0.3)
-        for n in drift_nodes)
+    assert len(drift_nodes) == DRIFT_STAGES[mode]
+    assert all(_taper(n) == (3, 0.25) for n in drift_nodes)
 
 
-def test_native_seam_settings_are_ignored_outside_matched_drift_and_validated(monkeypatch):
+@pytest.mark.parametrize("mode,options", DRIFT_MODES[2:])
+def test_native_low_only_taper_keeps_the_high_resolution_stage_matched(monkeypatch, mode, options):
     module = _load_minimax_node(monkeypatch)
-    inputs = native_inputs()
-    inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"].update(
-        continuity_mode="context_drift", drift_seam_steps=2, drift_seam_noise=0.3)
+    inputs = native_inputs(mode, **options)
+    _task_content(inputs).update(
+        continuity_mode="context_drift", drift_taper_steps=3, drift_taper_floor=0.25, drift_taper_low_only=True)
     graph = module.EasyMultiTrackProject.execute(**inputs).expand
     swap = next(n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap")
-    assert "seam_steps" not in swap["inputs"] and "seam_taper_steps" not in swap["inputs"]
+    high = next(n for n in graph.values() if n["class_type"] == "easy h3NativeDriftModel")
+    assert _taper(swap) == (3, 0.25) and _taper(high) == (0, 0.0)
+
+
+def test_native_drift_taper_is_validated_and_obsolete_seam_settings_ignored(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs()
+    _task_content(inputs).update(continuity_mode="context_drift", drift_seam_steps=2, drift_seam_noise=0.3)
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    swap = next(n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap")
+    assert _taper(swap) == (None, None) and "seam_steps" not in swap["inputs"]
     bad = native_inputs()
-    bad["tracks_info"][0]["tracks"][0]["segments"][1]["content"].update(
-        continuity_mode="context_drift_matched", drift_seam_steps=5)
-    with pytest.raises(ValueError, match="DRIFT_SEAM_VALUE"):
+    _task_content(bad).update(continuity_mode="context_drift", drift_taper_steps=13)
+    with pytest.raises(ValueError, match="DRIFT_TAPER_VALUE"):
         module.EasyMultiTrackProject.execute(**bad)
 
 

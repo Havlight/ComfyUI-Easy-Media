@@ -1036,30 +1036,23 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                     max=12,
                     optional=True,
                     tooltip=(
-                        "Prefix latent steps beside the seam that taper to a clean seam. "
-                        "4 is Drift-Control; 0 is matched Drift, where the seam follows the "
-                        "schedule too and is clean only at the final sigma."
-                    ),
-                ),
-                io.Int.Input(
-                    "seam_steps",
-                    default=0,
-                    min=0,
-                    max=4,
-                    optional=True,
-                    tooltip=(
-                        "Prefix steps beside the seam whose noise is capped at seam_noise_cap, "
-                        "so they show pose and motion early. 0 leaves them on the schedule."
+                        "Prefix latent steps beside the seam that taper toward seam_taper_floor. "
+                        "4 with floor 0 is Drift-Control; 0 is matched Drift, where every step "
+                        "follows the schedule and the seam is clean only at the final sigma."
                     ),
                 ),
                 io.Float.Input(
-                    "seam_noise_cap",
-                    default=0.5,
+                    "seam_taper_floor",
+                    default=0.0,
                     min=0.0,
                     max=1.0,
                     step=0.05,
                     optional=True,
-                    tooltip="Maximum noise of the seam steps; 0 keeps them clean like Drift-Control.",
+                    tooltip=(
+                        "Weight of the step beside the seam; a step with weight w carries w times "
+                        "the next sigma's noise. 0 keeps the seam clean; higher values copy less "
+                        "of the previous segment's look but pin composition more weakly."
+                    ),
                 ),
             ],
             outputs=[
@@ -1082,8 +1075,7 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
         continue_audio: bool = True,
         freeze_audio: bool = False,
         seam_taper_steps: int = 4,
-        seam_steps: int = 0,
-        seam_noise_cap: float = 0.5,
+        seam_taper_floor: float = 0.0,
     ) -> io.NodeOutput:
         _ = seed
         patched_model, prepared_latent, trim_frames = (
@@ -1096,8 +1088,7 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                 continue_audio=continue_audio,
                 freeze_audio=freeze_audio,
                 taper_steps=int(seam_taper_steps),
-                seam_steps=int(seam_steps),
-                seam_noise_cap=float(seam_noise_cap),
+                taper_floor=float(seam_taper_floor),
             )
         )
         return io.NodeOutput(patched_model, prepared_latent, trim_frames)
@@ -2489,7 +2480,7 @@ class EasyH3ProjectArtifact(io.ComfyNode):
                 TYPE_TRACKS_INFO.Input("tracks_info"),
                 io.Combo.Input(
                     "continuity_mode",
-                    options=["shot", "context", "context_drift", "context_drift_matched", "context_swap"],
+                    options=["shot", "context", "context_drift", "context_swap"],
                     default="shot",
                 ),
                 io.Combo.Input(
@@ -2542,10 +2533,9 @@ class EasyH3ProjectArtifact(io.ComfyNode):
         if sampling_pass not in {"single", "first", "second"}:
             raise ValueError("sampling_pass must be 'single', 'first', or 'second'")
         continuity_mode = str(continuity_mode).lower()
-        if continuity_mode not in {"shot", "context", "context_drift", "context_drift_matched", "context_swap"}:
+        if continuity_mode not in {"shot", "context", "context_drift", "context_swap"}:
             raise ValueError(
-                "continuity_mode must be 'shot', 'context', 'context_drift', "
-                "'context_drift_matched', or 'context_swap'"
+                "continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'"
             )
         if continuity_mode == "context_swap":
             continuity_mode = "context_drift"

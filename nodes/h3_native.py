@@ -311,19 +311,18 @@ class EasyH3NativeDriftModel(io.ComfyNode):
         return io.Schema(node_id="easy h3NativeDriftModel", display_name="H3 Native Drift Stage", category="EasyUse/H3/dev",
                          is_dev_only=True, inputs=[io.Model.Input("model"), io.Latent.Input("latent"), io.Sigmas.Input("sigmas"),
                                                    io.Int.Input("seam_taper_steps", default=4, min=0, max=12, optional=True),
-                                                   io.Int.Input("seam_steps", default=0, min=0, max=4, optional=True),
-                                                   io.Float.Input("seam_noise_cap", default=0.5, min=0.0, max=1.0, step=0.05,
+                                                   io.Float.Input("seam_taper_floor", default=0.0, min=0.0, max=1.0, step=0.05,
                                                                   optional=True)],
                          outputs=[io.Model.Output("model")])
 
     @classmethod
     def execute(cls, model: Any, latent: dict[str, Any], sigmas: torch.Tensor, seam_taper_steps: int = 4,
-                seam_steps: int = 0, seam_noise_cap: float = 0.5) -> io.NodeOutput:
+                seam_taper_floor: float = 0.0) -> io.NodeOutput:
         from ..modules.motion_context.drift_control_av import install_drift_control_av_model
 
         return io.NodeOutput(install_drift_control_av_model(model, latent, sigmas, prefix_steps=12,
-                                                            taper_steps=int(seam_taper_steps), seam_steps=int(seam_steps),
-                                                            seam_noise_cap=float(seam_noise_cap)))
+                                                            taper_steps=int(seam_taper_steps),
+                                                            taper_floor=float(seam_taper_floor)))
 
 
 class EasyH3NativeLockedVideoInfo(io.ComfyNode):

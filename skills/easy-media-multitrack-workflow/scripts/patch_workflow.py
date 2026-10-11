@@ -368,24 +368,34 @@ def validate_track_data(
                 if continuity_mode not in {"shot", "context", "context_drift", "context_drift_matched", "context_swap"}:
                     raise WorkflowError(
                         f"{where}.content.continuity_mode must be 'shot', 'context', "
-                        "'context_drift', 'context_drift_matched', or 'context_swap'"
+                        "'context_drift', or 'context_swap'"
                     )
-                if continuity_mode == "context_swap":
+                if continuity_mode == "context_drift_matched":
+                    # The former matched mode is Drift without a seam taper.
+                    content.setdefault("drift_taper_steps", 0)
+                if continuity_mode in {"context_swap", "context_drift_matched"}:
                     content["continuity_mode"] = "context_drift"
-            if track_type == "task" and "drift_seam_steps" in content:
-                # Keep these ranges in sync with utils/h3_drift_seam.py.
-                steps = content.get("drift_seam_steps")
-                if isinstance(steps, bool) or not isinstance(steps, int) or not 0 <= steps <= 4:
-                    raise WorkflowError(f"{where}.content.drift_seam_steps must be a whole number from 0 to 4")
-            if track_type == "task" and "drift_seam_noise" in content:
-                noise = content.get("drift_seam_noise")
+            if track_type == "task":
+                # Obsolete seam-cap settings of the former matched mode.
+                content.pop("drift_seam_steps", None)
+                content.pop("drift_seam_noise", None)
+            # Keep these ranges in sync with utils/h3_drift_taper.py.
+            if track_type == "task" and "drift_taper_steps" in content:
+                steps = content.get("drift_taper_steps")
+                if isinstance(steps, bool) or not isinstance(steps, int) or not 0 <= steps <= 12:
+                    raise WorkflowError(f"{where}.content.drift_taper_steps must be a whole number from 0 to 12")
+            if track_type == "task" and "drift_taper_floor" in content:
+                floor = content.get("drift_taper_floor")
                 if (
-                    isinstance(noise, bool)
-                    or not isinstance(noise, (int, float))
-                    or not math.isfinite(noise)
-                    or not 0.0 <= noise <= 1.0
+                    isinstance(floor, bool)
+                    or not isinstance(floor, (int, float))
+                    or not math.isfinite(floor)
+                    or not 0.0 <= floor <= 1.0
                 ):
-                    raise WorkflowError(f"{where}.content.drift_seam_noise must be a number from 0 to 1")
+                    raise WorkflowError(f"{where}.content.drift_taper_floor must be a number from 0 to 1")
+            if track_type == "task" and "drift_taper_low_only" in content:
+                if not isinstance(content.get("drift_taper_low_only"), bool):
+                    raise WorkflowError(f"{where}.content.drift_taper_low_only must be a boolean")
             if "shared_reference" in content:
                 if not isinstance(content.get("shared_reference"), bool):
                     raise WorkflowError(

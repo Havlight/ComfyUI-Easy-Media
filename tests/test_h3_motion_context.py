@@ -289,11 +289,21 @@ def test_context_swap_dynamic_mask_tracks_selflift_stage_resolution():
     assert state.current_video_mask.shape == (1, 1, 7, 4, 6)
 
 
-def test_matched_drift_releases_the_seam_with_the_schedule():
-    assert drift_control_av.temporal_prefix_weights(12, 4) == (1.0,) * 8 + (0.75, 0.5, 0.25, 0.0)
-    assert drift_control_av.temporal_prefix_weights(12, 0) == (1.0,) * 12
+def test_drift_taper_weights_reach_the_floor_at_the_seam():
+    weights = drift_control_av.temporal_prefix_weights
+    assert weights(12, 4) == (1.0,) * 8 + (0.75, 0.5, 0.25, 0.0)
+    assert weights(12, 0) == (1.0,) * 12
+    assert weights(12, 3, 0.25) == (1.0,) * 9 + (0.75, 0.5, 0.25)
+    assert weights(12, 4, 0.5) == (1.0,) * 8 + (0.875, 0.75, 0.625, 0.5)
+    assert weights(4, 12, 0.5) == (0.875, 0.75, 0.625, 0.5)
     with pytest.raises(ValueError, match="must not be negative"):
-        drift_control_av.temporal_prefix_weights(12, -1)
+        weights(12, -1)
+    for floor in (-0.1, 1.5, float("nan")):
+        with pytest.raises(ValueError, match="taper floor"):
+            weights(12, 4, floor)
+
+
+def test_matched_drift_releases_the_seam_with_the_schedule():
 
     shape = (1, 24, 7, 2, 3)
     sigmas = torch.tensor([1.0, 0.5, 0.0])
@@ -311,28 +321,21 @@ def test_matched_drift_releases_the_seam_with_the_schedule():
     assert torch.count_nonzero(matched.current_video_mask[0, 0, :4]) == 0
 
 
-def test_matched_drift_caps_the_noise_of_the_seam_steps():
+def test_drift_taper_floor_keeps_the_seam_proportionally_visible():
     shape = (1, 24, 7, 2, 3)
     sigmas = torch.tensor([1.0, 0.8, 0.4, 0.0])
     packed = torch.ones(1, 1, 24 * 7 * 2 * 3 + 32 * 2 * 20)
-    state = drift_control_av._DriftControlMaskState(
-        shape, sigmas, prefix_steps=4, taper_steps=0, seam_steps=2, seam_noise_cap=0.3)
+    state = drift_control_av._DriftControlMaskState(shape, sigmas, prefix_steps=4, taper_steps=2, taper_floor=0.5)
 
     state.denoise_mask_function(torch.tensor(0.8), packed, {})
 
-    # Mask m presents a row at noise m * sigma: the far steps follow the next sigma (0.4),
-    # the two seam steps carry at most 0.3.
+    # Mask m presents a row at noise m * sigma, so a step with weight w carries
+    # w times the next sigma (0.4): the seam step stays at half the far steps' noise.
     noise = (state.current_video_mask[0, 0, :4, 0, 0] * 0.8).tolist()
-    assert noise[:2] == pytest.approx([0.4, 0.4], abs=1e-2)
-    assert noise[2:] == pytest.approx([0.3, 0.3], abs=1e-2)
-    # Once the schedule is already below the cap, the seam simply follows it.
+    assert noise == pytest.approx([0.4, 0.4, 0.3, 0.2], abs=1e-2)
+    # The final step still presents the whole context clean.
     state.denoise_mask_function(torch.tensor(0.4), packed, {})
     assert torch.count_nonzero(state.current_video_mask[0, 0, :4]) == 0
-    clean = drift_control_av._DriftControlMaskState(
-        shape, sigmas, prefix_steps=4, taper_steps=0, seam_steps=1, seam_noise_cap=0.0)
-    clean.denoise_mask_function(torch.tensor(1.0), packed, {})
-    assert clean.current_video_mask[0, 0, 3, 0, 0].item() == 0.0
-    assert clean.current_video_mask[0, 0, 2, 0, 0].item() > 0.75
 
 
 def test_drift_control_reports_original_and_current_pixel_resolution():

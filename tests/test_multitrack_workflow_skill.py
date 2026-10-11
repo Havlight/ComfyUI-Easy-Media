@@ -296,37 +296,47 @@ def test_rejects_unknown_task_continuity_mode(patch_workflow_module):
 
     with pytest.raises(
         patch_workflow_module.WorkflowError,
-        match="continuity_mode must be 'shot', 'context', 'context_drift', 'context_drift_matched', or 'context_swap'",
+        match="continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'",
     ):
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
 
 
-@pytest.mark.parametrize("field,value,valid", [
-    ("drift_seam_steps", 2, True), ("drift_seam_steps", 0, True), ("drift_seam_steps", 5, False),
-    ("drift_seam_steps", 1.5, False), ("drift_seam_noise", 0.7, True), ("drift_seam_noise", 1.5, False),
-    ("drift_seam_noise", float("nan"), False),
-])
-def test_validates_matched_drift_seam_settings(patch_workflow_module, field, value, valid):
-    track_data = {
+def _single_task_track_data(content):
+    return {
         "frame_rate": 24,
         "total_length": 24,
         "tracks": [{
             "id": "tasks",
             "type": "task",
-            "segments": [{
-                "id": "task-1",
-                "start_frame": 0,
-                "end_frame": 24,
-                "content": {"images": [], "continuity_mode": "context_drift_matched", field: value},
-            }],
+            "segments": [{"id": "task-1", "start_frame": 0, "end_frame": 24, "content": {"images": [], **content}}],
         }],
     }
+
+
+@pytest.mark.parametrize("field,value,valid", [
+    ("drift_taper_steps", 3, True), ("drift_taper_steps", 0, True), ("drift_taper_steps", 12, True),
+    ("drift_taper_steps", 13, False), ("drift_taper_steps", 1.5, False), ("drift_taper_floor", 0.7, True),
+    ("drift_taper_floor", 1.5, False), ("drift_taper_floor", float("nan"), False),
+    ("drift_taper_low_only", True, True), ("drift_taper_low_only", 1, False),
+])
+def test_validates_drift_taper_settings(patch_workflow_module, field, value, valid):
+    track_data = _single_task_track_data({"continuity_mode": "context_drift", field: value})
 
     if valid:
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
         return
     with pytest.raises(patch_workflow_module.WorkflowError, match=field):
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
+
+
+def test_converts_the_former_matched_mode_to_untapered_drift(patch_workflow_module):
+    track_data = _single_task_track_data(
+        {"continuity_mode": "context_drift_matched", "drift_seam_steps": 2, "drift_seam_noise": 0.3})
+
+    patch_workflow_module.validate_track_data(track_data, recalculate=False)
+
+    content = track_data["tracks"][0]["segments"][0]["content"]
+    assert content == {"images": [], "continuity_mode": "context_drift", "drift_taper_steps": 0}
 
 
 def test_shared_media_accepts_task_images_audio_video_and_legacy_audio(
