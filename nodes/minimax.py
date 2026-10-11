@@ -1029,6 +1029,18 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                         "continuity, but the default project patch uses ordinary hi-res refine."
                     ),
                 ),
+                io.Int.Input(
+                    "seam_taper_steps",
+                    default=4,
+                    min=0,
+                    max=12,
+                    optional=True,
+                    tooltip=(
+                        "Prefix latent steps beside the seam that taper to a clean seam. "
+                        "4 is Drift-Control; 0 is matched Drift, where the seam follows the "
+                        "schedule too and is clean only at the final sigma."
+                    ),
+                ),
             ],
             outputs=[
                 io.Model.Output("model"),
@@ -1049,6 +1061,7 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
         seed: int = 0,
         continue_audio: bool = True,
         freeze_audio: bool = False,
+        seam_taper_steps: int = 4,
     ) -> io.NodeOutput:
         _ = seed
         patched_model, prepared_latent, trim_frames = (
@@ -1060,6 +1073,7 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                 context_length=context_length,
                 continue_audio=continue_audio,
                 freeze_audio=freeze_audio,
+                taper_steps=int(seam_taper_steps),
             )
         )
         return io.NodeOutput(patched_model, prepared_latent, trim_frames)
@@ -2451,7 +2465,7 @@ class EasyH3ProjectArtifact(io.ComfyNode):
                 TYPE_TRACKS_INFO.Input("tracks_info"),
                 io.Combo.Input(
                     "continuity_mode",
-                    options=["shot", "context", "context_drift", "context_swap"],
+                    options=["shot", "context", "context_drift", "context_drift_matched", "context_swap"],
                     default="shot",
                 ),
                 io.Combo.Input(
@@ -2504,9 +2518,10 @@ class EasyH3ProjectArtifact(io.ComfyNode):
         if sampling_pass not in {"single", "first", "second"}:
             raise ValueError("sampling_pass must be 'single', 'first', or 'second'")
         continuity_mode = str(continuity_mode).lower()
-        if continuity_mode not in {"shot", "context", "context_drift", "context_swap"}:
+        if continuity_mode not in {"shot", "context", "context_drift", "context_drift_matched", "context_swap"}:
             raise ValueError(
-                "continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'"
+                "continuity_mode must be 'shot', 'context', 'context_drift', "
+                "'context_drift_matched', or 'context_swap'"
             )
         if continuity_mode == "context_swap":
             continuity_mode = "context_drift"

@@ -84,6 +84,25 @@ def test_native_context_drift_keeps_native_source_and_dynamic_mask(monkeypatch):
     drift = next(n for n in result.expand.values() if n["class_type"] == "easy MiniMaxH3ContextSwap")
     assert drift["inputs"]["context_length"] == "39"
     assert any(n["class_type"] == "easy h3NativePrepare" and n["inputs"].get("previous") for n in result.expand.values())
+    # Ordinary Drift keeps the node's default seam taper and an unchanged graph.
+    assert "seam_taper_steps" not in drift["inputs"]
+
+
+@pytest.mark.parametrize("mode,options", [
+    ("single", {}), ("dual", {"upscale_by": [1.0]}), ("selflift", {"lowres_scale": [0.6]}),
+])
+def test_native_matched_drift_removes_the_clean_seam_taper(monkeypatch, mode, options):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs(mode, **options)
+    inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"]["continuity_mode"] = "context_drift_matched"
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    swaps = [n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap"]
+    assert len(swaps) == 1 and swaps[0]["inputs"]["seam_taper_steps"] == 0
+    assert swaps[0]["inputs"]["context_length"] == "39"
+    high = [n for n in graph.values() if n["class_type"] == "easy h3NativeDriftModel"]
+    assert [n["inputs"]["seam_taper_steps"] for n in high] == ([0] if mode == "selflift" else [])
+    plans = [json.loads(n["inputs"]["plan_json"]) for n in graph.values() if n["class_type"] == "easy h3NativePrepare"]
+    assert plans[1]["continuity_mode"] == "context_drift_matched" and plans[1]["context_frames"] == 39
 
 
 def test_native_runtime_nodes_save_full_raw_and_load_only_legal_context(monkeypatch, tmp_path):
@@ -286,7 +305,7 @@ def test_runtime_gate_rejects_invalid_second_schedule_before_task_work(monkeypat
             model, object(), object(), sigmas=torch.tensor([1.0, 0.0]), second_sigmas=torch.tensor(bad))
 
 @pytest.mark.parametrize('duration', [120, 124, 125])
-@pytest.mark.parametrize('method', ['shot', 'context', 'context_drift'])
+@pytest.mark.parametrize('method', ['shot', 'context', 'context_drift', 'context_drift_matched'])
 @pytest.mark.parametrize('mode', ['single', 'dual', 'selflift'])
 def test_locked_raw_windows_are_native_in_all_sampling_modes(monkeypatch, duration, method, mode):
     module = _load_minimax_node(monkeypatch)

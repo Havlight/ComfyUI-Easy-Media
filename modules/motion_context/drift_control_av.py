@@ -28,6 +28,8 @@ from .core import (
 
 
 DRIFT_CONTROL_TAPER_STEPS = 4
+# Matched Drift: every prefix step, the seam included, follows the schedule ratio.
+DRIFT_CONTROL_MATCHED_TAPER_STEPS = 0
 DRIFT_CONTROL_AUDIO_RELEASE_STEPS = 8
 _WRAPPER_KEY = "easy_media_h3_context_swap_drift_control_av"
 
@@ -75,13 +77,17 @@ def temporal_prefix_weights(
     prefix_steps: int,
     taper_steps: int = DRIFT_CONTROL_TAPER_STEPS,
 ) -> tuple[float, ...]:
-    """Full release at the disposable side, tapered to zero at the seam side."""
+    """Full release at the disposable side, tapered to zero at the seam side.
+
+    ``taper_steps=0`` keeps every step at full release, so the seam is revealed
+    only as the schedule reaches its final sigma (matched Drift).
+    """
     count = int(prefix_steps)
     taper = min(int(taper_steps), count)
     if count < 1:
         raise ValueError("Easy-Media Drift-Control AV prefix steps must be positive")
-    if taper < 1:
-        raise ValueError("Easy-Media Drift-Control AV taper steps must be positive")
+    if taper < 0:
+        raise ValueError("Easy-Media Drift-Control AV taper steps must not be negative")
     weights = [1.0] * (count - taper)
     weights.extend(
         float(taper - offset - 1) / float(taper)
@@ -297,10 +303,12 @@ class _DriftControlMaskState:
         video_shape: tuple[int, ...],
         sigmas: Any,
         prefix_steps: int,
+        taper_steps: int = DRIFT_CONTROL_TAPER_STEPS,
     ):
         self.video_shape = tuple(int(value) for value in video_shape)
         self.sigmas = _schedule_values(sigmas)
         self.prefix_steps = int(prefix_steps)
+        self.taper_steps = int(taper_steps)
         self.current_video_mask: torch.Tensor | None = None
 
     def denoise_mask_function(
@@ -328,7 +336,7 @@ class _DriftControlMaskState:
             active_video_shape,
             matched_noise_ratio(current, schedule),
             prefix_steps=self.prefix_steps,
-            taper_steps=min(DRIFT_CONTROL_TAPER_STEPS, self.prefix_steps),
+            taper_steps=min(self.taper_steps, self.prefix_steps),
         )
         self.current_video_mask = video_mask
         return output
@@ -344,6 +352,7 @@ def install_drift_control_av_model(
     latent: dict[str, Any],
     sigmas: Any,
     prefix_steps: int,
+    taper_steps: int = DRIFT_CONTROL_TAPER_STEPS,
 ):
     """Clone the H3 model and install sampler/model dynamic-mask hooks."""
     if drift_control_step_count(sigmas) < 1:
@@ -402,10 +411,13 @@ def install_drift_control_av_model(
 
     from comfy.patcher_extension import WrappersMP
 
+    if int(taper_steps) < 0:
+        raise ValueError("Easy-Media Drift-Control AV taper steps must not be negative")
     state = _DriftControlMaskState(
         tuple(streams[0].shape),
         sigmas,
         prefix_steps,
+        taper_steps,
     )
     patched.set_model_denoise_mask_function(state.denoise_mask_function)
     patched.add_wrapper_with_key(
@@ -426,6 +438,7 @@ def apply_context_swap_drift_control(
     *,
     continue_audio: bool = True,
     freeze_audio: bool = False,
+    taper_steps: int = DRIFT_CONTROL_TAPER_STEPS,
 ) -> tuple[Any, dict[str, Any], int]:
     """Prepare the disposable AV prefix and return a Drift-Control patched model."""
     prepared, trim_frames, video_steps = prepare_context_swap_latent(
@@ -440,5 +453,6 @@ def apply_context_swap_drift_control(
         prepared,
         sigmas,
         prefix_steps=video_steps,
+        taper_steps=taper_steps,
     )
     return patched_model, prepared, trim_frames

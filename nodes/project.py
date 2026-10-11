@@ -52,7 +52,9 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_drift_matched", "context_swap"}
+# Matched Drift releases the seam steps with the schedule too (no clean taper).
+H3_MATCHED_DRIFT_TAPER = {"seam_taper_steps": 0}
 H3_CONTEXT_SOURCE_FRAMES = 39
 
 
@@ -1474,7 +1476,8 @@ class EasyMultiTrackProject(io.ComfyNode):
             if continuity_mode == "context_test":
                 continuity_mode = "context"
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
-            uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            uses_swap = continuity_mode in {"context_drift", "context_drift_matched", "context_swap"}
+            drift_taper_inputs = H3_MATCHED_DRIFT_TAPER if continuity_mode == "context_drift_matched" else {}
             task_images = task_output.out(4)
             previous_frame_source = None
             previous_position = previous_frame_position(content)
@@ -1615,6 +1618,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                         seed=(first_pass_seed + task_index) & 0xFFFFFFFFFFFFFFFF,
                         continue_audio=True,
                         freeze_audio=False,
+                        **drift_taper_inputs,
                     )
                     first_pass_sampling_model = context_swap.out(0)
                     initial_latent = context_swap.out(1)
@@ -1670,7 +1674,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 if has_context_continuity and uses_swap:
                     selflift_inputs["highres_model"] = graph.node(
                         "easy h3NativeDriftModel", id=f"native_selflift_high_drift_{task_index}",
-                        model=task_second_model, latent=initial_latent, sigmas=first_pass_sigmas).out(0)
+                        model=task_second_model, latent=initial_latent, sigmas=first_pass_sigmas,
+                        **drift_taper_inputs).out(0)
                 if has_sampling_preview:
                     selflift_inputs.update({
                         "preview_vae": preview_vae,

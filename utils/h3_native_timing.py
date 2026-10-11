@@ -12,7 +12,7 @@ NATIVE_VERSION = 2
 CONTEXT_FRAMES = 39
 FRAME_STEP = 17
 MAX_RAW_FRAMES = 3592
-CONTINUITY_MODES = frozenset({"shot", "context", "context_drift", "context_masked"})
+CONTINUITY_MODES = frozenset({"shot", "context", "context_drift", "context_drift_matched", "context_masked"})
 
 
 class NativePlanError(ValueError):
