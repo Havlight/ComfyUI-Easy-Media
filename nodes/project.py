@@ -1838,18 +1838,25 @@ class EasyMultiTrackProject(io.ComfyNode):
                     and previous_hires_context_latent is not None
                 ):
                     report_segment_step(0.59)
-                    # Second pass is deliberately kept as an ordinary hi-res refine path.
-                    # No context noise, no split-prior, and no Drift-Control patching here.
+                    # Drift tasks copy the whole hi-res context and release it with the
+                    # pass-two schedule like SelfLift's high stage. Plain context, and
+                    # pass two without noise to release into, hard-pin the boundary.
+                    hires_drift = uses_swap and not audio_only and not disable_2nd_noise
                     hires_continuity = graph.node(
                         "easy MiniMaxH3HiResContinuity",
                         id=f"hires_continuity_{task_index}",
                         current_hires_latent=upscaled_latent,
                         previous_hires_latent=previous_hires_context_latent,
                         context_length=str(context_source_frames),
-                        video_transition_steps=4,
-                        video_anchor_only=not audio_only,
+                        video_transition_steps=0 if hires_drift else 4,
+                        video_anchor_only=not audio_only and not hires_drift,
                     )
                     upscaled_latent = hires_continuity.out(0)
+                    if hires_drift:
+                        second_pass_sampling_model = graph.node(
+                            "easy h3NativeDriftModel", id=f"native_second_pass_drift_{task_index}",
+                            model=task_second_model, latent=upscaled_latent, sigmas=segment_second_pass_sigmas,
+                            **drift_high_inputs).out(0)
 
                 if native_lock_inputs is not None:
                     upscaled_latent = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",

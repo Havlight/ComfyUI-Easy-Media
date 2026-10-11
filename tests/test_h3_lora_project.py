@@ -46,15 +46,17 @@ def test_graph_applies_each_stage_before_drift_and_sequences_models(monkeypatch,
                       and json.loads(n['inputs']['plan_json'])['segment_id'] == ('a' if index == 0 else 'b'))
         assert native['inputs']['model'] == [key, 0] and native['inputs']['second_model'] == [key, 1]
     second_key = prepared[1][0]
+    high_key = None
     if drift:
         wrapper = next(n for n in graph.values() if n['class_type'] == 'easy MiniMaxH3ContextSwap')
         assert wrapper['inputs']['model'] == [second_key, 0]
-        if mode == 'selflift':
-            high = next(n for n in graph.values() if n['class_type'] == 'easy h3NativeDriftModel')
+        if mode != 'single':
+            # SelfLift's high stage and Dual's pass two wrap the stage LoRA model in Drift.
+            high_key, high = next((k, n) for k, n in graph.items() if n['class_type'] == 'easy h3NativeDriftModel')
             assert high['inputs']['model'] == [second_key, 1]
     if mode == 'dual':
         guiders = [n for n in graph.values() if n['class_type'] == 'BasicGuider']
-        assert any(n['inputs']['model'] == [second_key, 1] for n in guiders)
+        assert any(n['inputs']['model'] == ([high_key, 0] if drift else [second_key, 1]) for n in guiders)
 
 
 @pytest.mark.parametrize('rules', [[], [rule(enabled=False)], [rule(strength=0)], [rule(stage='second')]])

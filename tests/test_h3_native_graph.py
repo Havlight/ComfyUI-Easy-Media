@@ -89,8 +89,8 @@ def test_native_context_drift_keeps_native_source_and_dynamic_mask(monkeypatch):
 
 
 DRIFT_MODES = [("single", {}), ("dual", {"upscale_by": [1.0]}), ("selflift", {"lowres_scale": [0.6]})]
-# The Drift stages per sampling mode: the first pass, plus SelfLift's high stage.
-DRIFT_STAGES = {"single": 1, "dual": 1, "selflift": 2}
+# The Drift stages per sampling mode: the first pass, plus Dual's pass two or SelfLift's high stage.
+DRIFT_STAGES = {"single": 1, "dual": 2, "selflift": 2}
 
 
 def _task_content(inputs):
@@ -127,7 +127,7 @@ def test_native_drift_taper_reaches_every_drift_stage(monkeypatch, mode, options
     assert all(_taper(n) == (3, 0.25) for n in drift_nodes)
 
 
-@pytest.mark.parametrize("mode,options", DRIFT_MODES[2:])
+@pytest.mark.parametrize("mode,options", DRIFT_MODES[1:])
 def test_native_low_only_taper_keeps_the_high_resolution_stage_matched(monkeypatch, mode, options):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs(mode, **options)
@@ -137,6 +137,36 @@ def test_native_low_only_taper_keeps_the_high_resolution_stage_matched(monkeypat
     swap = next(n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap")
     high = next(n for n in graph.values() if n["class_type"] == "easy h3NativeDriftModel")
     assert _taper(swap) == (3, 0.25) and _taper(high) == (0, 0.0)
+
+
+def test_native_dual_pass_two_releases_the_whole_hires_context_with_drift(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs("dual", upscale_by=[1.0])
+    _task_content(inputs)["continuity_mode"] = "context_drift"
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    hires_id, hires = next((k, n) for k, n in graph.items() if n["class_type"] == "easy MiniMaxH3HiResContinuity")
+    assert hires["inputs"]["video_anchor_only"] is False and hires["inputs"]["video_transition_steps"] == 0
+    drift_id, drift = next((k, n) for k, n in graph.items() if n["class_type"] == "easy h3NativeDriftModel")
+    assert drift["inputs"]["latent"][0] == hires_id and _taper(drift) == (None, None)
+    sampling_start = next(n for n in graph.values() if n["class_type"] == "easy h3SegmentSamplingStart"
+                          and n["inputs"]["sampling_pass"] == "second" and n["inputs"]["segment_index"] == 1)
+    assert drift["inputs"]["sigmas"] == sampling_start["inputs"]["sigmas"]
+    guider = graph[sampling_start["inputs"]["guider"][0]]
+    assert guider["inputs"]["model"][0] == drift_id
+
+
+@pytest.mark.parametrize("mode,continuity", [
+    (("dual", {"upscale_by": [1.0]}), "context"),
+    (("dual", {"upscale_by": [1.0], "disable_2nd_noise": [True]}), "context_drift"),
+])
+def test_native_dual_pass_two_keeps_the_hard_anchor_without_drift_noise(monkeypatch, mode, continuity):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs(mode[0], **mode[1])
+    _task_content(inputs)["continuity_mode"] = continuity
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    hires = next(n for n in graph.values() if n["class_type"] == "easy MiniMaxH3HiResContinuity")
+    assert hires["inputs"]["video_anchor_only"] is True
+    assert not any(n["class_type"] == "easy h3NativeDriftModel" for n in graph.values())
 
 
 def test_native_drift_taper_is_validated_and_obsolete_seam_settings_ignored(monkeypatch):
