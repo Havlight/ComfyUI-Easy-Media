@@ -30,6 +30,7 @@ import {
 import { useMultiTrackResolutionInput } from '@/hooks/use-multitrack-resolution-input'
 import { useExpandedImagePreview } from '@/hooks/use-expanded-image-preview'
 import { useT } from '@/lib/i18n'
+import { continuityModeChangePatch } from '@/lib/h3-drift-seam'
 import { mediaContentToViewUrl } from '@/lib/media-url'
 import { computeSlotItems } from '@/lib/timeline-utils'
 import {
@@ -569,7 +570,7 @@ export function PreviewArea({
   ) {
     onTrackSegmentsContentChange?.([{
       segmentId,
-      patch: { continuity_mode: continuityMode },
+      patch: continuityModeChangePatch(continuityMode),
     }])
   }
 

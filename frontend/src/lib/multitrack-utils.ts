@@ -11,6 +11,7 @@ import type {
   TrackData,
 } from '@/types/multitrack'
 import { uuid } from './uuid'
+import { normalizeDriftSeamNoise, normalizeDriftSeamSteps } from './h3-drift-seam'
 import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
 
@@ -1693,6 +1694,9 @@ function normalizeTaskSegmentContent(content: MultiTrackSegment['content']): Mul
     normalized.user_prompt = normalized.text
   }
   delete normalized.text
+  // Cleared seam settings arrive as undefined from spread patches; drop them with invalid values.
+  if (normalizeDriftSeamSteps(normalized.drift_seam_steps) === undefined) delete normalized.drift_seam_steps
+  if (normalizeDriftSeamNoise(normalized.drift_seam_noise) === undefined) delete normalized.drift_seam_noise
   return normalized
 }
 

@@ -40,6 +40,8 @@ import {
   updateMultiTrackSegmentContent,
   updateMultiTrackSegmentDuration,
 } from '@/lib/multitrack-utils'
+import { continuityModeChangePatch, driftSeamStepsPatch } from '@/lib/h3-drift-seam'
+import type { MultiTrackSegment } from '@/types/multitrack'
 
 describe('multitrack utilities', () => {
   it('merges consecutive selected task segments using the first segment with prompt or active images', () => {
@@ -1504,6 +1506,77 @@ describe('multitrack utilities', () => {
       })),
     })
     expect(matched.tracks[0].segments[0].content.continuity_mode).toBe('context_drift_matched')
+  })
+
+  it('keeps valid Matched Drift seam settings and drops invalid ones while normalizing', () => {
+    const data = createDefaultTrackData()
+    const seamValues: Array<[unknown, unknown]> = [
+      [2, 0.3],
+      [4, 0],
+      [1, 1],
+      [0, 0.5],
+      [5, -0.1],
+      [1.5, 1.2],
+      ['2', '0.5'],
+      [true, Number.NaN],
+      [null, Number.POSITIVE_INFINITY],
+      [undefined, undefined],
+    ]
+    data.tracks[0].segments = seamValues.map(([steps, noise], index) => ({
+      id: `seam-${index}`,
+      start_frame: index * 24,
+      end_frame: (index + 1) * 24,
+      color: data.tracks[0].color,
+      content: {
+        media_type: 'none',
+        continuity_mode: 'context_drift_matched',
+        drift_seam_steps: steps,
+        drift_seam_noise: noise,
+      },
+    } as unknown as MultiTrackSegment))
+
+    const contents = normalizeTrackData(data).tracks[0].segments.map((segment) => segment.content)
+
+    expect(contents.map((content) => [content.drift_seam_steps, content.drift_seam_noise])).toEqual([
+      [2, 0.3],
+      [4, 0],
+      [1, 1],
+      [undefined, 0.5],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, undefined],
+    ])
+    contents.slice(3).forEach((content) => expect('drift_seam_steps' in content).toBe(false))
+    contents.slice(4).forEach((content) => expect('drift_seam_noise' in content).toBe(false))
+  })
+
+  it('removes cleared seam keys from the serialized track data', () => {
+    const data = createDefaultTrackData()
+    data.tracks[0].segments = [{
+      id: 'matched-task',
+      start_frame: 0,
+      end_frame: 120,
+      color: data.tracks[0].color,
+      content: {
+        media_type: 'none',
+        continuity_mode: 'context_drift_matched',
+        drift_seam_steps: 2,
+        drift_seam_noise: 0.4,
+      },
+    }]
+    const saved = normalizeTrackData(data)
+    expect(saved.tracks[0].segments[0].content).toMatchObject({ drift_seam_steps: 2, drift_seam_noise: 0.4 })
+
+    for (const patch of [driftSeamStepsPatch(0), continuityModeChangePatch('context')]) {
+      const committed = normalizeTrackData(updateMultiTrackSegmentContent(saved, 'matched-task', patch))
+      const content = committed.tracks[0].segments[0].content
+      expect('drift_seam_steps' in content).toBe(false)
+      expect('drift_seam_noise' in content).toBe(false)
+      expect(JSON.stringify(committed)).not.toContain('drift_seam')
+    }
   })
 
   it('does not add a default task segment when the range already has task coverage', () => {

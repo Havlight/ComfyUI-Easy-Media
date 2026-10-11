@@ -23,6 +23,19 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { MediaSelector } from '@/components/widgets/mediaSelector/MediaSelector'
 import type { MediaTab } from '@/components/widgets/mediaSelector/MediaSelector'
 import { useT } from '@/lib/i18n'
+import {
+  continuityModeChangePatch,
+  DRIFT_SEAM_STEP_OPTIONS,
+  driftSeamNoiseOptions,
+  driftSeamNoisePatch,
+  driftSeamStepsPatch,
+  formatDriftSeamNoiseLabel,
+  formatDriftSeamStepsLabel,
+  getDriftSeamNoise,
+  getDriftSeamSteps,
+  isDriftSeamEligible,
+  parseDriftSeamOptionValue,
+} from '@/lib/h3-drift-seam'
 import { isH3Continuation, parseH3Seconds, snapH3NativeDuration } from '@/lib/h3-native-timing'
 import type { H3NativePolicy } from '@/types/multitrack'
 import { mediaContentToViewUrl } from '@/lib/media-url'
@@ -280,6 +293,14 @@ export function TaskSegmentEditor({
     item.start_frame < first.start_frame ? item : first
   )).id
   const hasSelectedContinuityTargets = selectedSegments?.some((item) => item.id !== firstTaskSegmentId) === true
+  const showDriftSeamControls = isDriftSeamEligible({
+    format,
+    taskMode: mode,
+    continuityMode,
+    hasContinuityTarget: taskIndex > 0 || hasSelectedContinuityTargets,
+  })
+  const driftSeamSteps = getDriftSeamSteps(segment.content)
+  const driftSeamNoise = getDriftSeamNoise(segment.content)
   const promptVariant: MultiTrackUserPromptVariant = segment.content.user_prompt_variant === 'b' ? 'b' : 'a'
   const promptValue = editMode === 'combined'
     ? combinedPromptInput
@@ -571,9 +592,14 @@ export function TaskSegmentEditor({
     onTrackSegmentsContentChange(selectedSegments.map((item) => ({
       segmentId: item.id,
       patch: patch.continuity_mode !== undefined && item.id === firstTaskSegmentId
-        ? { ...patch, continuity_mode: MULTITRACK_DEFAULT_CONTINUITY_MODE }
+        ? { ...patch, ...continuityModeChangePatch(MULTITRACK_DEFAULT_CONTINUITY_MODE) }
         : patch,
     })))
+  }
+
+  function handleDriftSeamNoiseChange(value: string) {
+    const patch = driftSeamNoisePatch(parseDriftSeamOptionValue(value))
+    if (patch) handleDropdownContentChange(patch)
   }
 
   function handleDeleteImage(imageId: string) {
@@ -1272,9 +1298,9 @@ export function TaskSegmentEditor({
           {format === 'MiniMax' && mode !== 'passthrough' && (taskIndex > 0 || hasSelectedContinuityTargets || continuityMode === 'context_masked') && (
             <Select
               value={continuityMode}
-              onValueChange={(value) => handleDropdownContentChange({
-                continuity_mode: value as MultiTrackContinuityMode,
-              })}
+              onValueChange={(value) => handleDropdownContentChange(
+                continuityModeChangePatch(value as MultiTrackContinuityMode),
+              )}
             >
               <TooltipProvider delayDuration={300}>
                 <Tooltip>
@@ -1293,6 +1319,57 @@ export function TaskSegmentEditor({
                 {MULTITRACK_CONTINUITY_MODES.map((continuityOption) => (
                   <SelectItem key={continuityOption} value={continuityOption}>
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityOption}`)}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {showDriftSeamControls && (
+            <Select
+              value={String(driftSeamSteps)}
+              onValueChange={(value) => handleDropdownContentChange(
+                driftSeamStepsPatch(parseDriftSeamOptionValue(value)),
+              )}
+            >
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SelectTrigger aria-label={t('multitrack.driftSeamSteps')} className="h-8 w-24 bg-card text-[10px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {t('multitrack.driftSeamStepsTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <SelectContent>
+                {DRIFT_SEAM_STEP_OPTIONS.map((stepsOption) => (
+                  <SelectItem key={stepsOption} value={String(stepsOption)}>
+                    <span className="text-[10px]">{formatDriftSeamStepsLabel(t, stepsOption)}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {showDriftSeamControls && driftSeamSteps > 0 && (
+            <Select value={String(driftSeamNoise)} onValueChange={handleDriftSeamNoiseChange}>
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SelectTrigger aria-label={t('multitrack.driftSeamNoise')} className="h-8 w-20 bg-card text-[10px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {t('multitrack.driftSeamNoiseTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <SelectContent>
+                {driftSeamNoiseOptions(driftSeamNoise).map((noiseOption) => (
+                  <SelectItem key={noiseOption} value={String(noiseOption)}>
+                    <span className="text-[10px]">{formatDriftSeamNoiseLabel(t, noiseOption)}</span>
                   </SelectItem>
                 ))}
               </SelectContent>

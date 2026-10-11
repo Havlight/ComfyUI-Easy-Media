@@ -56,6 +56,10 @@ export interface MultiTrackSegmentContent {
   system_prompt?: string
   task_mode?: MultiTrackTaskMode
   continuity_mode?: MultiTrackContinuityMode
+  /** Matched Drift only: context steps beside the seam whose noise is capped, 1..4. Absent means off; 0 is never stored. */
+  drift_seam_steps?: number
+  /** Matched Drift only: noise cap for the seam steps, 0..1. Absent means the backend default 0.5. */
+  drift_seam_noise?: number
   ref_image_size?: MultiTrackRefImageSize
   images?: MultiTrackTaskImage[]
   duration?: number

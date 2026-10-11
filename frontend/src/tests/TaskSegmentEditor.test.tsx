@@ -79,6 +79,19 @@ function secondTaskSegment(): MultiTrackSegment {
   }
 }
 
+function matchedDriftTask(content: Partial<MultiTrackSegment['content']> = {}): MultiTrackSegment {
+  const segment = secondTaskSegment()
+  return {
+    ...segment,
+    content: { ...segment.content, continuity_mode: 'context_drift_matched', ...content },
+  }
+}
+
+function chooseOption(comboboxName: string, optionName: string) {
+  fireEvent.click(screen.getByRole('combobox', { name: comboboxName }))
+  fireEvent.click(screen.getByRole('option', { name: optionName }))
+}
+
 function videoSegment(
   startFrame: number,
   endFrame: number,
@@ -244,6 +257,194 @@ describe('TaskSegmentEditor', () => {
       { segmentId: second.id, patch: { task_mode: 'edit' } },
     ])
     expect(onContentChange).not.toHaveBeenCalled()
+  })
+
+  it('shows Matched Drift seam controls only for eligible MiniMax continuations', () => {
+    const first = taskSegment()
+    const props = { format: 'MiniMax', onContentChange: vi.fn() }
+    const { rerender } = render(
+      <TaskSegmentEditor {...props} segment={matchedDriftTask()} trackSegments={[first, matchedDriftTask()]} />,
+    )
+
+    const continuitySelect = screen.getByRole('combobox', { name: 'Continuity mode' })
+    const stepsSelect = screen.getByRole('combobox', { name: 'Seam steps' })
+    expect(stepsSelect.textContent).toContain('Seam: free')
+    expect(stepsSelect.className).toContain('h-8')
+    expect(stepsSelect.className).toContain('bg-card')
+    expect(stepsSelect.className).toContain('text-[10px]')
+    expect(continuitySelect.compareDocumentPosition(stepsSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(stepsSelect.compareDocumentPosition(screen.getByRole('combobox', { name: 'Task mode' })))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.queryByRole('combobox', { name: 'Seam noise cap' })).toBeNull()
+
+    for (const continuityMode of ['shot', 'context', 'context_drift'] as const) {
+      const segment = matchedDriftTask({ continuity_mode: continuityMode, drift_seam_steps: 2 })
+      rerender(<TaskSegmentEditor {...props} segment={segment} trackSegments={[first, segment]} />)
+      expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
+      expect(screen.queryByRole('combobox', { name: 'Seam noise cap' })).toBeNull()
+    }
+
+    const firstMatched = { ...first, content: { ...first.content, continuity_mode: 'context_drift_matched' as const, drift_seam_steps: 2 } }
+    rerender(<TaskSegmentEditor {...props} segment={firstMatched} trackSegments={[firstMatched, matchedDriftTask()]} />)
+    expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
+
+    const passthrough = matchedDriftTask({ task_mode: 'passthrough', drift_seam_steps: 2 })
+    rerender(<TaskSegmentEditor {...props} segment={passthrough} trackSegments={[first, passthrough]} />)
+    expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
+
+    const seedance = matchedDriftTask({ drift_seam_steps: 2 })
+    rerender(<TaskSegmentEditor {...props} format="Seedance" segment={seedance} trackSegments={[first, seedance]} />)
+    expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Seam noise cap' })).toBeNull()
+  })
+
+  it('stores whole seam steps and removes both seam keys when turned off', () => {
+    const onContentChange = vi.fn()
+    const first = taskSegment()
+    const segment = matchedDriftTask()
+    const { rerender } = render(
+      <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Seam steps' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Seam: free', 'Seam 1', 'Seam 2', 'Seam 3', 'Seam 4'])
+    fireEvent.click(screen.getByRole('option', { name: 'Seam 2' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_steps: 2 })
+
+    const seamed = matchedDriftTask({ drift_seam_steps: 3, drift_seam_noise: 0.2 })
+    rerender(
+      <TaskSegmentEditor segment={seamed} trackSegments={[first, seamed]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+    expect(screen.getByRole('combobox', { name: 'Seam steps' }).textContent).toContain('Seam 3')
+    chooseOption('Seam steps', 'Seam: free')
+    const offPatch = onContentChange.mock.lastCall?.[0] as Record<string, unknown>
+    expect(offPatch).toStrictEqual({ drift_seam_steps: undefined, drift_seam_noise: undefined })
+    expect(Object.keys(offPatch).sort()).toEqual(['drift_seam_noise', 'drift_seam_steps'])
+  })
+
+  it('shows the seam noise cap only with seam steps, defaulting to 0.5', () => {
+    const onContentChange = vi.fn()
+    const first = taskSegment()
+    const segment = matchedDriftTask({ drift_seam_steps: 2 })
+    render(
+      <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+
+    const noiseSelect = screen.getByRole('combobox', { name: 'Seam noise cap' })
+    expect(noiseSelect.textContent).toContain('Cap 0.5')
+    expect(noiseSelect.className).toContain('w-20')
+    expect(screen.getByRole('combobox', { name: 'Seam steps' }).compareDocumentPosition(noiseSelect))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+
+    fireEvent.click(noiseSelect)
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Cap 0', 'Cap 0.1', 'Cap 0.2', 'Cap 0.3', 'Cap 0.4', 'Cap 0.5', 'Cap 0.6', 'Cap 0.7',
+    ])
+    expect(screen.getByRole('option', { name: 'Cap 0.5' }).getAttribute('data-state')).toBe('checked')
+    fireEvent.click(screen.getByRole('option', { name: 'Cap 0.3' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_noise: 0.3 })
+
+    chooseOption('Seam noise cap', 'Cap 0')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_noise: 0 })
+  })
+
+  it('keeps an off-preset stored seam noise cap as an extra option', () => {
+    const onContentChange = vi.fn()
+    const first = taskSegment()
+    const segment = matchedDriftTask({ drift_seam_steps: 1, drift_seam_noise: 0.25 })
+    render(
+      <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+
+    const noiseSelect = screen.getByRole('combobox', { name: 'Seam noise cap' })
+    expect(noiseSelect.textContent).toContain('Cap 0.25')
+    fireEvent.click(noiseSelect)
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Cap 0', 'Cap 0.1', 'Cap 0.2', 'Cap 0.25', 'Cap 0.3', 'Cap 0.4', 'Cap 0.5', 'Cap 0.6', 'Cap 0.7',
+    ])
+    expect(screen.getByRole('option', { name: 'Cap 0.25' }).getAttribute('data-state')).toBe('checked')
+    fireEvent.click(screen.getByRole('option', { name: 'Cap 0.4' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_noise: 0.4 })
+  })
+
+  it('clears seam settings when continuity leaves Matched Drift', () => {
+    const onContentChange = vi.fn()
+    const first = taskSegment()
+    const segment = matchedDriftTask({ drift_seam_steps: 2, drift_seam_noise: 0.4 })
+    const { rerender } = render(
+      <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+
+    chooseOption('Continuity mode', 'Context')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({
+      continuity_mode: 'context',
+      drift_seam_steps: undefined,
+      drift_seam_noise: undefined,
+    })
+
+    const context = matchedDriftTask({ continuity_mode: 'context' })
+    rerender(
+      <TaskSegmentEditor segment={context} trackSegments={[first, context]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+    chooseOption('Continuity mode', 'Matched Drift Context')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ continuity_mode: 'context_drift_matched' })
+  })
+
+  it('applies seam changes to every selected task and strips seam keys from the forced first continuity', () => {
+    const onContentChange = vi.fn()
+    const onTrackSegmentsContentChange = vi.fn()
+    const first = taskSegment()
+    first.content.continuity_mode = 'shot'
+    const drift = matchedDriftTask({ continuity_mode: 'context_drift' })
+    const props = {
+      format: 'MiniMax',
+      onContentChange,
+      onTrackSegmentsContentChange,
+    }
+    const { rerender } = render(
+      <TaskSegmentEditor {...props} segment={drift} trackSegments={[first, drift]} selectedSegments={[first, drift]} />,
+    )
+
+    chooseOption('Continuity mode', 'Matched Drift Context')
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
+      { segmentId: first.id, patch: { continuity_mode: 'shot', drift_seam_steps: undefined, drift_seam_noise: undefined } },
+      { segmentId: drift.id, patch: { continuity_mode: 'context_drift_matched' } },
+    ])
+
+    const matched = matchedDriftTask()
+    rerender(
+      <TaskSegmentEditor {...props} segment={matched} trackSegments={[first, matched]} selectedSegments={[first, matched]} />,
+    )
+    chooseOption('Seam steps', 'Seam 3')
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
+      { segmentId: first.id, patch: { drift_seam_steps: 3 } },
+      { segmentId: matched.id, patch: { drift_seam_steps: 3 } },
+    ])
+
+    const seamed = matchedDriftTask({ drift_seam_steps: 3 })
+    rerender(
+      <TaskSegmentEditor {...props} segment={seamed} trackSegments={[first, seamed]} selectedSegments={[first, seamed]} />,
+    )
+    chooseOption('Seam noise cap', 'Cap 0.6')
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
+      { segmentId: first.id, patch: { drift_seam_noise: 0.6 } },
+      { segmentId: seamed.id, patch: { drift_seam_noise: 0.6 } },
+    ])
+    expect(onContentChange).not.toHaveBeenCalled()
+  })
+
+  it('uses locale messages for the seam controls', () => {
+    const first = taskSegment()
+    const segment = matchedDriftTask({ drift_seam_steps: 2 })
+    render(
+      <LocaleContext.Provider value="zh">
+        <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={vi.fn()} />
+      </LocaleContext.Provider>,
+    )
+
+    expect(screen.getByRole('combobox', { name: '接缝步数' }).textContent).toContain('接缝 2 步')
+    expect(screen.getByRole('combobox', { name: '接缝噪声上限' }).textContent).toContain('上限 0.5')
   })
 
   it('stores the A/B prompt selection, edits B independently, and shows its tooltip on hover', async () => {
