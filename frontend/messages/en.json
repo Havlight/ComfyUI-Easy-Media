@@ -70,6 +70,7 @@
     "continuityContextMasked": "Context Masked",
     "continuityContext": "Context",
     "continuityContextDrift": "Drift Context",
+    "continuityContextDriftMatched": "Matched Drift Context",
     "emptyPreview": "Refresh the project to preview its generated clips.",
     "refreshFailed": "Project refresh failed",
     "combineFailed": "Project combine failed",
@@ -182,7 +183,7 @@
     "taskMode": "Task mode",
     "taskModeTooltip": "Choose how this segment produces video. Passthrough skips sampling, uses the source video when available, and otherwise outputs black video.",
     "continuityMode": "Continuity mode",
-    "continuityModeTooltip": "Start a new shot, continue with a five-frame video anchor, or preserve motion while replacing the character appearance.",
+    "continuityModeTooltip": "Start a new shot, continue with a five-frame video anchor, or preserve motion while replacing the character appearance. Matched Drift also releases the frames beside the seam with the noise schedule, so the previous segment becomes clear only late in sampling (experimental).",
     "refImageSize": "Reference image size",
     "refImageSizeTooltip": "Match scales reference images to the generation area; Max keeps a larger reference for stronger identity fidelity but can be much slower.",
     "lockAudio": "Lock audio",
@@ -312,7 +313,8 @@
     "context_masked": "Context Masked",
     "shot": "Shot",
     "context": "Context",
-    "context_drift": "Drift Control Context"
+    "context_drift": "Drift Control Context",
+    "context_drift_matched": "Matched Drift Context"
   },
   "multitrackRefImageSizes": {
     "match": "Match",

@@ -1493,6 +1493,17 @@ describe('multitrack utilities', () => {
     const normalized = normalizeTrackData(data)
 
     expect(normalized.tracks[0].segments[0].content.continuity_mode).toBe('context_drift')
+    const matched = normalizeTrackData({
+      ...data,
+      tracks: data.tracks.map((track) => ({
+        ...track,
+        segments: track.segments.map((segment) => ({
+          ...segment,
+          content: { ...segment.content, continuity_mode: 'context_drift_matched' as const },
+        })),
+      })),
+    })
+    expect(matched.tracks[0].segments[0].content.continuity_mode).toBe('context_drift_matched')
   })
 
   it('does not add a default task segment when the range already has task coverage', () => {
