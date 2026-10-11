@@ -11,7 +11,7 @@ import type {
   TrackData,
 } from '@/types/multitrack'
 import { uuid } from './uuid'
-import { normalizeDriftSeamNoise, normalizeDriftSeamSteps } from './h3-drift-seam'
+import { MATCHED_DRIFT_ALIAS, normalizeDriftTaperContent } from './h3-drift-taper'
 import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
 
@@ -20,7 +20,7 @@ export const MULTITRACK_DEFAULT_TOTAL_LENGTH = 120
 export const MULTITRACK_MIN_DURATION_SECONDS = 5
 export const MULTITRACK_TASK_MODES = ['default', 'ref', 'edit', 'l2v', 'passthrough'] as const
 export const MULTITRACK_DEFAULT_TASK_MODE: MultiTrackTaskMode = 'default'
-export const MULTITRACK_CONTINUITY_MODES = ['shot', 'context', 'context_drift', 'context_drift_matched'] as const
+export const MULTITRACK_CONTINUITY_MODES = ['shot', 'context', 'context_drift'] as const
 export const MULTITRACK_DEFAULT_CONTINUITY_MODE: MultiTrackContinuityMode = 'shot'
 export const MULTITRACK_REF_IMAGE_SIZES = ['match', 'max'] as const
 export const MULTITRACK_DEFAULT_REF_IMAGE_SIZE: MultiTrackRefImageSize = 'match'
@@ -395,7 +395,7 @@ function normalizeTaskMode(value: unknown): MultiTrackTaskMode {
 }
 
 function normalizeContinuityMode(value: unknown): MultiTrackContinuityMode {
-  if (value === 'context_swap') return 'context_drift'
+  if (value === 'context_swap' || value === MATCHED_DRIFT_ALIAS) return 'context_drift'
   if (value === 'context_test') return 'context'
   if (value === 'context_masked') return 'context_masked' // Preserve retired tasks until the user chooses a method.
   return typeof value === 'string' && (MULTITRACK_CONTINUITY_MODES as readonly string[]).includes(value)
@@ -1694,10 +1694,8 @@ function normalizeTaskSegmentContent(content: MultiTrackSegment['content']): Mul
     normalized.user_prompt = normalized.text
   }
   delete normalized.text
-  // Cleared seam settings arrive as undefined from spread patches; drop them with invalid values.
-  if (normalizeDriftSeamSteps(normalized.drift_seam_steps) === undefined) delete normalized.drift_seam_steps
-  if (normalizeDriftSeamNoise(normalized.drift_seam_noise) === undefined) delete normalized.drift_seam_noise
-  return normalized
+  // Cleared taper settings arrive as undefined from spread patches; drop them with invalid values.
+  return normalizeDriftTaperContent(normalized, content.continuity_mode === MATCHED_DRIFT_ALIAS)
 }
 
 function normalizeTotalLength(tracks: MultiTrack[], frameRate: number): number {

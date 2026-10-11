@@ -79,12 +79,16 @@ function secondTaskSegment(): MultiTrackSegment {
   }
 }
 
-function matchedDriftTask(content: Partial<MultiTrackSegment['content']> = {}): MultiTrackSegment {
+function driftTask(content: Partial<MultiTrackSegment['content']> = {}): MultiTrackSegment {
   const segment = secondTaskSegment()
   return {
     ...segment,
-    content: { ...segment.content, continuity_mode: 'context_drift_matched', ...content },
+    content: { ...segment.content, continuity_mode: 'context_drift', ...content },
   }
+}
+
+function optionTexts() {
+  return screen.getAllByRole('option').map((option) => option.textContent)
 }
 
 function chooseOption(comboboxName: string, optionName: string) {
@@ -157,9 +161,6 @@ describe('TaskSegmentEditor', () => {
     fireEvent.click(continuitySelect)
     fireEvent.click(screen.getByRole('option', { name: 'Drift Control Context' }))
     expect(onContentChange).toHaveBeenCalledWith({ continuity_mode: 'context_drift' })
-    fireEvent.click(continuitySelect)
-    fireEvent.click(screen.getByRole('option', { name: 'Matched Drift Context' }))
-    expect(onContentChange).toHaveBeenCalledWith({ continuity_mode: 'context_drift_matched' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous tail frame' }))
     expect(onContentChange).toHaveBeenCalledWith({ images: [expect.objectContaining({ source_type: 'previous_frame' })] })
@@ -259,119 +260,119 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange).not.toHaveBeenCalled()
   })
 
-  it('shows Matched Drift seam controls only for eligible MiniMax continuations', () => {
+  it('shows Drift taper controls only for eligible MiniMax continuations', () => {
     const first = taskSegment()
     const props = { format: 'MiniMax', onContentChange: vi.fn() }
     const { rerender } = render(
-      <TaskSegmentEditor {...props} segment={matchedDriftTask()} trackSegments={[first, matchedDriftTask()]} />,
+      <TaskSegmentEditor {...props} segment={driftTask()} trackSegments={[first, driftTask()]} />,
     )
 
     const continuitySelect = screen.getByRole('combobox', { name: 'Continuity mode' })
-    const stepsSelect = screen.getByRole('combobox', { name: 'Seam steps' })
-    expect(stepsSelect.textContent).toContain('Seam: free')
-    expect(stepsSelect.className).toContain('h-8')
-    expect(stepsSelect.className).toContain('bg-card')
-    expect(stepsSelect.className).toContain('text-[10px]')
+    const stepsSelect = screen.getByRole('combobox', { name: 'Seam taper steps' })
+    const floorSelect = screen.getByRole('combobox', { name: 'Seam floor weight' })
+    const stageSelect = screen.getByRole('combobox', { name: 'Taper stage' })
+    expect(stepsSelect.textContent).toContain('Taper 4 (default)')
+    expect(floorSelect.textContent).toContain('Floor 0')
+    expect(stageSelect.textContent).toContain('All stages')
+    for (const select of [stepsSelect, floorSelect, stageSelect]) {
+      expect(select.className).toContain('h-8')
+      expect(select.className).toContain('bg-card')
+      expect(select.className).toContain('text-[10px]')
+    }
     expect(continuitySelect.compareDocumentPosition(stepsSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(stepsSelect.compareDocumentPosition(screen.getByRole('combobox', { name: 'Task mode' })))
+    expect(stepsSelect.compareDocumentPosition(floorSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(floorSelect.compareDocumentPosition(stageSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(stageSelect.compareDocumentPosition(screen.getByRole('combobox', { name: 'Task mode' })))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(screen.queryByRole('combobox', { name: 'Seam noise cap' })).toBeNull()
 
-    for (const continuityMode of ['shot', 'context', 'context_drift'] as const) {
-      const segment = matchedDriftTask({ continuity_mode: continuityMode, drift_seam_steps: 2 })
+    const untapered = driftTask({ drift_taper_steps: 0 })
+    rerender(<TaskSegmentEditor {...props} segment={untapered} trackSegments={[first, untapered]} />)
+    expect(screen.getByRole('combobox', { name: 'Seam taper steps' }).textContent).toContain('Taper: none')
+    expect(screen.queryByRole('combobox', { name: 'Seam floor weight' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Taper stage' })).toBeNull()
+
+    for (const continuityMode of ['shot', 'context'] as const) {
+      const segment = driftTask({ continuity_mode: continuityMode, drift_taper_steps: 2 })
       rerender(<TaskSegmentEditor {...props} segment={segment} trackSegments={[first, segment]} />)
-      expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
-      expect(screen.queryByRole('combobox', { name: 'Seam noise cap' })).toBeNull()
+      expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
     }
 
-    const firstMatched = { ...first, content: { ...first.content, continuity_mode: 'context_drift_matched' as const, drift_seam_steps: 2 } }
-    rerender(<TaskSegmentEditor {...props} segment={firstMatched} trackSegments={[firstMatched, matchedDriftTask()]} />)
-    expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
+    const firstDrift = { ...first, content: { ...first.content, continuity_mode: 'context_drift' as const } }
+    rerender(<TaskSegmentEditor {...props} segment={firstDrift} trackSegments={[firstDrift, driftTask()]} />)
+    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
 
-    const passthrough = matchedDriftTask({ task_mode: 'passthrough', drift_seam_steps: 2 })
+    const passthrough = driftTask({ task_mode: 'passthrough' })
     rerender(<TaskSegmentEditor {...props} segment={passthrough} trackSegments={[first, passthrough]} />)
-    expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
 
-    const seedance = matchedDriftTask({ drift_seam_steps: 2 })
+    const seedance = driftTask()
     rerender(<TaskSegmentEditor {...props} format="Seedance" segment={seedance} trackSegments={[first, seedance]} />)
-    expect(screen.queryByRole('combobox', { name: 'Seam steps' })).toBeNull()
-    expect(screen.queryByRole('combobox', { name: 'Seam noise cap' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
   })
 
-  it('stores whole seam steps and removes both seam keys when turned off', () => {
+  it('stores only taper steps that differ from the default', () => {
     const onContentChange = vi.fn()
     const first = taskSegment()
-    const segment = matchedDriftTask()
+    const segment = driftTask()
     const { rerender } = render(
       <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
     )
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Seam steps' }))
-    expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Seam: free', 'Seam 1', 'Seam 2', 'Seam 3', 'Seam 4'])
-    fireEvent.click(screen.getByRole('option', { name: 'Seam 2' }))
-    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_steps: 2 })
+    fireEvent.click(screen.getByRole('combobox', { name: 'Seam taper steps' }))
+    expect(optionTexts()).toEqual([
+      'Taper: none', 'Taper 1', 'Taper 2', 'Taper 3', 'Taper 4 (default)', 'Taper 6', 'Taper all',
+    ])
+    fireEvent.click(screen.getByRole('option', { name: 'Taper 3' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_steps: 3 })
+    chooseOption('Seam taper steps', 'Taper: none')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_steps: 0 })
 
-    const seamed = matchedDriftTask({ drift_seam_steps: 3, drift_seam_noise: 0.2 })
+    const tapered = driftTask({ drift_taper_steps: 3 })
     rerender(
-      <TaskSegmentEditor segment={seamed} trackSegments={[first, seamed]} format="MiniMax" onContentChange={onContentChange} />,
+      <TaskSegmentEditor segment={tapered} trackSegments={[first, tapered]} format="MiniMax" onContentChange={onContentChange} />,
     )
-    expect(screen.getByRole('combobox', { name: 'Seam steps' }).textContent).toContain('Seam 3')
-    chooseOption('Seam steps', 'Seam: free')
-    const offPatch = onContentChange.mock.lastCall?.[0] as Record<string, unknown>
-    expect(offPatch).toStrictEqual({ drift_seam_steps: undefined, drift_seam_noise: undefined })
-    expect(Object.keys(offPatch).sort()).toEqual(['drift_seam_noise', 'drift_seam_steps'])
+    chooseOption('Seam taper steps', 'Taper 4 (default)')
+    const defaultPatch = onContentChange.mock.lastCall?.[0] as Record<string, unknown>
+    expect(defaultPatch).toStrictEqual({ drift_taper_steps: undefined })
+    expect(Object.keys(defaultPatch)).toEqual(['drift_taper_steps'])
   })
 
-  it('shows the seam noise cap only with seam steps, defaulting to 0.5', () => {
+  it('stores the floor weight and the low-resolution-only stage', () => {
     const onContentChange = vi.fn()
     const first = taskSegment()
-    const segment = matchedDriftTask({ drift_seam_steps: 2 })
-    render(
+    const segment = driftTask({ drift_taper_steps: 3 })
+    const { rerender } = render(
       <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
     )
 
-    const noiseSelect = screen.getByRole('combobox', { name: 'Seam noise cap' })
-    expect(noiseSelect.textContent).toContain('Cap 0.5')
-    expect(noiseSelect.className).toContain('w-20')
-    expect(screen.getByRole('combobox', { name: 'Seam steps' }).compareDocumentPosition(noiseSelect))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-
-    fireEvent.click(noiseSelect)
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-      'Cap 0', 'Cap 0.1', 'Cap 0.2', 'Cap 0.3', 'Cap 0.4', 'Cap 0.5', 'Cap 0.6', 'Cap 0.7',
+    fireEvent.click(screen.getByRole('combobox', { name: 'Seam floor weight' }))
+    expect(optionTexts()).toEqual([
+      'Floor 0', 'Floor 0.1', 'Floor 0.2', 'Floor 0.25', 'Floor 0.3', 'Floor 0.4', 'Floor 0.5', 'Floor 0.6', 'Floor 0.7',
     ])
-    expect(screen.getByRole('option', { name: 'Cap 0.5' }).getAttribute('data-state')).toBe('checked')
-    fireEvent.click(screen.getByRole('option', { name: 'Cap 0.3' }))
-    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_noise: 0.3 })
+    expect(screen.getByRole('option', { name: 'Floor 0' }).getAttribute('data-state')).toBe('checked')
+    fireEvent.click(screen.getByRole('option', { name: 'Floor 0.25' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_floor: 0.25 })
+    chooseOption('Taper stage', 'Low-res only')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_low_only: true })
 
-    chooseOption('Seam noise cap', 'Cap 0')
-    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_noise: 0 })
-  })
-
-  it('keeps an off-preset stored seam noise cap as an extra option', () => {
-    const onContentChange = vi.fn()
-    const first = taskSegment()
-    const segment = matchedDriftTask({ drift_seam_steps: 1, drift_seam_noise: 0.25 })
-    render(
-      <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
+    const custom = driftTask({ drift_taper_steps: 3, drift_taper_floor: 0.15, drift_taper_low_only: true })
+    rerender(
+      <TaskSegmentEditor segment={custom} trackSegments={[first, custom]} format="MiniMax" onContentChange={onContentChange} />,
     )
-
-    const noiseSelect = screen.getByRole('combobox', { name: 'Seam noise cap' })
-    expect(noiseSelect.textContent).toContain('Cap 0.25')
-    fireEvent.click(noiseSelect)
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-      'Cap 0', 'Cap 0.1', 'Cap 0.2', 'Cap 0.25', 'Cap 0.3', 'Cap 0.4', 'Cap 0.5', 'Cap 0.6', 'Cap 0.7',
-    ])
-    expect(screen.getByRole('option', { name: 'Cap 0.25' }).getAttribute('data-state')).toBe('checked')
-    fireEvent.click(screen.getByRole('option', { name: 'Cap 0.4' }))
-    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_seam_noise: 0.4 })
+    expect(screen.getByRole('combobox', { name: 'Taper stage' }).textContent).toContain('Low-res only')
+    fireEvent.click(screen.getByRole('combobox', { name: 'Seam floor weight' }))
+    expect(optionTexts()).toContain('Floor 0.15')
+    expect(screen.getByRole('option', { name: 'Floor 0.15' }).getAttribute('data-state')).toBe('checked')
+    fireEvent.click(screen.getByRole('option', { name: 'Floor 0' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_floor: undefined })
+    chooseOption('Taper stage', 'All stages')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_low_only: undefined })
   })
 
-  it('clears seam settings when continuity leaves Matched Drift', () => {
+  it('clears taper settings when continuity leaves Drift', () => {
     const onContentChange = vi.fn()
     const first = taskSegment()
-    const segment = matchedDriftTask({ drift_seam_steps: 2, drift_seam_noise: 0.4 })
+    const segment = driftTask({ drift_taper_steps: 3, drift_taper_floor: 0.25 })
     const { rerender } = render(
       <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
     )
@@ -379,72 +380,73 @@ describe('TaskSegmentEditor', () => {
     chooseOption('Continuity mode', 'Context')
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({
       continuity_mode: 'context',
-      drift_seam_steps: undefined,
-      drift_seam_noise: undefined,
+      drift_taper_steps: undefined,
+      drift_taper_floor: undefined,
+      drift_taper_low_only: undefined,
     })
 
-    const context = matchedDriftTask({ continuity_mode: 'context' })
+    const context = driftTask({ continuity_mode: 'context' })
     rerender(
       <TaskSegmentEditor segment={context} trackSegments={[first, context]} format="MiniMax" onContentChange={onContentChange} />,
     )
-    chooseOption('Continuity mode', 'Matched Drift Context')
-    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ continuity_mode: 'context_drift_matched' })
+    chooseOption('Continuity mode', 'Drift Control Context')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ continuity_mode: 'context_drift' })
   })
 
-  it('applies seam changes to every selected task and strips seam keys from the forced first continuity', () => {
+  it('applies taper changes to every selected task and strips taper keys from the forced first continuity', () => {
     const onContentChange = vi.fn()
     const onTrackSegmentsContentChange = vi.fn()
     const first = taskSegment()
     first.content.continuity_mode = 'shot'
-    const drift = matchedDriftTask({ continuity_mode: 'context_drift' })
-    const props = {
-      format: 'MiniMax',
-      onContentChange,
-      onTrackSegmentsContentChange,
-    }
+    const context = driftTask({ continuity_mode: 'context' })
+    const props = { format: 'MiniMax', onContentChange, onTrackSegmentsContentChange }
     const { rerender } = render(
+      <TaskSegmentEditor {...props} segment={context} trackSegments={[first, context]} selectedSegments={[first, context]} />,
+    )
+
+    chooseOption('Continuity mode', 'Drift Control Context')
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
+      {
+        segmentId: first.id,
+        patch: {
+          continuity_mode: 'shot',
+          drift_taper_steps: undefined,
+          drift_taper_floor: undefined,
+          drift_taper_low_only: undefined,
+        },
+      },
+      { segmentId: context.id, patch: { continuity_mode: 'context_drift' } },
+    ])
+
+    const drift = driftTask()
+    rerender(
       <TaskSegmentEditor {...props} segment={drift} trackSegments={[first, drift]} selectedSegments={[first, drift]} />,
     )
-
-    chooseOption('Continuity mode', 'Matched Drift Context')
+    chooseOption('Seam taper steps', 'Taper 3')
     expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
-      { segmentId: first.id, patch: { continuity_mode: 'shot', drift_seam_steps: undefined, drift_seam_noise: undefined } },
-      { segmentId: drift.id, patch: { continuity_mode: 'context_drift_matched' } },
+      { segmentId: first.id, patch: { drift_taper_steps: 3 } },
+      { segmentId: drift.id, patch: { drift_taper_steps: 3 } },
     ])
-
-    const matched = matchedDriftTask()
-    rerender(
-      <TaskSegmentEditor {...props} segment={matched} trackSegments={[first, matched]} selectedSegments={[first, matched]} />,
-    )
-    chooseOption('Seam steps', 'Seam 3')
+    chooseOption('Seam floor weight', 'Floor 0.5')
     expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
-      { segmentId: first.id, patch: { drift_seam_steps: 3 } },
-      { segmentId: matched.id, patch: { drift_seam_steps: 3 } },
-    ])
-
-    const seamed = matchedDriftTask({ drift_seam_steps: 3 })
-    rerender(
-      <TaskSegmentEditor {...props} segment={seamed} trackSegments={[first, seamed]} selectedSegments={[first, seamed]} />,
-    )
-    chooseOption('Seam noise cap', 'Cap 0.6')
-    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
-      { segmentId: first.id, patch: { drift_seam_noise: 0.6 } },
-      { segmentId: seamed.id, patch: { drift_seam_noise: 0.6 } },
+      { segmentId: first.id, patch: { drift_taper_floor: 0.5 } },
+      { segmentId: drift.id, patch: { drift_taper_floor: 0.5 } },
     ])
     expect(onContentChange).not.toHaveBeenCalled()
   })
 
-  it('uses locale messages for the seam controls', () => {
+  it('uses locale messages for the taper controls', () => {
     const first = taskSegment()
-    const segment = matchedDriftTask({ drift_seam_steps: 2 })
+    const segment = driftTask({ drift_taper_steps: 3, drift_taper_floor: 0.25 })
     render(
       <LocaleContext.Provider value="zh">
         <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={vi.fn()} />
       </LocaleContext.Provider>,
     )
 
-    expect(screen.getByRole('combobox', { name: '接缝步数' }).textContent).toContain('接缝 2 步')
-    expect(screen.getByRole('combobox', { name: '接缝噪声上限' }).textContent).toContain('上限 0.5')
+    expect(screen.getByRole('combobox', { name: '接缝渐变步数' }).textContent).toContain('渐变 3 步')
+    expect(screen.getByRole('combobox', { name: '接缝最低权重' }).textContent).toContain('权重 0.25')
+    expect(screen.getByRole('combobox', { name: '渐变阶段' }).textContent).toContain('全部阶段')
   })
 
   it('stores the A/B prompt selection, edits B independently, and shows its tooltip on hover', async () => {

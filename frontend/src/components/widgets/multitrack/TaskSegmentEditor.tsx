@@ -25,17 +25,19 @@ import type { MediaTab } from '@/components/widgets/mediaSelector/MediaSelector'
 import { useT } from '@/lib/i18n'
 import {
   continuityModeChangePatch,
-  DRIFT_SEAM_STEP_OPTIONS,
-  driftSeamNoiseOptions,
-  driftSeamNoisePatch,
-  driftSeamStepsPatch,
-  formatDriftSeamNoiseLabel,
-  formatDriftSeamStepsLabel,
-  getDriftSeamNoise,
-  getDriftSeamSteps,
-  isDriftSeamEligible,
-  parseDriftSeamOptionValue,
-} from '@/lib/h3-drift-seam'
+  driftTaperFloorOptions,
+  driftTaperFloorPatch,
+  driftTaperLowOnlyPatch,
+  driftTaperStepOptions,
+  driftTaperStepsPatch,
+  formatDriftTaperFloorLabel,
+  formatDriftTaperStepsLabel,
+  getDriftTaperFloor,
+  getDriftTaperLowOnly,
+  getDriftTaperSteps,
+  isDriftTaperEligible,
+  parseDriftTaperOptionValue,
+} from '@/lib/h3-drift-taper'
 import { isH3Continuation, parseH3Seconds, snapH3NativeDuration } from '@/lib/h3-native-timing'
 import type { H3NativePolicy } from '@/types/multitrack'
 import { mediaContentToViewUrl } from '@/lib/media-url'
@@ -293,14 +295,15 @@ export function TaskSegmentEditor({
     item.start_frame < first.start_frame ? item : first
   )).id
   const hasSelectedContinuityTargets = selectedSegments?.some((item) => item.id !== firstTaskSegmentId) === true
-  const showDriftSeamControls = isDriftSeamEligible({
+  const showDriftTaperControls = isDriftTaperEligible({
     format,
     taskMode: mode,
     continuityMode,
     hasContinuityTarget: taskIndex > 0 || hasSelectedContinuityTargets,
   })
-  const driftSeamSteps = getDriftSeamSteps(segment.content)
-  const driftSeamNoise = getDriftSeamNoise(segment.content)
+  const driftTaperSteps = getDriftTaperSteps(segment.content)
+  const driftTaperFloor = getDriftTaperFloor(segment.content)
+  const driftTaperLowOnly = getDriftTaperLowOnly(segment.content)
   const promptVariant: MultiTrackUserPromptVariant = segment.content.user_prompt_variant === 'b' ? 'b' : 'a'
   const promptValue = editMode === 'combined'
     ? combinedPromptInput
@@ -597,8 +600,13 @@ export function TaskSegmentEditor({
     })))
   }
 
-  function handleDriftSeamNoiseChange(value: string) {
-    const patch = driftSeamNoisePatch(parseDriftSeamOptionValue(value))
+  function handleDriftTaperStepsChange(value: string) {
+    const steps = parseDriftTaperOptionValue(value)
+    if (steps !== undefined) handleDropdownContentChange(driftTaperStepsPatch(steps))
+  }
+
+  function handleDriftTaperFloorChange(value: string) {
+    const patch = driftTaperFloorPatch(parseDriftTaperOptionValue(value))
     if (patch) handleDropdownContentChange(patch)
   }
 
@@ -1324,54 +1332,73 @@ export function TaskSegmentEditor({
               </SelectContent>
             </Select>
           )}
-          {showDriftSeamControls && (
-            <Select
-              value={String(driftSeamSteps)}
-              onValueChange={(value) => handleDropdownContentChange(
-                driftSeamStepsPatch(parseDriftSeamOptionValue(value)),
-              )}
-            >
+          {showDriftTaperControls && (
+            <Select value={String(driftTaperSteps)} onValueChange={handleDriftTaperStepsChange}>
               <TooltipProvider delayDuration={300}>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <SelectTrigger aria-label={t('multitrack.driftSeamSteps')} className="h-8 w-24 bg-card text-[10px]">
+                    <SelectTrigger aria-label={t('multitrack.driftTaperSteps')} className="h-8 w-24 bg-card text-[10px]">
                       <SelectValue />
                     </SelectTrigger>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-72">
-                    {t('multitrack.driftSeamStepsTooltip')}
+                    {t('multitrack.driftTaperStepsTooltip')}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {DRIFT_SEAM_STEP_OPTIONS.map((stepsOption) => (
+                {driftTaperStepOptions(driftTaperSteps).map((stepsOption) => (
                   <SelectItem key={stepsOption} value={String(stepsOption)}>
-                    <span className="text-[10px]">{formatDriftSeamStepsLabel(t, stepsOption)}</span>
+                    <span className="text-[10px]">{formatDriftTaperStepsLabel(t, stepsOption)}</span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           )}
-          {showDriftSeamControls && driftSeamSteps > 0 && (
-            <Select value={String(driftSeamNoise)} onValueChange={handleDriftSeamNoiseChange}>
+          {showDriftTaperControls && driftTaperSteps > 0 && (
+            <Select value={String(driftTaperFloor)} onValueChange={handleDriftTaperFloorChange}>
               <TooltipProvider delayDuration={300}>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <SelectTrigger aria-label={t('multitrack.driftSeamNoise')} className="h-8 w-20 bg-card text-[10px]">
+                    <SelectTrigger aria-label={t('multitrack.driftTaperFloor')} className="h-8 w-24 bg-card text-[10px]">
                       <SelectValue />
                     </SelectTrigger>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-72">
-                    {t('multitrack.driftSeamNoiseTooltip')}
+                    {t('multitrack.driftTaperFloorTooltip')}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {driftSeamNoiseOptions(driftSeamNoise).map((noiseOption) => (
-                  <SelectItem key={noiseOption} value={String(noiseOption)}>
-                    <span className="text-[10px]">{formatDriftSeamNoiseLabel(t, noiseOption)}</span>
+                {driftTaperFloorOptions(driftTaperFloor).map((floorOption) => (
+                  <SelectItem key={floorOption} value={String(floorOption)}>
+                    <span className="text-[10px]">{formatDriftTaperFloorLabel(t, floorOption)}</span>
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+          )}
+          {showDriftTaperControls && driftTaperSteps > 0 && (
+            <Select value={driftTaperLowOnly ? 'low' : 'all'} onValueChange={(value) => handleDropdownContentChange(driftTaperLowOnlyPatch(value === 'low'))}>
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SelectTrigger aria-label={t('multitrack.driftTaperStage')} className="h-8 w-24 bg-card text-[10px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {t('multitrack.driftTaperStageTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <SelectContent>
+                <SelectItem value="all">
+                  <span className="text-[10px]">{t('multitrack.driftTaperStageAll')}</span>
+                </SelectItem>
+                <SelectItem value="low">
+                  <span className="text-[10px]">{t('multitrack.driftTaperStageLow')}</span>
+                </SelectItem>
               </SelectContent>
             </Select>
           )}
