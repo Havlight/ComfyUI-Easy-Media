@@ -126,6 +126,7 @@ custom 示例：
 
 - `task_mode`: `default`、`l2v`、`ref`、`edit`。
 - `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）、`context_drift`（上下文漂移控制）或实验性的 `context_drift_matched`（全程漂移控制）；旧值 `context_swap` 仍可读取。用户没有要求时不要选 `context_drift_matched`。
+- `drift_seam_steps`（可选，0–4 的整数）与 `drift_seam_noise`（可选，0–1，默认 0.5）：仅对 `context_drift_matched` 生效，让衔接处最后几步以有上限的噪声保持部分可见。关闭时删除字段；用户没有要求时不要添加。
 - `ref_image_size`: `match` 或 `max`。
 - `images` 最多 9 张，顺序决定 Picture 引用顺序。
 - 编辑已有任务时保留未要求改变的 `system_prompt`、prompt variant、连续性和参考图策略。
