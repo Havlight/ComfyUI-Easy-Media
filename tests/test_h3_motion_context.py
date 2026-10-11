@@ -311,6 +311,30 @@ def test_matched_drift_releases_the_seam_with_the_schedule():
     assert torch.count_nonzero(matched.current_video_mask[0, 0, :4]) == 0
 
 
+def test_matched_drift_caps_the_noise_of_the_seam_steps():
+    shape = (1, 24, 7, 2, 3)
+    sigmas = torch.tensor([1.0, 0.8, 0.4, 0.0])
+    packed = torch.ones(1, 1, 24 * 7 * 2 * 3 + 32 * 2 * 20)
+    state = drift_control_av._DriftControlMaskState(
+        shape, sigmas, prefix_steps=4, taper_steps=0, seam_steps=2, seam_noise_cap=0.3)
+
+    state.denoise_mask_function(torch.tensor(0.8), packed, {})
+
+    # Mask m presents a row at noise m * sigma: the far steps follow the next sigma (0.4),
+    # the two seam steps carry at most 0.3.
+    noise = (state.current_video_mask[0, 0, :4, 0, 0] * 0.8).tolist()
+    assert noise[:2] == pytest.approx([0.4, 0.4], abs=1e-2)
+    assert noise[2:] == pytest.approx([0.3, 0.3], abs=1e-2)
+    # Once the schedule is already below the cap, the seam simply follows it.
+    state.denoise_mask_function(torch.tensor(0.4), packed, {})
+    assert torch.count_nonzero(state.current_video_mask[0, 0, :4]) == 0
+    clean = drift_control_av._DriftControlMaskState(
+        shape, sigmas, prefix_steps=4, taper_steps=0, seam_steps=1, seam_noise_cap=0.0)
+    clean.denoise_mask_function(torch.tensor(1.0), packed, {})
+    assert clean.current_video_mask[0, 0, 3, 0, 0].item() == 0.0
+    assert clean.current_video_mask[0, 0, 2, 0, 0].item() > 0.75
+
+
 def test_drift_control_reports_original_and_current_pixel_resolution():
     context = _av_latent(video_steps=7, height=2, width=3)
     target = _av_latent(video_steps=12, height=4, width=5)

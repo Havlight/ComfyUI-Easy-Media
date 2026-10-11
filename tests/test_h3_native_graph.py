@@ -103,6 +103,35 @@ def test_native_matched_drift_removes_the_clean_seam_taper(monkeypatch, mode, op
     assert [n["inputs"]["seam_taper_steps"] for n in high] == ([0] if mode == "selflift" else [])
     plans = [json.loads(n["inputs"]["plan_json"]) for n in graph.values() if n["class_type"] == "easy h3NativePrepare"]
     assert plans[1]["continuity_mode"] == "context_drift_matched" and plans[1]["context_frames"] == 39
+    assert all("seam_steps" not in n["inputs"] for n in [*swaps, *high])
+
+
+@pytest.mark.parametrize("mode,options", [("single", {}), ("selflift", {"lowres_scale": [0.6]})])
+def test_native_matched_drift_passes_task_seam_settings(monkeypatch, mode, options):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs(mode, **options)
+    inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"].update(
+        continuity_mode="context_drift_matched", drift_seam_steps=2, drift_seam_noise=0.3)
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    drift_nodes = [n for n in graph.values() if n["class_type"] in {"easy MiniMaxH3ContextSwap", "easy h3NativeDriftModel"}]
+    assert drift_nodes and all(
+        (n["inputs"]["seam_taper_steps"], n["inputs"]["seam_steps"], n["inputs"]["seam_noise_cap"]) == (0, 2, 0.3)
+        for n in drift_nodes)
+
+
+def test_native_seam_settings_are_ignored_outside_matched_drift_and_validated(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs()
+    inputs["tracks_info"][0]["tracks"][0]["segments"][1]["content"].update(
+        continuity_mode="context_drift", drift_seam_steps=2, drift_seam_noise=0.3)
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    swap = next(n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap")
+    assert "seam_steps" not in swap["inputs"] and "seam_taper_steps" not in swap["inputs"]
+    bad = native_inputs()
+    bad["tracks_info"][0]["tracks"][0]["segments"][1]["content"].update(
+        continuity_mode="context_drift_matched", drift_seam_steps=5)
+    with pytest.raises(ValueError, match="DRIFT_SEAM_VALUE"):
+        module.EasyMultiTrackProject.execute(**bad)
 
 
 def test_native_runtime_nodes_save_full_raw_and_load_only_legal_context(monkeypatch, tmp_path):

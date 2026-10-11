@@ -1041,6 +1041,26 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                         "schedule too and is clean only at the final sigma."
                     ),
                 ),
+                io.Int.Input(
+                    "seam_steps",
+                    default=0,
+                    min=0,
+                    max=4,
+                    optional=True,
+                    tooltip=(
+                        "Prefix steps beside the seam whose noise is capped at seam_noise_cap, "
+                        "so they show pose and motion early. 0 leaves them on the schedule."
+                    ),
+                ),
+                io.Float.Input(
+                    "seam_noise_cap",
+                    default=0.5,
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    optional=True,
+                    tooltip="Maximum noise of the seam steps; 0 keeps them clean like Drift-Control.",
+                ),
             ],
             outputs=[
                 io.Model.Output("model"),
@@ -1062,6 +1082,8 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
         continue_audio: bool = True,
         freeze_audio: bool = False,
         seam_taper_steps: int = 4,
+        seam_steps: int = 0,
+        seam_noise_cap: float = 0.5,
     ) -> io.NodeOutput:
         _ = seed
         patched_model, prepared_latent, trim_frames = (
@@ -1074,6 +1096,8 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                 continue_audio=continue_audio,
                 freeze_audio=freeze_audio,
                 taper_steps=int(seam_taper_steps),
+                seam_steps=int(seam_steps),
+                seam_noise_cap=float(seam_noise_cap),
             )
         )
         return io.NodeOutput(patched_model, prepared_latent, trim_frames)

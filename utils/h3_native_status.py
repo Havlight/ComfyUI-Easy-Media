@@ -5,7 +5,8 @@ import hashlib
 import json
 from typing import Any
 
-from .h3_native_timing import compile_native_plan, native_task_segments
+from .h3_drift_seam import effective_drift_seam
+from .h3_native_timing import NativePlanError, compile_native_plan, native_task_segments
 
 
 def _content_fields(value: Any) -> Any:
@@ -23,7 +24,14 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
     """Ignore editor-only labels and selected prompt variants' inactive text."""
     variant = str(content.get('user_prompt_variant', 'a')).lower()
     prompt = content.get('user_prompt_b', '') if variant == 'b' else content.get('user_prompt', content.get('text', ''))
+    # Only an active seam setting changes the signature, so existing versions stay current.
+    try:
+        drift_seam = effective_drift_seam(content)
+    except NativePlanError:
+        drift_seam = repr((content.get('drift_seam_steps'), content.get('drift_seam_noise')))
     return {key: value for key, value in {
+        **({'drift_seam': list(drift_seam) if isinstance(drift_seam, tuple) else drift_seam}
+           if drift_seam is not None else {}),
         'task_mode': content.get('task_mode', 'default'),
         'continuity_mode': {'context_swap': 'context_drift', 'context_test': 'context'}.get(content.get('continuity_mode'), content.get('continuity_mode', 'shot')),
         'prompt': str(prompt or '').replace('@', ''),

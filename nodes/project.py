@@ -16,6 +16,7 @@ from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_pr
 from ..utils.h3_previous_frame import previous_frame_position
 from ..utils.h3_native_status import native_task_fingerprint
 from ..utils.h3_segment_loras import normalize_lora_plan
+from ..utils.h3_drift_seam import effective_drift_seam
 from ..utils.h3_lora_preflight import compile_project_loras
 from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
 from ..utils.h3_project import (
@@ -1231,6 +1232,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     raise NativePlanError("LOCK_VIDEO_RANGE", "Locked video must cover the complete raw window, including the 39-frame context. Extend the source or start a Shot.", native_plans[task_index].segment_id)
             if previous_frame_position(entry.get("task", {}).get("content", {})) is not None and not native_config["allow_vae_fallback"]:
                 raise NativePlanError("GENERATED_IMAGE", "Previous-frame references encode generated pixels. Remove that reference or allow VAE fallback.", native_plans[task_index].segment_id)
+            effective_drift_seam(entry.get("task", {}).get("content", {}), native_plans[task_index].segment_id)
         if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only and not native_config["allow_vae_fallback"]:
             raise NativePlanError("PIXEL_UPSCALE", "Dual pixel upscale re-encodes generated video. Select a latent upscaler, use upscale_by=1, or allow VAE fallback.")
         if not uses_linked_prepare and audio_vae is None:
@@ -1477,7 +1479,13 @@ class EasyMultiTrackProject(io.ComfyNode):
                 continuity_mode = "context"
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
             uses_swap = continuity_mode in {"context_drift", "context_drift_matched", "context_swap"}
-            drift_taper_inputs = H3_MATCHED_DRIFT_TAPER if continuity_mode == "context_drift_matched" else {}
+            drift_taper_inputs: dict[str, Any] = {}
+            if continuity_mode == "context_drift_matched":
+                drift_seam = effective_drift_seam(content, native_plans[task_index].segment_id)
+                drift_taper_inputs = {
+                    **H3_MATCHED_DRIFT_TAPER,
+                    **({"seam_steps": drift_seam[0], "seam_noise_cap": drift_seam[1]} if drift_seam else {}),
+                }
             task_images = task_output.out(4)
             previous_frame_source = None
             previous_position = previous_frame_position(content)

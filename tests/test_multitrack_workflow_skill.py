@@ -301,6 +301,34 @@ def test_rejects_unknown_task_continuity_mode(patch_workflow_module):
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
 
 
+@pytest.mark.parametrize("field,value,valid", [
+    ("drift_seam_steps", 2, True), ("drift_seam_steps", 0, True), ("drift_seam_steps", 5, False),
+    ("drift_seam_steps", 1.5, False), ("drift_seam_noise", 0.7, True), ("drift_seam_noise", 1.5, False),
+    ("drift_seam_noise", float("nan"), False),
+])
+def test_validates_matched_drift_seam_settings(patch_workflow_module, field, value, valid):
+    track_data = {
+        "frame_rate": 24,
+        "total_length": 24,
+        "tracks": [{
+            "id": "tasks",
+            "type": "task",
+            "segments": [{
+                "id": "task-1",
+                "start_frame": 0,
+                "end_frame": 24,
+                "content": {"images": [], "continuity_mode": "context_drift_matched", field: value},
+            }],
+        }],
+    }
+
+    if valid:
+        patch_workflow_module.validate_track_data(track_data, recalculate=False)
+        return
+    with pytest.raises(patch_workflow_module.WorkflowError, match=field):
+        patch_workflow_module.validate_track_data(track_data, recalculate=False)
+
+
 def test_shared_media_accepts_task_images_audio_video_and_legacy_audio(
     patch_workflow_module,
 ):

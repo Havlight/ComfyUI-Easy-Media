@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import re
 import sys
@@ -371,6 +372,20 @@ def validate_track_data(
                     )
                 if continuity_mode == "context_swap":
                     content["continuity_mode"] = "context_drift"
+            if track_type == "task" and "drift_seam_steps" in content:
+                # Keep these ranges in sync with utils/h3_drift_seam.py.
+                steps = content.get("drift_seam_steps")
+                if isinstance(steps, bool) or not isinstance(steps, int) or not 0 <= steps <= 4:
+                    raise WorkflowError(f"{where}.content.drift_seam_steps must be a whole number from 0 to 4")
+            if track_type == "task" and "drift_seam_noise" in content:
+                noise = content.get("drift_seam_noise")
+                if (
+                    isinstance(noise, bool)
+                    or not isinstance(noise, (int, float))
+                    or not math.isfinite(noise)
+                    or not 0.0 <= noise <= 1.0
+                ):
+                    raise WorkflowError(f"{where}.content.drift_seam_noise must be a number from 0 to 1")
             if "shared_reference" in content:
                 if not isinstance(content.get("shared_reference"), bool):
                     raise WorkflowError(
