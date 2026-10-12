@@ -828,6 +828,51 @@ describe('PreviewArea', () => {
     expect(screen.queryByTestId('task-continuity-mode-select')).toBeNull()
   })
 
+  it('clears Drift taper settings when the active task continuity changes away from Drift', () => {
+    const { data } = trackData()
+    addActiveTaskTrack(data)
+    Object.assign(data.tracks[0].segments[1].content, {
+      continuity_mode: 'context_drift',
+      drift_taper_steps: 3,
+      drift_taper_floor: 0.25,
+    })
+    const onTrackSegmentsContentChange = vi.fn()
+    const props = {
+      selectedSegment: null,
+      isPlaying: false,
+      currentTime: 36,
+      node: { widgets: [{ name: 'format', value: 'MiniMax' }] },
+      onGlobalSettingsChange: vi.fn(),
+      onSelectedSegmentContentChange: vi.fn(),
+      onTrackSegmentsContentChange,
+      onSelectedSegmentDurationChange: vi.fn(),
+    }
+    const view = render(<PreviewArea {...props} data={data} />)
+
+    fireEvent.click(screen.getByTestId('task-continuity-mode-select'))
+    fireEvent.click(screen.getByRole('option', { name: 'Context' }))
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([{
+      segmentId: 'active-task',
+      patch: {
+        continuity_mode: 'context',
+        drift_taper_steps: undefined,
+        drift_taper_floor: undefined,
+        drift_taper_low_only: undefined,
+      },
+    }])
+
+    const { data: contextData } = trackData()
+    addActiveTaskTrack(contextData)
+    contextData.tracks[0].segments[1].content.continuity_mode = 'context'
+    view.rerender(<PreviewArea {...props} data={contextData} />)
+    fireEvent.click(screen.getByTestId('task-continuity-mode-select'))
+    fireEvent.click(screen.getByRole('option', { name: 'Drift Control Context' }))
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([{
+      segmentId: 'active-task',
+      patch: { continuity_mode: 'context_drift' },
+    }])
+  })
+
   it('hides continuity for an active passthrough task', () => {
     const { data } = trackData()
     addActiveTaskTrack(data)

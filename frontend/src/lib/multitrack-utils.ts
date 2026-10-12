@@ -11,6 +11,7 @@ import type {
   TrackData,
 } from '@/types/multitrack'
 import { uuid } from './uuid'
+import { MATCHED_DRIFT_ALIAS, normalizeDriftTaperContent } from './h3-drift-taper'
 import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
 
@@ -394,7 +395,7 @@ function normalizeTaskMode(value: unknown): MultiTrackTaskMode {
 }
 
 function normalizeContinuityMode(value: unknown): MultiTrackContinuityMode {
-  if (value === 'context_swap') return 'context_drift'
+  if (value === 'context_swap' || value === MATCHED_DRIFT_ALIAS) return 'context_drift'
   if (value === 'context_test') return 'context'
   if (value === 'context_masked') return 'context_masked' // Preserve retired tasks until the user chooses a method.
   return typeof value === 'string' && (MULTITRACK_CONTINUITY_MODES as readonly string[]).includes(value)
@@ -1693,7 +1694,8 @@ function normalizeTaskSegmentContent(content: MultiTrackSegment['content']): Mul
     normalized.user_prompt = normalized.text
   }
   delete normalized.text
-  return normalized
+  // Cleared taper settings arrive as undefined from spread patches; drop them with invalid values.
+  return normalizeDriftTaperContent(normalized, content.continuity_mode === MATCHED_DRIFT_ALIAS)
 }
 
 function normalizeTotalLength(tracks: MultiTrack[], frameRate: number): number {

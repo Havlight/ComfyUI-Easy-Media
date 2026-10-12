@@ -16,6 +16,7 @@ from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_pr
 from ..utils.h3_previous_frame import previous_frame_position
 from ..utils.h3_native_status import native_task_fingerprint
 from ..utils.h3_segment_loras import normalize_lora_plan
+from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, MATCHED_DRIFT_ALIAS, drift_stage_taper, drift_taper
 from ..utils.h3_lora_preflight import compile_project_loras
 from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
 from ..utils.h3_project import (
@@ -1229,6 +1230,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     raise NativePlanError("LOCK_VIDEO_RANGE", "Locked video must cover the complete raw window, including the 39-frame context. Extend the source or start a Shot.", native_plans[task_index].segment_id)
             if previous_frame_position(entry.get("task", {}).get("content", {})) is not None and not native_config["allow_vae_fallback"]:
                 raise NativePlanError("GENERATED_IMAGE", "Previous-frame references encode generated pixels. Remove that reference or allow VAE fallback.", native_plans[task_index].segment_id)
+            drift_taper(entry.get("task", {}).get("content", {}), native_plans[task_index].segment_id)
         if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only and not native_config["allow_vae_fallback"]:
             raise NativePlanError("PIXEL_UPSCALE", "Dual pixel upscale re-encodes generated video. Select a latent upscaler, use upscale_by=1, or allow VAE fallback.")
         if not uses_linked_prepare and audio_vae is None:
@@ -1471,10 +1473,19 @@ class EasyMultiTrackProject(io.ComfyNode):
                 if isinstance(content, dict)
                 else "shot"
             )
-            if continuity_mode == "context_test":
-                continuity_mode = "context"
+            taper = drift_taper(content, native_plans[task_index].segment_id)
+            continuity_mode = {"context_test": "context", MATCHED_DRIFT_ALIAS: "context_drift"}.get(
+                continuity_mode, continuity_mode)
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
             uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            # The default taper keeps the original Drift graphs; low-only tapers
+            # leave the high-resolution stage on the plain schedule.
+            drift_low_inputs: dict[str, Any] = {}
+            drift_high_inputs: dict[str, Any] = {}
+            if uses_swap and taper is not None and taper != DEFAULT_DRIFT_TAPER:
+                drift_low_inputs, drift_high_inputs = (
+                    {"seam_taper_steps": stage.steps, "seam_taper_floor": stage.floor}
+                    for stage in (taper, drift_stage_taper(taper, high_resolution=True)))
             task_images = task_output.out(4)
             previous_frame_source = None
             previous_position = previous_frame_position(content)
@@ -1615,6 +1626,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                         seed=(first_pass_seed + task_index) & 0xFFFFFFFFFFFFFFFF,
                         continue_audio=True,
                         freeze_audio=False,
+                        **drift_low_inputs,
                     )
                     first_pass_sampling_model = context_swap.out(0)
                     initial_latent = context_swap.out(1)
@@ -1670,7 +1682,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 if has_context_continuity and uses_swap:
                     selflift_inputs["highres_model"] = graph.node(
                         "easy h3NativeDriftModel", id=f"native_selflift_high_drift_{task_index}",
-                        model=task_second_model, latent=initial_latent, sigmas=first_pass_sigmas).out(0)
+                        model=task_second_model, latent=initial_latent, sigmas=first_pass_sigmas,
+                        **drift_high_inputs).out(0)
                 if has_sampling_preview:
                     selflift_inputs.update({
                         "preview_vae": preview_vae,
@@ -1825,18 +1838,25 @@ class EasyMultiTrackProject(io.ComfyNode):
                     and previous_hires_context_latent is not None
                 ):
                     report_segment_step(0.59)
-                    # Second pass is deliberately kept as an ordinary hi-res refine path.
-                    # No context noise, no split-prior, and no Drift-Control patching here.
+                    # Drift tasks copy the whole hi-res context and release it with the
+                    # pass-two schedule like SelfLift's high stage. Plain context, and
+                    # pass two without noise to release into, hard-pin the boundary.
+                    hires_drift = uses_swap and not audio_only and not disable_2nd_noise
                     hires_continuity = graph.node(
                         "easy MiniMaxH3HiResContinuity",
                         id=f"hires_continuity_{task_index}",
                         current_hires_latent=upscaled_latent,
                         previous_hires_latent=previous_hires_context_latent,
                         context_length=str(context_source_frames),
-                        video_transition_steps=4,
-                        video_anchor_only=not audio_only,
+                        video_transition_steps=0 if hires_drift else 4,
+                        video_anchor_only=not audio_only and not hires_drift,
                     )
                     upscaled_latent = hires_continuity.out(0)
+                    if hires_drift:
+                        second_pass_sampling_model = graph.node(
+                            "easy h3NativeDriftModel", id=f"native_second_pass_drift_{task_index}",
+                            model=task_second_model, latent=upscaled_latent, sigmas=segment_second_pass_sigmas,
+                            **drift_high_inputs).out(0)
 
                 if native_lock_inputs is not None:
                     upscaled_latent = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",

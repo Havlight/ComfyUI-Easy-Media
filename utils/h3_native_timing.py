@@ -13,6 +13,8 @@ CONTEXT_FRAMES = 39
 FRAME_STEP = 17
 MAX_RAW_FRAMES = 3592
 CONTINUITY_MODES = frozenset({"shot", "context", "context_drift", "context_masked"})
+# Legacy names; a former matched-Drift task keeps its schedule through its taper.
+CONTINUITY_ALIASES = {"context_swap": "context_drift", "context_drift_matched": "context_drift"}
 
 
 class NativePlanError(ValueError):
@@ -94,7 +96,7 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
             raise NativePlanError("RANGE", "Use nonnegative integer half-open frame ranges.", sid)
         content = segment.get("content", {})
         mode = content.get("continuity_mode", "shot")
-        mode = "context_drift" if mode == "context_swap" else mode
+        mode = CONTINUITY_ALIASES.get(mode, mode)
         if mode not in CONTINUITY_MODES:
             raise NativePlanError("METHOD", f"Unsupported continuation method: {mode}.", sid)
         passthrough = content.get("task_mode") == "passthrough"
@@ -181,7 +183,7 @@ def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
             raise NativePlanError("RANGE", "Use nonnegative integer half-open frame ranges.", sid)
         content = task.setdefault("content", {})
         mode = content.get("continuity_mode", "shot")
-        mode = {"context_swap": "context_drift", "context_test": "context"}.get(mode, mode)
+        mode = {**CONTINUITY_ALIASES, "context_test": "context"}.get(mode, mode)
         passthrough = content.get("task_mode") == "passthrough"
         continuation = previous is not None and mode != "shot" and not passthrough
         duration = end - start
@@ -195,6 +197,9 @@ def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
         if track.get("locked") and (new_start != start or new_end != end or new_mode != content.get("continuity_mode", "shot")):
             raise NativePlanError("TRACK_LOCKED", "Unlock the task track before aligning its timing.", sid)
         task.update(start_frame=new_start, end_frame=new_end)
+        if content.get("continuity_mode") == "context_drift_matched":
+            # Renaming the alias must not change its schedule.
+            content.setdefault("drift_taper_steps", 0)
         content["continuity_mode"] = new_mode
         previous = task
         shift = new_end - end

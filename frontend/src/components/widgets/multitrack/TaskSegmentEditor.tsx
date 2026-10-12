@@ -23,6 +23,21 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { MediaSelector } from '@/components/widgets/mediaSelector/MediaSelector'
 import type { MediaTab } from '@/components/widgets/mediaSelector/MediaSelector'
 import { useT } from '@/lib/i18n'
+import {
+  continuityModeChangePatch,
+  driftTaperFloorOptions,
+  driftTaperFloorPatch,
+  driftTaperLowOnlyPatch,
+  driftTaperStepOptions,
+  driftTaperStepsPatch,
+  formatDriftTaperFloorLabel,
+  formatDriftTaperStepsLabel,
+  getDriftTaperFloor,
+  getDriftTaperLowOnly,
+  getDriftTaperSteps,
+  isDriftTaperEligible,
+  parseDriftTaperOptionValue,
+} from '@/lib/h3-drift-taper'
 import { isH3Continuation, parseH3Seconds, snapH3NativeDuration } from '@/lib/h3-native-timing'
 import type { H3NativePolicy } from '@/types/multitrack'
 import { mediaContentToViewUrl } from '@/lib/media-url'
@@ -280,6 +295,15 @@ export function TaskSegmentEditor({
     item.start_frame < first.start_frame ? item : first
   )).id
   const hasSelectedContinuityTargets = selectedSegments?.some((item) => item.id !== firstTaskSegmentId) === true
+  const showDriftTaperControls = isDriftTaperEligible({
+    format,
+    taskMode: mode,
+    continuityMode,
+    hasContinuityTarget: taskIndex > 0 || hasSelectedContinuityTargets,
+  })
+  const driftTaperSteps = getDriftTaperSteps(segment.content)
+  const driftTaperFloor = getDriftTaperFloor(segment.content)
+  const driftTaperLowOnly = getDriftTaperLowOnly(segment.content)
   const promptVariant: MultiTrackUserPromptVariant = segment.content.user_prompt_variant === 'b' ? 'b' : 'a'
   const promptValue = editMode === 'combined'
     ? combinedPromptInput
@@ -571,9 +595,19 @@ export function TaskSegmentEditor({
     onTrackSegmentsContentChange(selectedSegments.map((item) => ({
       segmentId: item.id,
       patch: patch.continuity_mode !== undefined && item.id === firstTaskSegmentId
-        ? { ...patch, continuity_mode: MULTITRACK_DEFAULT_CONTINUITY_MODE }
+        ? { ...patch, ...continuityModeChangePatch(MULTITRACK_DEFAULT_CONTINUITY_MODE) }
         : patch,
     })))
+  }
+
+  function handleDriftTaperStepsChange(value: string) {
+    const steps = parseDriftTaperOptionValue(value)
+    if (steps !== undefined) handleDropdownContentChange(driftTaperStepsPatch(steps))
+  }
+
+  function handleDriftTaperFloorChange(value: string) {
+    const patch = driftTaperFloorPatch(parseDriftTaperOptionValue(value))
+    if (patch) handleDropdownContentChange(patch)
   }
 
   function handleDeleteImage(imageId: string) {
@@ -1272,9 +1306,9 @@ export function TaskSegmentEditor({
           {format === 'MiniMax' && mode !== 'passthrough' && (taskIndex > 0 || hasSelectedContinuityTargets || continuityMode === 'context_masked') && (
             <Select
               value={continuityMode}
-              onValueChange={(value) => handleDropdownContentChange({
-                continuity_mode: value as MultiTrackContinuityMode,
-              })}
+              onValueChange={(value) => handleDropdownContentChange(
+                continuityModeChangePatch(value as MultiTrackContinuityMode),
+              )}
             >
               <TooltipProvider delayDuration={300}>
                 <Tooltip>
@@ -1295,6 +1329,76 @@ export function TaskSegmentEditor({
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityOption}`)}</span>
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+          )}
+          {showDriftTaperControls && (
+            <Select value={String(driftTaperSteps)} onValueChange={handleDriftTaperStepsChange}>
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SelectTrigger aria-label={t('multitrack.driftTaperSteps')} className="h-8 w-24 bg-card text-[10px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {t('multitrack.driftTaperStepsTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <SelectContent>
+                {driftTaperStepOptions(driftTaperSteps).map((stepsOption) => (
+                  <SelectItem key={stepsOption} value={String(stepsOption)}>
+                    <span className="text-[10px]">{formatDriftTaperStepsLabel(t, stepsOption)}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {showDriftTaperControls && driftTaperSteps > 0 && (
+            <Select value={String(driftTaperFloor)} onValueChange={handleDriftTaperFloorChange}>
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SelectTrigger aria-label={t('multitrack.driftTaperFloor')} className="h-8 w-24 bg-card text-[10px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {t('multitrack.driftTaperFloorTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <SelectContent>
+                {driftTaperFloorOptions(driftTaperFloor).map((floorOption) => (
+                  <SelectItem key={floorOption} value={String(floorOption)}>
+                    <span className="text-[10px]">{formatDriftTaperFloorLabel(t, floorOption)}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {showDriftTaperControls && driftTaperSteps > 0 && (
+            <Select value={driftTaperLowOnly ? 'low' : 'all'} onValueChange={(value) => handleDropdownContentChange(driftTaperLowOnlyPatch(value === 'low'))}>
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SelectTrigger aria-label={t('multitrack.driftTaperStage')} className="h-8 w-24 bg-card text-[10px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-72">
+                    {t('multitrack.driftTaperStageTooltip')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <SelectContent>
+                <SelectItem value="all">
+                  <span className="text-[10px]">{t('multitrack.driftTaperStageAll')}</span>
+                </SelectItem>
+                <SelectItem value="low">
+                  <span className="text-[10px]">{t('multitrack.driftTaperStageLow')}</span>
+                </SelectItem>
               </SelectContent>
             </Select>
           )}

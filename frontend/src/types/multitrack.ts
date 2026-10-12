@@ -8,7 +8,8 @@ export interface H3NativePolicy {
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
-export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_swap' | 'context_masked'
+// context_swap and context_drift_matched are legacy names that normalize to context_drift.
+export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_drift_matched' | 'context_swap' | 'context_masked'
 
 export type MultiTrackRefImageSize = 'match' | 'max'
 
@@ -56,6 +57,12 @@ export interface MultiTrackSegmentContent {
   system_prompt?: string
   task_mode?: MultiTrackTaskMode
   continuity_mode?: MultiTrackContinuityMode
+  /** Drift only: context steps beside the seam that taper to the floor weight, 0..12. Absent means 4; 0 tapers none. */
+  drift_taper_steps?: number
+  /** Drift only: weight of the step beside the seam, 0..1. Absent means 0, a clean seam. */
+  drift_taper_floor?: number
+  /** Drift only: keep the high-resolution stage on the plain schedule. Stored only when true. */
+  drift_taper_low_only?: boolean
   ref_image_size?: MultiTrackRefImageSize
   images?: MultiTrackTaskImage[]
   duration?: number

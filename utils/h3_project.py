@@ -262,7 +262,7 @@ def _h3_continuity_mode(value: Any) -> str:
     normalized = str(value or "shot").lower()
     if normalized == "context_test":
         return "context"
-    if normalized == "context_swap":
+    if normalized in {"context_swap", "context_drift_matched"}:
         return "context_drift"
     return normalized if normalized in {"context", "context_drift", "context_masked"} else "shot"
 

@@ -40,6 +40,8 @@ import {
   updateMultiTrackSegmentContent,
   updateMultiTrackSegmentDuration,
 } from '@/lib/multitrack-utils'
+import { continuityModeChangePatch, driftTaperStepsPatch } from '@/lib/h3-drift-taper'
+import type { MultiTrackSegment } from '@/types/multitrack'
 
 describe('multitrack utilities', () => {
   it('merges consecutive selected task segments using the first segment with prompt or active images', () => {
@@ -1493,6 +1495,92 @@ describe('multitrack utilities', () => {
     const normalized = normalizeTrackData(data)
 
     expect(normalized.tracks[0].segments[0].content.continuity_mode).toBe('context_drift')
+    const matched = normalizeTrackData({
+      ...data,
+      tracks: data.tracks.map((track) => ({
+        ...track,
+        segments: track.segments.map((segment) => ({
+          ...segment,
+          content: {
+            ...segment.content,
+            continuity_mode: 'context_drift_matched' as const,
+            drift_seam_steps: 2,
+            drift_seam_noise: 0.3,
+          } as MultiTrackSegment['content'],
+        })),
+      })),
+    })
+    // The former matched mode is Drift without a taper; its seam-cap fields are obsolete.
+    expect(matched.tracks[0].segments[0].content).toMatchObject({ continuity_mode: 'context_drift', drift_taper_steps: 0 })
+    expect(JSON.stringify(matched)).not.toContain('drift_seam')
+  })
+
+  it('keeps valid non-default Drift taper settings and drops the rest while normalizing', () => {
+    const data = createDefaultTrackData()
+    const taperValues: Array<[unknown, unknown, unknown, string?]> = [
+      [3, 0.25, true],
+      [0, 0.5, undefined],
+      [12, 1, false],
+      [4, 0, false],
+      [13, -0.1, 'yes'],
+      [1.5, 1.2, 1],
+      ['2', '0.5', null],
+      [3, 0.25, true, 'context'],
+    ]
+    data.tracks[0].segments = taperValues.map(([steps, floor, lowOnly, mode], index) => ({
+      id: `taper-${index}`,
+      start_frame: index * 24,
+      end_frame: (index + 1) * 24,
+      color: data.tracks[0].color,
+      content: {
+        media_type: 'none',
+        continuity_mode: mode ?? 'context_drift',
+        drift_taper_steps: steps,
+        drift_taper_floor: floor,
+        drift_taper_low_only: lowOnly,
+      },
+    } as unknown as MultiTrackSegment))
+
+    const contents = normalizeTrackData(data).tracks[0].segments.map((segment) => segment.content)
+
+    expect(contents.map((content) => [
+      content.drift_taper_steps, content.drift_taper_floor, content.drift_taper_low_only,
+    ])).toEqual([
+      [3, 0.25, true],
+      [0, 0.5, undefined],
+      [12, 1, undefined],
+      [undefined, undefined, undefined],
+      [undefined, undefined, undefined],
+      [undefined, undefined, undefined],
+      [undefined, undefined, undefined],
+      [undefined, undefined, undefined],
+    ])
+    contents.slice(3).forEach((content) => {
+      expect(Object.keys(content).filter((key) => key.startsWith('drift_taper'))).toEqual([])
+    })
+  })
+
+  it('removes cleared taper keys from the serialized track data', () => {
+    const data = createDefaultTrackData()
+    data.tracks[0].segments = [{
+      id: 'drift-task',
+      start_frame: 0,
+      end_frame: 120,
+      color: data.tracks[0].color,
+      content: {
+        media_type: 'none',
+        continuity_mode: 'context_drift',
+        drift_taper_steps: 3,
+        drift_taper_floor: 0.25,
+      },
+    }]
+    const saved = normalizeTrackData(data)
+    expect(saved.tracks[0].segments[0].content).toMatchObject({ drift_taper_steps: 3, drift_taper_floor: 0.25 })
+
+    const reset = normalizeTrackData(updateMultiTrackSegmentContent(saved, 'drift-task', driftTaperStepsPatch(4)))
+    expect('drift_taper_steps' in reset.tracks[0].segments[0].content).toBe(false)
+    const left = normalizeTrackData(updateMultiTrackSegmentContent(saved, 'drift-task', continuityModeChangePatch('context')))
+    expect(JSON.stringify(left)).not.toContain('drift_taper')
   })
 
   it('does not add a default task segment when the range already has task coverage', () => {

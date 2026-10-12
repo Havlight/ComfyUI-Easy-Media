@@ -1029,6 +1029,31 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                         "continuity, but the default project patch uses ordinary hi-res refine."
                     ),
                 ),
+                io.Int.Input(
+                    "seam_taper_steps",
+                    default=4,
+                    min=0,
+                    max=12,
+                    optional=True,
+                    tooltip=(
+                        "Prefix latent steps beside the seam that taper toward seam_taper_floor. "
+                        "4 with floor 0 is Drift-Control; 0 is matched Drift, where every step "
+                        "follows the schedule and the seam is clean only at the final sigma."
+                    ),
+                ),
+                io.Float.Input(
+                    "seam_taper_floor",
+                    default=0.0,
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                    optional=True,
+                    tooltip=(
+                        "Weight of the step beside the seam; a step with weight w carries w times "
+                        "the next sigma's noise. 0 keeps the seam clean; higher values copy less "
+                        "of the previous segment's look but pin composition more weakly."
+                    ),
+                ),
             ],
             outputs=[
                 io.Model.Output("model"),
@@ -1049,6 +1074,8 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
         seed: int = 0,
         continue_audio: bool = True,
         freeze_audio: bool = False,
+        seam_taper_steps: int = 4,
+        seam_taper_floor: float = 0.0,
     ) -> io.NodeOutput:
         _ = seed
         patched_model, prepared_latent, trim_frames = (
@@ -1060,6 +1087,8 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                 context_length=context_length,
                 continue_audio=continue_audio,
                 freeze_audio=freeze_audio,
+                taper_steps=int(seam_taper_steps),
+                taper_floor=float(seam_taper_floor),
             )
         )
         return io.NodeOutput(patched_model, prepared_latent, trim_frames)

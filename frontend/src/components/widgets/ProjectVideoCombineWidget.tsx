@@ -920,6 +920,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                                 ? 'projectVideoCombine.continuityShot'
                                 : clip.continuity_mode === 'context_masked' ? 'projectVideoCombine.continuityContextMasked'
                                 : clip.continuity_mode === 'context_drift' || clip.continuity_mode === 'context_swap'
+                                  || clip.continuity_mode === 'context_drift_matched'
                                   ? 'projectVideoCombine.continuityContextDrift'
                                   : 'projectVideoCombine.continuityContext'),
                             })}

@@ -125,7 +125,8 @@ custom 示例：
 ```
 
 - `task_mode`: `default`、`l2v`、`ref`、`edit`。
-- `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）或 `context_drift`（上下文漂移控制）；旧值 `context_swap` 仍可读取。
+- `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）或 `context_drift`（上下文漂移控制）；旧值 `context_swap` 与 `context_drift_matched`（视为不渐变的漂移控制）仍可读取。
+- `drift_taper_steps`（可选，0–12 的整数，默认 4）、`drift_taper_floor`（可选，0–1，默认 0）与 `drift_taper_low_only`（可选布尔值，默认 false）：仅对 `context_drift` 生效，调整衔接处的渐变；4 步、权重 0 即原本的漂移控制，0 步为不渐变。保持默认值时删除字段；用户没有要求时不要添加。
 - `ref_image_size`: `match` 或 `max`。
 - `images` 最多 9 张，顺序决定 Picture 引用顺序。
 - 编辑已有任务时保留未要求改变的 `system_prompt`、prompt variant、连续性和参考图策略。

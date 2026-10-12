@@ -5,7 +5,8 @@ import hashlib
 import json
 from typing import Any
 
-from .h3_native_timing import compile_native_plan, native_task_segments
+from .h3_drift_taper import DEFAULT_DRIFT_TAPER, MATCHED_DRIFT_ALIAS, drift_taper
+from .h3_native_timing import NativePlanError, compile_native_plan, native_task_segments
 
 
 def _content_fields(value: Any) -> Any:
@@ -23,9 +24,16 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
     """Ignore editor-only labels and selected prompt variants' inactive text."""
     variant = str(content.get('user_prompt_variant', 'a')).lower()
     prompt = content.get('user_prompt_b', '') if variant == 'b' else content.get('user_prompt', content.get('text', ''))
+    # Only a non-default Drift taper changes the signature, so existing versions stay current.
+    try:
+        taper = drift_taper(content)
+    except NativePlanError:
+        taper = repr(tuple(content.get(key) for key in ('drift_taper_steps', 'drift_taper_floor', 'drift_taper_low_only')))
     return {key: value for key, value in {
+        **({'drift_taper': list(taper) if isinstance(taper, tuple) else taper}
+           if taper is not None and taper != DEFAULT_DRIFT_TAPER else {}),
         'task_mode': content.get('task_mode', 'default'),
-        'continuity_mode': {'context_swap': 'context_drift', 'context_test': 'context'}.get(content.get('continuity_mode'), content.get('continuity_mode', 'shot')),
+        'continuity_mode': {'context_swap': 'context_drift', 'context_test': 'context', MATCHED_DRIFT_ALIAS: 'context_drift'}.get(content.get('continuity_mode'), content.get('continuity_mode', 'shot')),
         'prompt': str(prompt or '').replace('@', ''),
         'ref_image_size': content.get('ref_image_size', 'match'),
         'images': [_content_fields(image)
