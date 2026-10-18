@@ -79,14 +79,15 @@ def test_later_retired_task_stops_whole_run(tmp_path):
     assert not (tmp_path / 'project.json').exists()
 
 
-def test_edited_parent_content_needs_regeneration(tmp_path):
+def test_edited_parent_content_still_continues_from_its_saved_latent(tmp_path):
+    # Prompt-level edits do not change the saved latent a continuation reads.
     plans = [_plan(), _plan('b', 243, 51, 'a')]
     _commit(tmp_path, _latent(), plans)
     manifest = artifacts.read_native_manifest(tmp_path)
     manifest['segments']['0']['generations']['0']['native_recipe'] = {'task_content': {'user_prompt': 'old'}}
-    with pytest.raises(timing.NativePlanError, match='PARENT_EDITED'):
-        preflight.preflight_native_sources(tmp_path, manifest, plans, [1], recipe(), set(),
-            [{'user_prompt': 'changed'}, {}], set())
+    state = preflight.preflight_native_sources(tmp_path, manifest, plans, [1], recipe(), set(),
+        [{'user_prompt': 'changed'}, {}], set())
+    assert 'a' in state['existing']
 
 
 def test_timeline_status_marks_edited_parent_and_descendants_without_changing_manifest(tmp_path):

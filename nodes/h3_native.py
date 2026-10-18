@@ -107,17 +107,15 @@ class EasyH3NativePreflight(io.ComfyNode):
                                        selected, model, second_model if second_model is not None else model)
         status = {item['segment_id']: item['status'] for item in native_timeline_status(tracks_info, manifest, loras['effects'])}
         selected_ids = {plans[i].segment_id for i in selected}
-        for index in loras['required']:
-            sid = plans[index].segment_id
-            if sid not in selected_ids and status.get(sid) in {'edited', 'parent_changed'}:
-                raise NativePlanError('PARENT_EDITED', f'Task {index + 1} or its source/LoRA settings changed; include it in this run.', sid)
-        for index in selected:
-            parent_ids = {plans[index].parent_segment_id}
-            if index in previous_frames and index:
-                parent_ids.add(plans[index - 1].segment_id)
-            for sid in parent_ids - selected_ids - {None}:
-                if status.get(sid) in {'edited', 'parent_changed'}:
-                    raise NativePlanError('PARENT_EDITED', 'The predecessor or its source changed; include it in this run.', sid)
+        # A continuation reads its predecessor's saved latent, so content, source and
+        # LoRA edits to unselected ancestors do not block it; include a task to redo it.
+        # Range, stage, size and stale-version mismatches still fail in the source preflight.
+        reused = [index + 1 for index in loras['required']
+                  if plans[index].segment_id not in selected_ids
+                  and status.get(plans[index].segment_id) in {'edited', 'parent_changed'}]
+        if reused:
+            logging.warning('H3 native: reusing saved task(s) %s although their timeline settings changed; '
+                            'include them in the run to regenerate them.', ', '.join(map(str, reused)))
         state = preflight_native_sources(directory, manifest, plans, selected,
                                          recipe, previous_frames, contents, passthrough)
         # Resolve every task's references before the first sampler. Reuse the
