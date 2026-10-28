@@ -1056,6 +1056,39 @@ describe('TaskSegmentEditor', () => {
     expect((chip as HTMLElement | null)?.style.color).toBe('var(--multitrack-task-bg)')
   })
 
+  it('lists MiniMax references as the plan numbers them and inserts official tags', () => {
+    const onContentChange = vi.fn()
+    const voice = { ...videoSegment(0, 3), id: 'voice', content: { media_type: 'audio' as const, file_path: 'voice.wav' } }
+    const hum = { ...videoSegment(0, 3), id: 'hum', content: { media_type: 'audio' as const, file_path: 'hum.wav' } }
+    render(
+      <TaskSegmentEditor
+        segment={taskSegment()}
+        format="MiniMax"
+        mediaTracks={[
+          mediaTrack('audio', [voice]),
+          { ...mediaTrack('audio', [hum]), id: 'muted-track', name: 'Muted track', muted: true },
+          mediaTrack('video', [videoSegment(0, 3)]),
+          { ...mediaTrack('video', [videoSegment(10, 20)]), id: 'later-video', name: 'Later video' },
+        ]}
+        onContentChange={onContentChange}
+      />,
+    )
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    inputEditable(prompt, '@')
+
+    // The video soundtrack takes Audio 1; muted and out-of-range tracks give no reference.
+    expect(screen.getByRole('option', { name: /Audio 1 Source video track soundtrack/ })).not.toBeNull()
+    expect(screen.getByRole('option', { name: /Audio 2 Voice track/ })).not.toBeNull()
+    expect(screen.getByRole('option', { name: /Video 1 Source video track/ })).not.toBeNull()
+    const menu = screen.getByRole('listbox', { name: 'Reference resources' })
+    expect(menu.textContent).not.toContain('Muted track')
+    expect(menu.textContent).not.toContain('Later video')
+
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+    expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '<Picture 1>' })
+  })
+
   it('shows the interactive MiniMax placeholder only for an empty prompt', () => {
     const onContentChange = vi.fn()
     const segment = taskSegment()
@@ -1067,14 +1100,14 @@ describe('TaskSegmentEditor', () => {
     )
 
     const prompt = screen.getByRole('textbox', { name: '提示词' })
-    expect(prompt.getAttribute('data-placeholder')).toBe('参考模式下最多支持9张图片，3个音频，3个视频， 输入文字或 @ 参考内容， 自由组合图、文、音，视频多元素，定义精彩互动。例如 @图片1 模仿 @视频1 的动作，音色参考 @音频1。')
+    expect(prompt.getAttribute('data-placeholder')).toBe('参考模式下最多支持9张图片，3个音频，3个视频， 输入文字或 @ 参考内容， 自由组合图、文、音，视频多元素，定义精彩互动。例如 <Picture 1> 模仿 <Video 1> 的动作，音色参考 <Audio 1>。')
     expect(prompt.textContent).toBe('')
 
     const placeholderTrigger = screen.getByRole('button', { name: '打开引用资源' })
     expect(placeholderTrigger.className).toContain('prompt-reference-chip')
     fireEvent.click(placeholderTrigger)
     fireEvent.click(screen.getByRole('option', { name: /图片1/ }))
-    expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '@图片1' })
+    expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '<Picture 1>' })
 
     rerender(
       <LocaleContext.Provider value="zh">

@@ -1193,6 +1193,7 @@ def test_schema_exposes_list_media_inputs_without_image_position(monkeypatch):
         "native_locked_video",
         "locked_video_timing_frames",
         "ref_image_size",
+        "video_soundtracks",
     ]
     assert inputs["audio_vae"].kwargs["optional"] is True
     assert inputs["mode"].kwargs["options"] == [
@@ -1527,7 +1528,7 @@ def test_h3_project_static_prepare_materializes_once_then_crops(monkeypatch):
 
     def prepare(info):
         prepared.append(info)
-        return info, [shared_image], [shared_audio], [shared_video], locked_audio
+        return info, [shared_image], {"shared:audio": shared_audio}, {"shared:video": shared_video}, locked_audio
 
     monkeypatch.setattr(project_module, "prepare_multitrack_project_media", prepare)
     monkeypatch.setattr(
@@ -1579,8 +1580,8 @@ def test_h3_project_static_prepare_materializes_once_then_crops(monkeypatch):
     )
     assert segment_result.values[1]["_preloaded_media"] == {
         "images": [shared_image],
-        "audio": [shared_audio],
-        "video": [shared_video],
+        "audio": {"shared:audio": shared_audio},
+        "video": {"shared:video": shared_video},
     }
     assert segment_result.values[8] is locked_audio
     assert restored_global.values[0]["shared_images"] is global_result.values[0]["shared_images"]
@@ -1666,8 +1667,8 @@ def test_multitrack_h3_project_prepends_shared_media_before_h3_conditioning(
         lambda info: (
             info,
             [shared_image],
-            [shared_audio],
-            [shared_video],
+            {"shared:audio": shared_audio},
+            {"shared:video": shared_video},
             None,
         ),
     )
@@ -1691,8 +1692,8 @@ def test_multitrack_h3_project_prepends_shared_media_before_h3_conditioning(
     preloaded_media = task_node["inputs"]["tracks_info"]["_preloaded_media"]
 
     assert preloaded_media["images"][0] is shared_image
-    assert preloaded_media["audio"][0] is shared_audio
-    assert preloaded_media["video"][0] is shared_video
+    assert preloaded_media["audio"]["shared:audio"] is shared_audio
+    assert preloaded_media["video"]["shared:video"] is shared_video
     assert conditioning["inputs"]["images"] == [task_node_id, 4]
     assert conditioning["inputs"]["audios"] == [task_node_id, 5]
     assert conditioning["inputs"]["videos"] == [task_node_id, 6]
@@ -4372,6 +4373,45 @@ def test_reference_bridge_groups_fixed_inputs_before_direct_execute(monkeypatch)
     assert list(calls[0]["ref_audios"]) == ["ref_audio_0"]
 
 
+def test_reference_bridge_applies_video_soundtrack_flags(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    calls = []
+
+    class _NativeReferenceNode:
+        @classmethod
+        def execute(cls, **kwargs):
+            calls.append(kwargs)
+            return _NodeOutput("conditioning", "latent")
+
+    module.comfy_nodes.NODE_CLASS_MAPPINGS["MiniMaxH3ReferenceToVideo"] = _NativeReferenceNode
+    audio = {"waveform": torch.ones(1, 1, 8), "sample_rate": 32000}
+    inputs = dict(clip=_Clip(), vae=_Vae(), audio_vae=_AudioVae(), prompt="prompt", width=32, height=32, length=5,
+                  ref_video_0=_image_values(0, 1, 2, 3, 4), ref_video_audio_0=audio,
+                  ref_video_1=_image_values(0, 1, 2, 3, 4))
+
+    module.EasyMiniMaxH3ReferenceToVideoBridge.execute(**inputs, video_soundtracks="0,1")
+    module.EasyMiniMaxH3ReferenceToVideoBridge.execute(**inputs)
+
+    # 0 drops a soundtrack; 1 keeps the label with silence when the video has none.
+    flagged, unflagged = calls
+    assert list(flagged["ref_video_audios"]) == ["ref_video_audio_1"]
+    silence = flagged["ref_video_audios"]["ref_video_audio_1"]
+    assert silence["sample_rate"] == 44100 and not silence["waveform"].any()
+    assert silence["waveform"].shape[-1] == round(5 * 44100 / 24)
+    assert list(unflagged["ref_video_audios"]) == ["ref_video_audio_0"]
+
+
+def test_reference_mode_forwards_video_soundtrack_flags(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    output = module.EasyMiniMaxH3ToVideo.execute(
+        **_base_inputs(mode=["reference"], audio_vae=[_AudioVae()], videos=[object(), object()],
+                       video_soundtracks=["1,0"]))
+    conditioning = next(node for node in output.expand.values()
+                        if node["class_type"] == module.REFERENCE_BRIDGE_NODE_ID)
+    assert conditioning["inputs"]["video_soundtracks"] == "1,0"
+    assert {"ref_video_audio_0", "ref_video_audio_1"} <= set(conditioning["inputs"])
+
+
 def test_reference_bridge_pads_video_tail_without_resizing(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     assert module is not None
@@ -4572,6 +4612,7 @@ def test_minimax_node_has_complete_chinese_localization():
         "height",
         "length",
         "ref_image_size",
+        "video_soundtracks",
     }
     assert translation["inputs"]["mode"]["options"] == {
         "reference": "参考生视频",

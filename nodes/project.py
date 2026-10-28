@@ -693,8 +693,8 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                 )
                 task_info = prepare_multitrack_project_task_info(
                     project_static["task_tracks_info_base"], project_static["shared_images"],
-                    task_audio if generation_mode == "reference" else [],
-                    task_video if generation_mode == "reference" else [],
+                    task_audio if generation_mode == "reference" else {},
+                    task_video if generation_mode == "reference" else {},
                     task_entry=next(
                         (entry for index, entry in enumerate(h3_task_entries(project_static["task_tracks_info_base"]))
                          if index == int(task_index)),
@@ -1419,8 +1419,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 )
                 task_tracks_info = prepare_multitrack_project_task_info(
                     task_tracks_info_base, shared_images,
-                    task_shared_audio if generation_mode == "reference" or task_is_passthrough else [],
-                    task_shared_video if generation_mode == "reference" or task_is_passthrough else [],
+                    task_shared_audio if generation_mode == "reference" or task_is_passthrough else {},
+                    task_shared_video if generation_mode == "reference" or task_is_passthrough else {},
                     task_entry=entry,
                 )
                 task_output = graph.node(
@@ -1506,6 +1506,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 conditioning_inputs.update({
                     "audios": task_output.out(5),
                     "videos": task_output.out(6),
+                    "video_soundtracks": task_output.out(9),
                 })
                 if fit_locked_video_timing:
                     raw_video_info = graph.node("easy h3NativeLockedVideoInfo", id=f"native_video_window_{task_index}",
@@ -1514,6 +1515,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     raw_video = graph.node("easy multiTrackTaskOutput", id=f"native_video_output_{task_index}",
                                            tracks_info=raw_video_info.out(0), task_index=0, prompt_format="default")
                     conditioning_inputs["videos"] = raw_video.out(6)
+                    conditioning_inputs["video_soundtracks"] = raw_video.out(9)
                     conditioning_inputs["locked_video_timing_frames"] = task_length
                     conditioning_inputs["native_locked_video"] = True
             encoded_conditioning = graph.node(

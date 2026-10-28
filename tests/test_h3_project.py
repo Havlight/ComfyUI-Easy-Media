@@ -110,15 +110,15 @@ def test_prepare_project_task_info_attaches_preloaded_media_without_mutation():
     result = prepare_multitrack_project_task_info(
         info,
         [image],
-        [audio],
-        [video],
+        {"shared:audio": audio},
+        {"shared:video": video},
     )
 
     assert "_preloaded_media" not in info
     assert result["_preloaded_media"] == {
         "images": [image],
-        "audio": [audio],
-        "video": [video],
+        "audio": {"shared:audio": audio},
+        "video": {"shared:video": video},
     }
 
 

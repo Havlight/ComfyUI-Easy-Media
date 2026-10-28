@@ -39,6 +39,7 @@ import {
   parseDriftTaperOptionValue,
 } from '@/lib/h3-drift-taper'
 import { isH3Continuation, parseH3Seconds, snapH3NativeDuration } from '@/lib/h3-native-timing'
+import { h3NextTaskStart, h3ReferenceLabels, planH3TaskReferences, type H3MediaReference } from '@/lib/h3-references'
 import type { H3NativePolicy } from '@/types/multitrack'
 import { mediaContentToViewUrl } from '@/lib/media-url'
 import { getSegmentTrackPresentation } from '@/lib/multitrack-segment-style'
@@ -319,7 +320,7 @@ export function TaskSegmentEditor({
         item.content.system_prompt ?? getDefaultSystemPromptForSegment(item, systemPromptOptions ?? [], videoSegments, format)
       )).join('|')
     : segment.content.system_prompt || systemPromptDefault
-  const promptResources = useMemo<PromptReferenceResource[]>(() => {
+  const genericPromptResources = useMemo<PromptReferenceResource[]>(() => {
     const imageResources = activeTaskImages(images).map((image, index) => ({
       id: `image:${image.id}`,
       type: 'image' as const,
@@ -388,6 +389,49 @@ export function TaskSegmentEditor({
     })
     return [...imageResources, ...videoAudioResources, ...audioResources, ...videoResources]
   }, [images, mediaTracks, t])
+  const referencePlan = useMemo(() => planH3TaskReferences(
+    mediaTracks, segment, h3NextTaskStart(trackSegments ?? [segment], segment),
+  ), [mediaTracks, segment, trackSegments])
+  const promptResources = useMemo<PromptReferenceResource[]>(() => {
+    if (format !== 'MiniMax') return genericPromptResources
+    const labels = h3ReferenceLabels(referencePlan)
+    const trackName = (reference: H3MediaReference) => mediaTracks.find((track) => track.id === reference.track_id)?.name ?? ''
+    const detail = (reference: H3MediaReference) => reference.kind === 'shared'
+      ? t('multitrack.referenceSharedClip', { name: trackName(reference) })
+      : reference.kind === 'locked'
+        ? t('multitrack.referenceLockedVideo', { name: trackName(reference) })
+        : trackName(reference)
+    const presentation = (type: 'video' | 'audio') => getSegmentTrackPresentation(type).waveformColor
+      ?? getSegmentTrackPresentation(type).backgroundColor
+    const imageResources = genericPromptResources
+      .filter((resource) => resource.type === 'image')
+      .map((resource) => ({ ...resource, token: `<Picture ${resource.index}>` }))
+    const soundtrackResources = referencePlan.videos.flatMap((reference, index) => {
+      const label = labels.video_soundtracks[index]
+      if (!label) return []
+      const number = Number(label.split(' ')[1])
+      return [{
+        id: `video-audio:${reference.key}`, type: 'audio' as const, index: number,
+        label: t('multitrack.referenceAudioItem', { n: number }),
+        detail: t('multitrack.referenceSoundtrack', { name: trackName(reference) }),
+        token: `<Audio ${number}>`, color: presentation('video'),
+      }]
+    })
+    const audioResources = referencePlan.audios.map((reference, index) => {
+      const number = Number(labels.audios[index].split(' ')[1])
+      return {
+        id: `audio:${reference.key}`, type: 'audio' as const, index: number,
+        label: t('multitrack.referenceAudioItem', { n: number }), detail: detail(reference),
+        token: `<Audio ${number}>`, color: presentation('audio'),
+      }
+    })
+    const videoResources = referencePlan.videos.map((reference, index) => ({
+      id: `video:${reference.key}`, type: 'video' as const, index: index + 1,
+      label: t('multitrack.referenceVideoItem', { n: index + 1 }), detail: detail(reference),
+      token: `<Video ${index + 1}>`, color: presentation('video'),
+    }))
+    return [...imageResources, ...soundtrackResources, ...audioResources, ...videoResources]
+  }, [format, genericPromptResources, referencePlan, mediaTracks, t])
 
   useEffect(() => {
     setDurationInput(formattedDuration)

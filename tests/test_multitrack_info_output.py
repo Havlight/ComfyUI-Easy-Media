@@ -2728,6 +2728,7 @@ def test_multitrack_task_output_schema_and_task_media_selection():
         "SYSTEM_PROMPT", "USER_PROMPT", "TYPE", "LENGTH", "IMAGES", "AUDIO", "VIDEO",
         "IMAGE_INDEXES",
         "LOCKED_AUDIO",
+        "VIDEO_SOUNDTRACKS",
     ]
 
     images = [torch.zeros(1, 2, 2, 3), torch.ones(1, 2, 2, 3), torch.full((1, 2, 2, 3), 2.0)]
@@ -2774,7 +2775,9 @@ def test_multitrack_task_output_schema_and_task_media_selection():
         selected_video,
         image_indexes,
         locked_audio,
+        video_soundtracks,
     ) = result.values
+    assert video_soundtracks == ""
     assert system_prompt == ""
     assert user_prompt == "make it move"
     assert task_type == "rv2v"
@@ -2951,7 +2954,7 @@ def test_multitrack_task_output_outputs_none_for_empty_minimax_media_tracks():
     assert result.values[6] == [None]
 
 
-def test_minimax_shared_audio_is_reused_in_every_task_and_capped_at_15_seconds(monkeypatch):
+def test_minimax_shared_audio_is_reused_in_every_task_from_its_start(monkeypatch):
     module = _load_basic_module()
     source_audio = {
         "waveform": torch.arange(30, dtype=torch.float32).reshape(1, 1, 30),
@@ -2987,7 +2990,8 @@ def test_minimax_shared_audio_is_reused_in_every_task_and_capped_at_15_seconds(m
     first = module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
     second = module.MultiTrackTaskOutput.execute(tracks_info, task_index=1)
 
-    expected = list(range(15))
+    # Both tasks hear the clip from its start, cut to their own five-frame window.
+    expected = list(range(5))
     assert first.values[5][0]["waveform"].flatten().tolist() == expected
     assert second.values[5][0]["waveform"].flatten().tolist() == expected
 
@@ -3037,7 +3041,7 @@ def test_multitrack_editor_materializes_a_dedicated_minimax_shared_audio():
         audio=audio_output,
         task_index=0,
     )
-    assert task_result.values[5][0]["waveform"].flatten().tolist() == list(range(15))
+    assert task_result.values[5][0]["waveform"].flatten().tolist() == list(range(5))
 
 
 def test_shared_task_images_are_prefixed_deduplicated_and_reused():
@@ -3736,6 +3740,41 @@ def test_multitrack_task_output_minus_one_reuses_eager_full_timeline_media():
     assert video.trim_calls == []
 
 
+def test_minimax_task_output_follows_the_reference_plan():
+    module = _load_basic_module()
+    sources = {name: {"waveform": torch.full((1, 1, 8), float(index)), "sample_rate": 1}
+               for index, name in enumerate(["bed.wav", "muted.wav", "song.wav", "voice.wav"])}
+    module._resolve_multitrack_audio = lambda content, _audio: sources.get(content.get("file_path"))
+    tracks_info = {
+        "media_loading": "deferred",
+        "format": "MiniMax",
+        "width": 2,
+        "height": 2,
+        "frame_rate": 1,
+        "tracks": [
+            {"id": "tasks", "type": "task", "segments": [
+                {"id": "t1", "start_frame": 0, "end_frame": 4, "content": {"task_mode": "ref"}},
+                {"id": "t2", "start_frame": 4, "end_frame": 8, "content": {"task_mode": "ref"}},
+            ]},
+            {"id": "bed", "type": "audio", "segments": [{"id": "bed-1", "start_frame": 0, "end_frame": 8,
+                "content": {"media_type": "audio", "file_path": "bed.wav"}}]},
+            {"id": "muted", "type": "audio", "muted": True, "segments": [{"id": "muted-1", "start_frame": 0,
+                "end_frame": 8, "content": {"media_type": "audio", "file_path": "muted.wav"}}]},
+            {"id": "song", "type": "audio", "audio_locked": True, "segments": [{"id": "song-1", "start_frame": 0,
+                "end_frame": 8, "content": {"media_type": "audio", "file_path": "song.wav"}}]},
+            {"id": "voice", "type": "audio", "segments": [{"id": "voice-1", "start_frame": 20, "end_frame": 30,
+                "content": {"media_type": "audio", "file_path": "voice.wav", "shared_reference": True}}]},
+        ],
+    }
+
+    result = module.MultiTrackTaskOutput.execute(tracks_info, task_index=1)
+
+    # Shared voice first, then the bed's window; muted and locked tracks give no reference.
+    assert [audio["waveform"].flatten().tolist() for audio in result.values[5]] == [[3.0] * 4, [0.0] * 4]
+    assert result.values[8]["waveform"].flatten().tolist() == [2.0] * 4
+    assert result.values[9] == ""
+
+
 def test_multitrack_task_output_minus_one_does_not_stop_at_the_next_minimax_task():
     module = _load_basic_module()
     source_audio = {
@@ -3802,7 +3841,8 @@ def test_prepare_multitrack_project_media_extracts_shared_and_locked_audio(monke
                     "shared_reference": True,
                 }]},
             }]},
-            {"type": "audio", "segments": [{
+            {"id": "voice", "type": "audio", "segments": [{
+                "id": "shared-clip",
                 "start_frame": 0,
                 "end_frame": 8,
                 "content": {
@@ -3824,11 +3864,13 @@ def test_prepare_multitrack_project_media_extracts_shared_and_locked_audio(monke
     )
 
     assert images == [shared_image]
-    assert audios[0]["waveform"].flatten().tolist() == list(range(8))
-    assert videos == []
+    assert list(audios) == ["shared:shared-clip"]
+    assert audios["shared:shared-clip"]["waveform"].flatten().tolist() == list(range(8))
+    assert videos == {}
     assert locked["waveform"].flatten().tolist() == list(range(8))
     assert task_info["tracks"][0]["segments"][0]["content"]["images"] == []
-    assert task_info["tracks"][1]["segments"] == []
+    # Each task plans its references from the shared clip, which stays on its track.
+    assert [segment["id"] for segment in task_info["tracks"][1]["segments"]] == ["shared-clip"]
     assert task_info["tracks"][2]["segments"] == []
 
 
@@ -4396,17 +4438,17 @@ def test_crop_multitrack_project_media_crops_reused_audio_and_video():
     )
 
     audios, videos, locked = project_module.crop_multitrack_project_media(
-        [shared_audio],
-        [shared_video],
+        {"shared:audio": shared_audio},
+        {"shared:video": shared_video},
         shared_audio,
         2,
         4,
         2,
     )
 
-    assert audios[0]["waveform"].flatten().tolist() == [0, 1, 2, 3]
+    assert audios["shared:audio"]["waveform"].flatten().tolist() == [0, 1, 2, 3]
     assert shared_video.trim_calls == [(0.0, 2.0, False)]
-    assert videos
+    assert list(videos) == ["shared:video"]
     assert locked["waveform"].flatten().tolist() == [2, 3, 4, 5]
 
 

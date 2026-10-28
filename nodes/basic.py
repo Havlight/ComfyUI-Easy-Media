@@ -83,6 +83,7 @@ from ..utils.multitrack import (
     multitrack_runtime_cache,
 )
 from ..utils.video import extract_video_audio
+from ..utils.h3_references import plan_task_references, shared_reference_clip
 
 
 # ---------------------------------------------------------------------------
@@ -611,6 +612,54 @@ def _build_shared_reference_video(video: object) -> object | None:
         strict_duration=False,
     )
     return trimmed if trimmed is not None else video
+
+
+def _collect_h3_shared_reference(
+    plan,
+    track: dict,
+    clip: dict,
+    audio_refs: dict,
+    video_refs: dict,
+    audio_items: list,
+    video_items: list,
+    deferred_audio: bool,
+    deferred_video: bool,
+    info: dict,
+    global_volume_db: float,
+    frame_rate: float,
+    resize_cache: dict,
+) -> None:
+    """Load a planned shared clip that no Project preloaded."""
+    ref = next((item for item in (*plan.videos, *plan.audios)
+                if item.kind == "shared" and item.track_id == str(track.get("id", ""))), None)
+    if ref is None or ref.key in (audio_refs if ref.media_type == "audio" else video_refs):
+        return
+    content = clip.get("content", {})
+    duration = max(1, ref.frames)
+    if ref.media_type == "audio":
+        if deferred_audio:
+            source = _resolve_multitrack_audio(content, None)
+            if source is not None:
+                source = _build_shared_reference_audio(clip, source, global_volume_db + audio_volume_db(track))
+        else:
+            index = _shared_reference_output_index(clip)
+            source = audio_items[index] if index is not None and 0 <= index < len(audio_items) else None
+        if isinstance(source, dict):
+            audio_refs[ref.key] = _trim_track_audio(source, 0, duration, frame_rate)
+        return
+    if deferred_video:
+        source = _resolve_multitrack_video(content, None)
+        if source is not None:
+            source = _resize_multitrack_video(
+                source, int(info.get("width", 544)), int(info.get("height", 960)),
+                str(info.get("resize_method", "stretch")), resize_cache, lambda _ratio: None,
+            )
+    else:
+        index = _shared_reference_output_index(clip)
+        source = video_items[index] if index is not None and 0 <= index < len(video_items) else None
+    if source is not None:
+        trimmed = source.as_trimmed(start_time=0.0, duration=duration / frame_rate, strict_duration=False)
+        video_refs[ref.key] = trimmed if trimmed is not None else source
 
 
 def _merge_video_track_tensor(
@@ -2647,7 +2696,7 @@ def _shared_reference_output_index(segment: dict) -> 'int | None':
     content = segment.get("content", {})
     raw_index = None
     if isinstance(content, dict):
-        raw_index = content.get("shared_media_index", content.get("speaker_media_index"))
+        raw_index = content.get("shared_media_index")
     try:
         return int(raw_index) if raw_index is not None else None
     except (TypeError, ValueError):
@@ -2835,6 +2884,10 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 io.Video.Output("VIDEO", is_output_list=True),
                 io.String.Output("IMAGE_INDEXES"),
                 io.Audio.Output("LOCKED_AUDIO"),
+                io.String.Output(
+                    "VIDEO_SOUNDTRACKS",
+                    tooltip="MiniMax: one 1/0 per output video; 1 gives the video an <Audio N> soundtrack.",
+                ),
             ],
         )
 
@@ -3065,20 +3118,15 @@ class MultiTrackTaskOutput(io.ComfyNode):
                     duration_frames,
                 )
 
-            selected_audio = list(
-                iter_valid_audio_inputs(
-                    _as_list_input(preloaded_media.get("audio"))
-                )
-            )
+            # A Project preloads shared clips by reference key.
+            shared_audio_refs = dict(preloaded_media.get("audio") or {})
+            shared_video_refs = dict(preloaded_media.get("video") or {})
+            selected_audio: list = []
             locked_audio: dict | None = None
             locked_audio_priority = 0
-            selected_video = [
-                item
-                for item in _as_list_input(preloaded_media.get("video"))
-                if item is not None
-            ]
+            selected_video: list = []
             deferred_shared_video_cache: dict[tuple, object] = {}
-            has_video = bool(selected_video)
+            has_video = False
             global_volume_db = audio_volume_db(info)
             global_muted = audio_is_muted(info)
             has_solo_track = any(
@@ -3090,6 +3138,23 @@ class MultiTrackTaskOutput(io.ComfyNode):
             media_tracks = tracks if isinstance(tracks, list) else []
             if not output_full_timeline:
                 media_tracks = media_tracks[1:]
+            # MiniMax references follow the shared plan; tracks fill it by ID.
+            reference_plan = None
+            planned_windows: dict = {}
+            window_audio: dict[str, dict] = {}
+            window_video: dict[str, object] = {}
+            if is_minimax and not output_full_timeline and task_entry:
+                reference_plan = plan_task_references(
+                    [track for track in media_tracks if isinstance(track, dict)],
+                    {**task, "start_frame": start_frame, "end_frame": end_frame},
+                    next_task_start,
+                    audio_only=(int(info.get("width", 0)), int(info.get("height", 0))) == (32, 32),
+                )
+                planned_windows = {
+                    ref.track_id: ref
+                    for ref in (*reference_plan.videos, *reference_plan.audios)
+                    if ref.kind != "shared"
+                }
             if output_full_timeline:
                 if not deferred_audio:
                     selected_audio = list(audio_items)
@@ -3146,7 +3211,27 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 if not isinstance(track, dict):
                     continue
                 media_index = _track_output_index(track)
-                shared_segment = _shared_reference_segment(track) if not output_full_timeline else None
+                track_id = str(track.get("id", ""))
+                planned = planned_windows.get(track_id)
+                if reference_plan is not None:
+                    shared_clip = shared_reference_clip(track)
+                    if shared_clip is not None:
+                        _collect_h3_shared_reference(
+                            reference_plan, track, shared_clip, shared_audio_refs, shared_video_refs,
+                            audio_items, video_items, deferred_audio, deferred_video, info,
+                            global_volume_db, frame_rate, deferred_shared_video_cache,
+                        )
+                        track = {**track, "segments": [
+                            segment for segment in track.get("segments", []) if segment is not shared_clip
+                        ]}
+                    # Locked tracks still provide lock audio when they give no reference.
+                    if planned is None and track.get("audio_locked") is not True:
+                        continue
+                shared_segment = (
+                    _shared_reference_segment(track)
+                    if not output_full_timeline and reference_plan is None
+                    else None
+                )
                 if shared_segment is not None:
                     shared_content = shared_segment.get("content", {})
                     if track.get("type") == "audio":
@@ -3197,10 +3282,11 @@ class MultiTrackTaskOutput(io.ComfyNode):
                         continue
                 track_media_duration_frames = media_duration_frames
                 if is_minimax:
+                    # The last task's window ends with the task.
                     track_media_end = _track_media_end_frame(
                         track,
                         start_frame,
-                        next_task_start,
+                        next_task_start if next_task_start is not None else end_frame,
                     )
                     if track_media_end is None:
                         continue
@@ -3254,7 +3340,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             resolved_audio = _resolve_multitrack_audio(local_content, None)
                             if resolved_audio is not None:
                                 resolved_audio_segments.append((local_segment, resolved_audio))
-                        if not is_minimax or resolved_audio_segments:
+                        if reference_plan is None and (not is_minimax or resolved_audio_segments):
                             selected_audio.append(_merge_audio_track(
                                 resolved_audio_segments,
                                 local_duration,
@@ -3262,6 +3348,14 @@ class MultiTrackTaskOutput(io.ComfyNode):
                                 track_volume_db,
                                 track_muted,
                             ))
+                        elif planned is not None and resolved_audio_segments:
+                            window_audio[track_id] = _merge_audio_track(
+                                resolved_audio_segments,
+                                local_duration,
+                                frame_rate,
+                                track_volume_db,
+                                track_muted,
+                            )
                         if (
                             locked_audio_track
                             and resolved_audio_segments
@@ -3301,7 +3395,10 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             track_muted,
                             resize_method=str(info.get("resize_method", "stretch")),
                         )
-                        selected_video.append(merged_video)
+                        if reference_plan is not None:
+                            window_video[track_id] = merged_video
+                        else:
+                            selected_video.append(merged_video)
                         if locked_audio_priority < 1 and locked_audio_track:
                             log_node_info(
                                 "MultiTrack Task Output",
@@ -3329,7 +3426,10 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             track_media_duration_frames if is_minimax else duration_frames,
                             frame_rate,
                         )
-                        selected_audio.append(task_audio)
+                        if reference_plan is None:
+                            selected_audio.append(task_audio)
+                        elif planned is not None:
+                            window_audio[track_id] = task_audio
                         if locked_audio_track and locked_audio_priority < 2:
                             locked_audio = task_audio
                             locked_audio_priority = 2
@@ -3360,7 +3460,9 @@ class MultiTrackTaskOutput(io.ComfyNode):
                         duration=video_duration,
                         strict_duration=False,
                     )
-                    if trimmed is not None:
+                    if trimmed is not None and reference_plan is not None:
+                        window_video[track_id] = trimmed
+                    elif trimmed is not None:
                         selected_video.append(trimmed)
                     has_video = has_video or any(
                         isinstance(segment, dict)
@@ -3368,6 +3470,26 @@ class MultiTrackTaskOutput(io.ComfyNode):
                         and _ranges_overlap(start_frame, end_frame, segment)
                         for segment in track.get("segments", [])
                     )
+
+            video_soundtracks = ""
+            if reference_plan is not None:
+                planned_videos = [
+                    (video, ref.soundtrack)
+                    for ref in reference_plan.videos
+                    for video in [(shared_video_refs if ref.kind == "shared" else window_video).get(
+                        ref.key if ref.kind == "shared" else ref.track_id)]
+                    if video is not None
+                ]
+                selected_video = [video for video, _soundtrack in planned_videos]
+                video_soundtracks = ",".join("1" if soundtrack else "0" for _video, soundtrack in planned_videos)
+                selected_audio = [
+                    audio
+                    for ref in reference_plan.audios
+                    for audio in [(shared_audio_refs if ref.kind == "shared" else window_audio).get(
+                        ref.key if ref.kind == "shared" else ref.track_id)]
+                    if audio is not None
+                ]
+                has_video = bool(reference_plan.videos)
 
             media_progress.update_absolute(2)
 
@@ -3421,6 +3543,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
             (selected_video or [None]) if is_minimax else selected_video,
             image_indexes,
             locked_audio,
+            video_soundtracks,
         )
         if can_restore_runtime:
             runtime_cache[task_cache_key] = output

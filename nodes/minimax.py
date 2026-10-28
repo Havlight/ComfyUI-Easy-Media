@@ -587,6 +587,24 @@ class MiniMaxH3ReferenceToVideoFallback(io.ComfyNode):
         return io.NodeOutput(conditioning, latent)
 
 
+def _apply_video_soundtracks(grouped_inputs: dict[str, dict[str, Any]], flags: str) -> None:
+    """Keep each reference video's <Audio N> label as the reference plan numbered it."""
+    if not flags:
+        return
+    soundtracks = grouped_inputs["ref_video_audios"]
+    for index, flag in enumerate(str(flags).split(",")):
+        frames = grouped_inputs["ref_videos"].get(f"ref_video_{index}")
+        name = f"ref_video_audio_{index}"
+        if frames is None:
+            continue
+        if flag.strip() == "0":
+            soundtracks.pop(name, None)
+        elif name not in soundtracks:
+            sample_rate = 44100
+            samples = max(1, round(frames.shape[0] * sample_rate / FPS))
+            soundtracks[name] = {"waveform": torch.zeros(1, 2, samples), "sample_rate": sample_rate}
+
+
 class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
     """Call H3 reference conditioning without putting Autogrow in an expanded graph."""
 
@@ -617,6 +635,17 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
                     step=32,
                 ),
                 io.Int.Input("length", default=124, min=5, max=3600, step=17),
+                io.String.Input(
+                    "video_soundtracks",
+                    default="",
+                    optional=True,
+                    advanced=True,
+                    tooltip=(
+                        "Internal: one 1/0 per reference video. 1 gives the video an "
+                        "<Audio N> soundtrack, using silence when it has none; 0 drops "
+                        "it. Empty keeps whatever soundtrack each video has."
+                    ),
+                ),
                 io.Boolean.Input("native_locked_video", default=False, optional=True, advanced=True),
                 io.Int.Input(
                     "locked_video_timing_frames",
@@ -667,6 +696,7 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
         ref_image_size: str = "match",
         locked_video_timing_frames: int = 0,
         native_locked_video: bool = False,
+        video_soundtracks: str = "",
         **reference_inputs: Any,
     ) -> io.NodeOutput:
         grouped_inputs: dict[str, dict[str, Any]] = {
@@ -706,6 +736,7 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
             )
             for name, frames in grouped_inputs["ref_videos"].items()
         }
+        _apply_video_soundtracks(grouped_inputs, video_soundtracks)
 
         target = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", {}).get(
             "MiniMaxH3ReferenceToVideo",
@@ -2616,6 +2647,17 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
                     default="match",
                     tooltip="Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. Reference tokens ride through every sampling step, so 'max' can be several times slower.",
                 ),
+                io.String.Input(
+                    "video_soundtracks",
+                    default="",
+                    optional=True,
+                    advanced=True,
+                    tooltip=(
+                        "Internal: one 1/0 per reference video. 1 gives the video an "
+                        "<Audio N> soundtrack, using silence when it has none; 0 drops "
+                        "it. Empty keeps whatever soundtrack each video has."
+                    ),
+                ),
             ],
             outputs=[
                 io.Conditioning.Output("positive"),
@@ -2640,6 +2682,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
         locked_video_timing_frames: list[int] | int = 0,
         native_locked_video: list[bool] | bool = False,
         ref_image_size: list[str] | str = "match",
+        video_soundtracks: list[str] | str = "",
     ) -> io.NodeOutput:
         selected_mode = str(_first_input(mode, "reference"))
         frame_modes = {"multi_frames", "last_frame"}
@@ -2730,6 +2773,9 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
             if locked_timing_frames > 0:
                 node_inputs["locked_video_timing_frames"] = locked_timing_frames
                 node_inputs["native_locked_video"] = bool(_first_input(native_locked_video, False))
+            soundtrack_flags = str(_first_input(video_soundtracks, "") or "")
+            if soundtrack_flags:
+                node_inputs["video_soundtracks"] = soundtrack_flags
             for index, image in enumerate(expanded_images):
                 node_inputs[f"ref_image_{index}"] = image
                 advance_progress()
@@ -2740,8 +2786,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
                     video=video,
                 )
                 node_inputs[f"ref_video_{index}"] = components.out(0)
-                if components.out(1) is not None:
-                    node_inputs[f"ref_video_audio_{index}"] = components.out(1)
+                node_inputs[f"ref_video_audio_{index}"] = components.out(1)
                 advance_progress()
             for index, audio in enumerate(standalone_audios):
                 node_inputs[f"ref_audio_{index}"] = audio
