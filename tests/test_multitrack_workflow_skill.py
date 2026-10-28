@@ -236,7 +236,7 @@ def test_audio_and_video_tracks_may_be_locked_together(patch_workflow_module):
     assert report["project_changes"]["segment_count"] == {"from": -1, "to": 1}
 
 
-def test_locked_video_accepts_context_swap_tasks(patch_workflow_module):
+def test_locked_video_accepts_drift_tasks(patch_workflow_module):
     track_data = {
         "frame_rate": 24,
         "total_length": 360,
@@ -251,7 +251,7 @@ def test_locked_video_accepts_context_swap_tasks(patch_workflow_module):
                         "end_frame": min((index + 1) * 240, 360),
                         "content": {
                             "images": [],
-                            "continuity_mode": "context_swap",
+                            "continuity_mode": "context_drift",
                         },
                     }
                     for index in range(2)
@@ -296,7 +296,7 @@ def test_rejects_unknown_task_continuity_mode(patch_workflow_module):
 
     with pytest.raises(
         patch_workflow_module.WorkflowError,
-        match="continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'",
+        match="continuity_mode must be 'shot', 'context', or 'context_drift'",
     ):
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
 
@@ -329,17 +329,7 @@ def test_validates_drift_taper_settings(patch_workflow_module, field, value, val
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
 
 
-def test_converts_the_former_matched_mode_to_untapered_drift(patch_workflow_module):
-    track_data = _single_task_track_data(
-        {"continuity_mode": "context_drift_matched", "drift_seam_steps": 2, "drift_seam_noise": 0.3})
-
-    patch_workflow_module.validate_track_data(track_data, recalculate=False)
-
-    content = track_data["tracks"][0]["segments"][0]["content"]
-    assert content == {"images": [], "continuity_mode": "context_drift", "drift_taper_steps": 0}
-
-
-def test_shared_media_accepts_task_images_audio_video_and_legacy_audio(
+def test_shared_media_accepts_task_images_audio_and_video(
     patch_workflow_module,
 ):
     track_data = {
@@ -374,7 +364,7 @@ def test_shared_media_accepts_task_images_audio_video_and_legacy_audio(
                         "media_type": "audio",
                         "source_type": "input",
                         "file_path": "voice.wav",
-                        "speaker_reference": True,
+                        "shared_reference": True,
                     },
                 }],
             },
