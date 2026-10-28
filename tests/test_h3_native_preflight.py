@@ -108,8 +108,8 @@ def test_source_fingerprint_ignores_materialization_but_tracks_source_edits():
     status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
     info = {'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90,
         'content': {'images': [{'id': 'image', 'file_path': 'portrait.png'}]}}]},
-        {'type': 'video', 'segments': [{'id': 'source', 'start_frame': 0, 'end_frame': 90,
-            'content': {'file_path': 'source.mp4', 'shared_reference': False}}]}]}
+        {'id': 'video', 'type': 'video', 'segments': [{'id': 'source', 'start_frame': 0, 'end_frame': 90,
+            'content': {'media_type': 'video', 'file_path': 'source.mp4', 'shared_reference': False}}]}]}
     materialized = copy.deepcopy(info)
     materialized['tracks'][0]['segments'][0]['content']['images'][0]['media_index'] = 3
     materialized['tracks'][1]['segments'][0]['content']['media_index'] = 1
@@ -117,3 +117,37 @@ def test_source_fingerprint_ignores_materialization_but_tracks_source_edits():
     assert status.native_task_fingerprint(info, 0) == status.native_task_fingerprint(materialized, 0)
     materialized['tracks'][1]['segments'][0]['content']['file_path'] = 'replacement.mp4'
     assert status.native_task_fingerprint(info, 0) != status.native_task_fingerprint(materialized, 0)
+
+
+def test_source_fingerprint_only_tracks_media_that_reaches_the_task():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    clip = lambda sid, start, end, **content: {'id': sid, 'start_frame': start, 'end_frame': end,
+                                               'content': {'media_type': 'audio', 'file_path': f'{sid}.wav', **content}}
+    info = {'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90, 'content': {}},
+                                      {'id': 'b', 'start_frame': 90, 'end_frame': 180, 'content': {}}]},
+        {'id': 'voice', 'type': 'audio', 'segments': [clip('near', 0, 60), clip('far', 400, 500)]},
+        {'id': 'later', 'type': 'audio', 'segments': [clip('late', 300, 350)]},
+        {'id': 'quiet', 'type': 'audio', 'muted': True, 'segments': [clip('hum', 0, 90)]}]}
+    before = status.native_task_fingerprint(info, 0)
+
+    edited = copy.deepcopy(info)
+    edited['tracks'][1]['segments'][1]['content']['file_path'] = 'other.wav'
+    edited['tracks'][2]['segments'][0]['content']['volume_db'] = -6
+    edited['tracks'][3]['segments'][0]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(edited, 0) == before
+
+    unmuted = copy.deepcopy(info)
+    unmuted['tracks'][3]['muted'] = False
+    assert status.native_task_fingerprint(unmuted, 0) != before
+    moved = copy.deepcopy(info)
+    moved['tracks'][1]['segments'][0]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(moved, 0) != before
+    # The shared clip reaches every task wherever it sits.
+    shared = copy.deepcopy(info)
+    shared['tracks'][1]['segments'][1]['content']['shared_reference'] = True
+    assert status.native_task_fingerprint(shared, 0) != before
+    shared_edit = copy.deepcopy(shared)
+    shared_edit['tracks'][1]['segments'][1]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(shared_edit, 0) != status.native_task_fingerprint(shared, 0)

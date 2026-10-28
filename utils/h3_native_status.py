@@ -6,7 +6,8 @@ import json
 from typing import Any
 
 from .h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_taper
-from .h3_native_timing import NativePlanError, compile_native_plan, native_task_segments
+from .h3_native_timing import CONTEXT_FRAMES, NativePlanError, compile_native_plan, native_task_segments
+from .h3_references import plan_task_references, shared_reference_clip
 
 
 def _content_fields(value: Any) -> Any:
@@ -42,13 +43,33 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
 
 
 def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
+    """Hash a task's content and the media tracks that can change its generation.
+
+    A track counts when the task's reference plan uses it or when it is audio-locked
+    and overlaps the task. Only its clips that reach the task's window, including the
+    39-frame context before it, and its shared clip are hashed, so edits elsewhere on
+    the timeline leave the task saved.
+    """
     tasks = native_task_segments(info)
-    content = task_content_signature(tasks[index].get('content', {}))
-    # Source edits can affect shared references and locks outside a task's visible
-    # range. Conservatively invalidate consumers rather than reuse obsolete media.
-    sources = [_content_fields({k: v for k, v in track.items() if k in {'type', 'muted', 'solo', 'audio_locked', 'visible', 'volume_db', 'segments'}})
-               for track in info.get('tracks', []) if track.get('type') != 'task']
-    value = {'content': content, 'sources': sources, 'muted': info.get('muted', False),
+    task = tasks[index]
+    start, end = int(task['start_frame']), int(task['end_frame'])
+    next_start = int(tasks[index + 1]['start_frame']) if index + 1 < len(tasks) else None
+    window = (start - CONTEXT_FRAMES, max(end, next_start or end))
+    media = [track for track in info.get('tracks', []) if track.get('type') in {'audio', 'video'}]
+    plan = plan_task_references(media, task, next_start,
+                                audio_only=(info.get('width'), info.get('height')) == (32, 32))
+    referenced = {ref.track_id for ref in (*plan.videos, *plan.audios)}
+    sources = []
+    for track in media:
+        shared = shared_reference_clip(track)
+        clips = [segment for segment in track.get('segments', []) if segment is shared or (
+            int(segment.get('start_frame', 0)) < window[1] and int(segment.get('end_frame', 0)) > window[0])]
+        if str(track.get('id', '')) in referenced or (track.get('audio_locked') is True and clips):
+            sources.append(_content_fields({**{k: v for k, v in track.items()
+                                               if k in {'type', 'muted', 'solo', 'audio_locked', 'visible', 'volume_db'}},
+                                            'segments': clips}))
+    value = {'content': task_content_signature(task.get('content', {})), 'sources': sources, 'muted': info.get('muted', False),
+             'solo': any(track.get('solo') is True for track in media),
              'volume_db': float(info.get('volume_db', 0))}
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
