@@ -51,7 +51,6 @@ from ..utils.minimax import (
     h3_phase_aligned_video_suffix,
     remove_output_files_by_prefix,
 )
-from ..utils.prompt_override import build_minimax_prompt_override_json
 from ..utils.video import stage_passthrough_video_media
 
 
@@ -68,145 +67,6 @@ MAX_REF_AUDIOS = 3
 REFERENCE_BRIDGE_NODE_ID = "easy MiniMaxH3ReferenceToVideoBridge"
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 MULTITRACK_PROJECT_REFRESH_EVENT = "easy_multitrack_project_refresh"
-
-
-class EasyMinimaxPromptOverride(io.ComfyNode):
-    """Assemble MiniMax H3 per-segment prompt override JSON."""
-
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(
-            node_id="easy minimaxPromptOverride",
-            display_name="MiniMax Prompt Override",
-            category=CATEGORY_MINIMAX,
-            description=(
-                "Assemble per-segment MiniMax H3 prompts, durations, generation "
-                "types, continuity modes, and track locks into a prompt_override "
-                "JSON string."
-            ),
-            inputs=[
-                io.String.Input(
-                    "system_prompt",
-                    optional=True,
-                    force_input=True,
-                    multiline=True,
-                    tooltip=(
-                        "Optional system prompt. When non-empty, this value is "
-                        "written into every task segment's system_prompt in the "
-                        "resulting TRACKS_INFO."
-                    ),
-                ),
-                io.Autogrow.Input(
-                    "prompts",
-                    template=io.Autogrow.TemplatePrefix(
-                        input=io.String.Input(
-                            "prompt",
-                            multiline=True,
-                            dynamic_prompts=True,
-                        ),
-                        prefix="prompt_",
-                        min=1,
-                        max=100,
-                    ),
-                    tooltip=(
-                        "One prompt per MiniMax H3 clip. Use @图片N/@音频N/@视频N "
-                        "or <Picture N>/<Audio N>/<Video N> to reference media slots."
-                    ),
-                ),
-                io.String.Input(
-                    "duration",
-                    default="10",
-                    tooltip=(
-                        "Seconds per clip. A single value like 10 applies to every "
-                        "clip; comma-separated values like 10,5,10 assign seconds "
-                        "in order, and missing values reuse the last value. Each "
-                        "value must be between 2 and 15 seconds."
-                    ),
-                ),
-                io.String.Input(
-                    "generation_type",
-                    default="r2v",
-                    tooltip=(
-                        "Generation type per clip. Supported values are r2v, i2v, "
-                        "and l2v; a single value applies to every clip, while "
-                        "comma-separated values like r2v,i2v,r2v assign types in "
-                        "order and reuse the last value when fewer are provided."
-                    ),
-                ),
-                io.String.Input(
-                    "continuity_mode",
-                    default="shot",
-                    tooltip=(
-                        "Continuity mode per clip. Supported values are shot, "
-                        "context, and context_drift (legacy context_swap); a single value "
-                        "applies to every "
-                        "clip, while comma-separated values like shot,context,context "
-                        "assign modes in order and reuse the last value when fewer "
-                        "are provided."
-                    ),
-                ),
-                io.Int.Input(
-                    "video_track_lock",
-                    default=0,
-                    min=0,
-                    max=3,
-                    step=1,
-                    tooltip=(
-                        "1-based index of the video track to lock; 0 disables "
-                        "video track locking."
-                    ),
-                ),
-                io.Int.Input(
-                    "audio_track_lock",
-                    default=0,
-                    min=0,
-                    max=3,
-                    step=1,
-                    tooltip=(
-                        "1-based index of the audio track to lock; 0 disables "
-                        "audio track locking."
-                    ),
-                ),
-            ],
-            outputs=[io.AnyType.Output("prompt_override")],
-        )
-
-    @classmethod
-    def execute(
-        cls,
-        prompts: io.Autogrow.Type,
-        duration: str = "10",
-        generation_type: str = "r2v",
-        continuity_mode: str = "shot",
-        system_prompt: str | None = None,
-        video_track_lock: int = 0,
-        audio_track_lock: int = 0,
-    ) -> io.NodeOutput:
-        prompt_values = [
-            value
-            for _key, value in sorted(
-                prompts.items(),
-                key=lambda item: _minimax_prompt_slot_index(item[0]),
-            )
-            if value is not None
-        ]
-        payload = build_minimax_prompt_override_json(
-            prompt_values,
-            str(duration),
-            str(generation_type),
-            str(continuity_mode),
-            system_prompt or "",
-            int(video_track_lock or 0),
-            int(audio_track_lock or 0),
-        )
-        return io.NodeOutput(payload)
-
-
-def _minimax_prompt_slot_index(name: str) -> int:
-    try:
-        return int(str(name).rsplit("_", 1)[1])
-    except (IndexError, ValueError):
-        return 0
 
 
 def _notify_multitrack_project_refresh(
@@ -976,7 +836,7 @@ class EasyMiniMaxH3MotionContextHard(io.ComfyNode):
 
 
 class EasyMiniMaxH3ContextSwap(io.ComfyNode):
-    """Use pure Drift-Control AV for context_swap without any context noise."""
+    """Use pure Drift-Control AV for Drift continuations without any context noise."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -985,7 +845,7 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
             display_name="Easy MiniMax H3 Context Swap Pure Drift-Control AV",
             category=CATEGORY_MINIMAX,
             description=(
-                "Internal context_swap continuation: copy the previous sampled "
+                "Internal Drift continuation: copy the previous sampled "
                 "H3 AV latent tail directly into the disposable target prefix, "
                 "keep the saved predecessor clean, and release the video prefix "
                 "with a sigma-matched dynamic denoise mask. No context noise or "
@@ -1000,17 +860,6 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                     "context_length",
                     options=["22", "5", "39", "56"],
                     default="22",
-                ),
-                io.Int.Input(
-                    "seed",
-                    default=0,
-                    min=0,
-                    max=0xFFFFFFFFFFFFFFFF,
-                    control_after_generate=io.ControlAfterGenerate.fixed,
-                    tooltip=(
-                        "Retained only for graph compatibility with older context_swap "
-                        "patches. Pure Drift-Control ignores this value."
-                    ),
                 ),
                 io.Boolean.Input(
                     "continue_audio",
@@ -1071,13 +920,11 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
         context_latent: dict[str, Any],
         sigmas: Any,
         context_length: str = "22",
-        seed: int = 0,
         continue_audio: bool = True,
         freeze_audio: bool = False,
         seam_taper_steps: int = 4,
         seam_taper_floor: float = 0.0,
     ) -> io.NodeOutput:
-        _ = seed
         patched_model, prepared_latent, trim_frames = (
             apply_context_swap_drift_control(
                 model=model,
@@ -2480,7 +2327,7 @@ class EasyH3ProjectArtifact(io.ComfyNode):
                 TYPE_TRACKS_INFO.Input("tracks_info"),
                 io.Combo.Input(
                     "continuity_mode",
-                    options=["shot", "context", "context_drift", "context_swap"],
+                    options=["shot", "context", "context_drift"],
                     default="shot",
                 ),
                 io.Combo.Input(
@@ -2533,12 +2380,8 @@ class EasyH3ProjectArtifact(io.ComfyNode):
         if sampling_pass not in {"single", "first", "second"}:
             raise ValueError("sampling_pass must be 'single', 'first', or 'second'")
         continuity_mode = str(continuity_mode).lower()
-        if continuity_mode not in {"shot", "context", "context_drift", "context_swap"}:
-            raise ValueError(
-                "continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'"
-            )
-        if continuity_mode == "context_swap":
-            continuity_mode = "context_drift"
+        if continuity_mode not in {"shot", "context", "context_drift"}:
+            raise ValueError("continuity_mode must be 'shot', 'context', or 'context_drift'")
         generation = choose_h3_generation(
             project_dir,
             int(segment_index),
@@ -2565,19 +2408,6 @@ class EasyH3ProjectArtifact(io.ComfyNode):
             for old_media in project_dir.glob(f"{media_prefix}_{int(segment_index)}_{generation}.*"):
                 if old_media != target_media:
                     old_media.unlink()
-
-        # Media embeds the original locked audio. Remove the legacy sidecar
-        # only when replacing its generation; other saved versions still use it.
-        stale_locked_audio = project_dir / (
-            f"locked_audio_{int(segment_index)}_{generation}.wav"
-        )
-        if stale_locked_audio.is_file():
-            try:
-                stale_locked_audio.unlink()
-            except OSError as error:
-                raise RuntimeError(
-                    f"Failed to remove stale locked audio: {error}"
-                ) from error
 
         target_context_latent = (
             project_dir

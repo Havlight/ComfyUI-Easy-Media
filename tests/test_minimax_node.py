@@ -1341,7 +1341,7 @@ def test_h3_project_task_passthrough_can_mix_with_sampling(monkeypatch):
             "end_frame": 360,
             "content": {
                 "task_mode": "passthrough",
-                "continuity_mode": "context_swap",
+                "continuity_mode": "context_drift",
                 "images": [],
                 "user_prompt": "ignored",
             },
@@ -1390,7 +1390,7 @@ def test_h3_project_single_task_passthrough_skips_prior_context_and_sampler(monk
     assert "easy minimaxH3ToVideo" not in types
 
 
-@pytest.mark.parametrize("continuity_mode", ["shot", "context", "context_swap"])
+@pytest.mark.parametrize("continuity_mode", ["shot", "context", "context_drift"])
 def test_h3_project_passthrough_ignores_continuity_mode_and_encodes_tail(
     monkeypatch, continuity_mode,
 ):
@@ -2680,7 +2680,7 @@ def test_multitrack_h3_selflift_passes_dynamic_sampling_values(monkeypatch):
     assert selflift["inputs"]["tile_count"] == 4
 
 
-@pytest.mark.parametrize("continuity_mode", ["context", "context_swap"])
+@pytest.mark.parametrize("continuity_mode", ["context", "context_drift"])
 def test_multitrack_h3_selflift_supports_context_and_locked_audio(
     monkeypatch,
     continuity_mode,
@@ -4011,10 +4011,7 @@ def test_h3_project_artifact_override_reuses_latest_generation(monkeypatch, tmp_
     assert set(manifest["segments"]["3"]["generations"]) == {"1", "2"}
 
 
-@pytest.mark.parametrize("project_save", ["new", "override"])
-def test_h3_project_artifact_uses_embedded_audio_without_sidecar(
-    monkeypatch, tmp_path, project_save,
-):
+def test_h3_project_artifact_uses_embedded_audio_without_sidecar(monkeypatch, tmp_path):
     module = _load_minimax_node(monkeypatch)
     monkeypatch.setattr(
         module.folder_paths,
@@ -4024,19 +4021,12 @@ def test_h3_project_artifact_uses_embedded_audio_without_sidecar(
     info = _h3_project_inputs()["tracks_info"][0]
     project_dir = tmp_path / "easy_media" / "projects" / "demo"
     project_dir.mkdir(parents=True)
-    if project_save == "override":
-        (project_dir / "locked_audio_0_1.wav").write_bytes(b"legacy-audio")
-        (project_dir / "project.json").write_text(json.dumps({
-            "segments": {"0": {"generations": {"1": {
-                "locked_audio": "locked_audio_0_1.wav",
-            }}}},
-        }))
     staged = project_dir / ".staged.mp4"
     staged.write_bytes(b"video")
 
     module.EasyH3ProjectArtifact.execute(
         project_name="demo",
-        project_save=project_save,
+        project_save="new",
         segment_index=0,
         context_latent=_h3_context_latent(1),
         video_path=f"output/{staged.relative_to(tmp_path)}",
@@ -4991,58 +4981,6 @@ def test_audio_locked_trim_discards_generated_tail_without_time_compression(
     )
 
 
-
-
-def test_minimax_prompt_override_node_serializes_ordered_prompts(monkeypatch):
-    module = _load_minimax_node(monkeypatch)
-    result = module.EasyMinimaxPromptOverride.execute(
-        {
-            "prompt_1": "second prompt",
-            "prompt_0": "@图片1 first prompt",
-            "prompt_2": None,
-        },
-        duration="10,5,10",
-        generation_type="r2v,i2v,l2v",
-        continuity_mode="shot,context,context_swap",
-        system_prompt="custom system prompt",
-        video_track_lock=1,
-        audio_track_lock=2,
-    )
-
-    payload = json.loads(result.values[0])
-    assert payload["type"] == "minimax_prompt_override"
-    assert payload["prompts"] == ["@图片1 first prompt", "second prompt"]
-    assert payload["duration"] == "10,5,10"
-    assert payload["generation_type"] == "r2v,i2v,l2v"
-    assert payload["continuity_mode"] == "shot,context,context_swap"
-    assert payload["system_prompt"] == "custom system prompt"
-    assert payload["video_track_lock"] == 1
-    assert payload["audio_track_lock"] == 2
-
-
-def test_minimax_prompt_override_node_has_complete_chinese_localization():
-    node_defs = json.loads(
-        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text()
-    )
-    translation = node_defs["easy minimaxPromptOverride"]
-
-    assert translation["display_name"] == "MiniMax 提示词覆盖"
-    assert set(translation["inputs"]) == {
-        "prompts",
-        "duration",
-        "generation_type",
-        "continuity_mode",
-        "system_prompt",
-        "video_track_lock",
-        "audio_track_lock",
-    }
-    assert translation["inputs"]["duration"]["name"] == "生成时长"
-    assert translation["inputs"]["generation_type"]["name"] == "生成类型"
-    assert translation["inputs"]["continuity_mode"]["name"] == "衔接模式"
-    assert translation["inputs"]["system_prompt"]["name"] == "系统提示词"
-    assert translation["inputs"]["video_track_lock"]["name"] == "视频轨锁定"
-    assert translation["inputs"]["audio_track_lock"]["name"] == "音频轨锁定"
-    assert translation["outputs"] == {"0": {"name": "提示词覆盖"}}
 
 
 def test_linked_project_context_preserves_custom_second_schedule_at_runtime(monkeypatch):

@@ -1138,7 +1138,6 @@ export function PreviewArea({
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {activeTaskPrompt.content.continuity_mode === 'context_masked' && <SelectItem value="context_masked" disabled>{t('h3Native.retiredMethod')}</SelectItem>}
                 {MULTITRACK_CONTINUITY_MODES.map((continuityMode) => (
                   <SelectItem key={continuityMode} value={continuityMode}>
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityMode}`)}</span>

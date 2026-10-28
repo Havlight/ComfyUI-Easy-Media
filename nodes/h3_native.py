@@ -213,7 +213,7 @@ class EasyH3NativePrepare(io.ComfyNode):
             manifest = read_native_manifest(directory)
             refresh_native_dependencies(manifest)
             source = (run_source(run_state, plan.parent_segment_id) if run_state is not None
-                      else generation_snapshot(manifest, plan.parent_segment_id, recipe.get("parent_index", 0)))
+                      else generation_snapshot(manifest, plan.parent_segment_id))
             generation_id, generation = source["generation"], source["record"]
             descriptors = generation.get("native", {})
             seed_window = None

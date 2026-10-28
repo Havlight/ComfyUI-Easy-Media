@@ -1303,7 +1303,7 @@ export function TaskSegmentEditor({
         </div>
 
         <div className="flex items-center gap-2">
-          {format === 'MiniMax' && mode !== 'passthrough' && (taskIndex > 0 || hasSelectedContinuityTargets || continuityMode === 'context_masked') && (
+          {format === 'MiniMax' && mode !== 'passthrough' && (taskIndex > 0 || hasSelectedContinuityTargets) && (
             <Select
               value={continuityMode}
               onValueChange={(value) => handleDropdownContentChange(
@@ -1323,7 +1323,6 @@ export function TaskSegmentEditor({
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
-                {continuityMode === 'context_masked' && <SelectItem value="context_masked" disabled>{t('h3Native.retiredMethod')}</SelectItem>}
                 {MULTITRACK_CONTINUITY_MODES.map((continuityOption) => (
                   <SelectItem key={continuityOption} value={continuityOption}>
                     <span className="text-[10px]">{t(`multitrackContinuityModes.${continuityOption}`)}</span>
@@ -1456,7 +1455,7 @@ export function TaskSegmentEditor({
       {nativePolicy && format === 'MiniMax' && (
         <div className="shrink-0 border-t border-border px-2 py-1 text-[10px] text-muted-foreground" aria-live="polite">
           {previousFrameImage && previousFrameImage.muted !== true ? t('h3Native.lastFrameFallback')
-            : t(continuityMode === 'context_masked' ? 'h3Native.retiredMethod' : mode === 'passthrough' ? 'h3Native.passthroughStatus' : isH3Continuation(segment) ? 'h3Native.contextStatus' : 'h3Native.shotStatus')}
+            : t(mode === 'passthrough' ? 'h3Native.passthroughStatus' : isH3Continuation(segment) ? 'h3Native.contextStatus' : 'h3Native.shotStatus')}
         </div>
       )}
       <Dialog open={applyPromptToAllOpen} onOpenChange={setApplyPromptToAllOpen}>

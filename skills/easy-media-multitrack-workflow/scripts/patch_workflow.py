@@ -365,20 +365,10 @@ def validate_track_data(
                 raise WorkflowError(f"{where}.content.media_type must be {track_type!r}")
             if track_type == "task" and "continuity_mode" in content:
                 continuity_mode = content.get("continuity_mode")
-                if continuity_mode not in {"shot", "context", "context_drift", "context_drift_matched", "context_swap"}:
+                if continuity_mode not in {"shot", "context", "context_drift"}:
                     raise WorkflowError(
-                        f"{where}.content.continuity_mode must be 'shot', 'context', "
-                        "'context_drift', or 'context_swap'"
+                        f"{where}.content.continuity_mode must be 'shot', 'context', or 'context_drift'"
                     )
-                if continuity_mode == "context_drift_matched":
-                    # The former matched mode is Drift without a seam taper.
-                    content.setdefault("drift_taper_steps", 0)
-                if continuity_mode in {"context_swap", "context_drift_matched"}:
-                    content["continuity_mode"] = "context_drift"
-            if track_type == "task":
-                # Obsolete seam-cap settings of the former matched mode.
-                content.pop("drift_seam_steps", None)
-                content.pop("drift_seam_noise", None)
             # Keep these ranges in sync with utils/h3_drift_taper.py.
             if track_type == "task" and "drift_taper_steps" in content:
                 steps = content.get("drift_taper_steps")
@@ -405,16 +395,7 @@ def validate_track_data(
                     raise WorkflowError(
                         f"Only audio/video segments may contain shared_reference ({where})"
                     )
-            if "speaker_reference" in content:
-                if not isinstance(content.get("speaker_reference"), bool):
-                    raise WorkflowError(
-                        f"{where}.content.speaker_reference must be a boolean"
-                    )
-                if track_type != "audio" or content.get("media_type") != "audio":
-                    raise WorkflowError(
-                        f"Only audio segments may contain speaker_reference ({where})"
-                    )
-            if content.get("shared_reference") is True or content.get("speaker_reference") is True:
+            if content.get("shared_reference") is True:
                 shared_media_references.append((track_id, segment_id, str(track_type)))
             images = content.get("images", [])
             if track_type == "task" and (not isinstance(images, list) or len(images) > 9):
@@ -676,10 +657,7 @@ def summarize_track(track: dict[str, Any]) -> dict[str, Any]:
             "source_type": content.get("source_type"),
             "start_frame": segment.get("start_frame"),
             "end_frame": segment.get("end_frame"),
-            "shared_reference": (
-                content.get("shared_reference") is True
-                or content.get("speaker_reference") is True
-            ),
+            "shared_reference": content.get("shared_reference") is True,
         }
         for segment in segments
         if isinstance(segment, dict)

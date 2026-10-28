@@ -134,7 +134,7 @@ def test_output_trim_uses_global_audio_clock_and_keeps_raw_source():
 
 def _fields(plans):
     return {"project_name": "test", "width": 64, "height": 64, "fps": 24,
-            "h3_native": {"version": 1, "allow_vae_fallback": False},
+            "h3_native": {"version": 2},
             "task_segments": [p.as_dict() for p in plans]}
 
 

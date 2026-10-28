@@ -1773,7 +1773,7 @@ it('accepts native seconds, steps legal durations and cancels with Escape', () =
   const segment = { ...taskSegment(), end_frame: 243, content: { ...taskSegment().content, continuity_mode: 'shot' as const } }
   const onDurationChange = vi.fn()
   render(<TooltipProvider><TaskSegmentEditor segment={segment} format="MiniMax" frameRate={24}
-    nativePolicy={{ version: 1, allow_vae_fallback: false }} onContentChange={vi.fn()} onDurationChange={onDurationChange} /></TooltipProvider>)
+    nativePolicy={{ version: 2 }} onContentChange={vi.fn()} onDurationChange={onDurationChange} /></TooltipProvider>)
   fireEvent.click(screen.getByRole('button', { name: 'Edit task duration' }))
   const input = screen.getByRole('textbox', { name: 'Duration' })
   fireEvent.change(input, { target: { value: '10s' } })

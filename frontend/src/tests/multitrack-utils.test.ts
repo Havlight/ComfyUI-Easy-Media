@@ -126,38 +126,20 @@ describe('multitrack utilities', () => {
     expect(normalized.tracks.filter((track) => track.type === 'video' || track.type === 'audio').map((track) => track.audio_locked)).toEqual([true, true])
   })
 
-  it('migrates a legacy segment lock to its audio track', () => {
-    const data = createDefaultTrackData()
-    data.tracks.push({
-      id: 'audio', name: 'Audio', type: 'audio', color: 'var(--multitrack-audio-bg)',
-      muted: false, locked: false,
-      segments: [{
-        id: 'clip', start_frame: 0, end_frame: 10, color: 'var(--multitrack-audio-bg)',
-        content: { media_type: 'audio', audio_locked: true } as never,
-      }],
-    })
-
-    const normalized = normalizeTrackData(data)
-    const track = normalized.tracks.find((item) => item.id === 'audio')!
-    expect(track.audio_locked).toBe(true)
-    expect(track.segments[0].content).not.toHaveProperty('audio_locked')
-  })
-
-  it('migrates legacy speaker clips and keeps only the first shared reference', () => {
+  it('keeps only the first shared reference on a media track', () => {
     const data = createDefaultTrackData()
     data.tracks.push({
       id: 'audio', name: 'Audio', type: 'audio', color: 'var(--multitrack-audio-bg)',
       muted: false, locked: false,
       segments: [
-        { id: 'first', start_frame: 0, end_frame: 24, color: 'var(--multitrack-audio-bg)', content: { media_type: 'audio', speaker_reference: true } },
-        { id: 'second', start_frame: 24, end_frame: 48, color: 'var(--multitrack-audio-bg)', content: { media_type: 'audio', speaker_reference: true } },
+        { id: 'first', start_frame: 0, end_frame: 24, color: 'var(--multitrack-audio-bg)', content: { media_type: 'audio', shared_reference: true } },
+        { id: 'second', start_frame: 24, end_frame: 48, color: 'var(--multitrack-audio-bg)', content: { media_type: 'audio', shared_reference: true } },
       ],
     })
 
     const normalized = normalizeTrackData(data)
     const track = normalized.tracks.find((item) => item.id === 'audio')!
     expect(track.segments.map((segment) => segment.content.shared_reference)).toEqual([true, false])
-    expect(track.segments.every((segment) => segment.content.speaker_reference === undefined)).toBe(true)
   })
 
   it('prefixes shared images in every task and reuses matching paths under the nine-image limit', () => {
@@ -481,38 +463,6 @@ describe('multitrack utilities', () => {
     ])
   })
 
-  it('uses only volume_db and muted for normalized audio settings', () => {
-    const normalized = normalizeTrackData({
-      muted: false,
-      volume: 0.5,
-      volume_db: -12,
-      tracks: [{
-        id: 'audio',
-        name: 'Audio 1',
-        type: 'audio',
-        color: 'var(--multitrack-audio-bg)',
-        muted: false,
-        locked: false,
-        segments: [{
-          id: 'audio-segment',
-          start_frame: 0,
-          end_frame: 24,
-          color: 'var(--multitrack-audio-bg)',
-          content: { media_type: 'audio', volume: 0, volume_db: -4, muted: false },
-        }],
-      }],
-      total_length: 24,
-      frame_rate: 24,
-    } as unknown as Parameters<typeof normalizeTrackData>[0])
-
-    expect(normalized.volume_db).toBe(-12)
-    expect('volume' in normalized).toBe(false)
-    expect(normalized.tracks[0]).toMatchObject({ name: 'Audio 0', solo: false, volume_db: 0 })
-    expect(normalized.tracks[0].segments[0].content).toMatchObject({ muted: false, volume_db: -4 })
-    expect('volume' in normalized.tracks[0].segments[0].content).toBe(false)
-    expect(multiTrackDbToLinearGain(6)).toBeCloseTo(1.995, 2)
-  })
-
   it('maintains task modes separately from media track types', () => {
     expect(MULTITRACK_TASK_MODES).toEqual(['default', 'ref', 'edit', 'l2v', 'passthrough'])
     expect(getMultiTrackTaskModeLabel('default', (key) => key)).toBe('multitrackTaskModes.default')
@@ -531,30 +481,33 @@ describe('multitrack utilities', () => {
     expect(normalizeTrackData(data).tracks[0].segments[0].content.task_mode).toBe('passthrough')
   })
 
-  it('migrates legacy segment tracks to task tracks', () => {
+  it('normalizes audio settings to volume_db and muted', () => {
     const normalized = normalizeTrackData({
-      tracks: [
-        {
-          id: 'track1',
-          name: 'Segment 1',
-          type: 'segment',
-          color: 'var(--muted)',
-          muted: false,
-          locked: false,
-          segments: [],
-        },
-      ],
-      total_length: 120,
+      muted: false,
+      volume_db: -12,
+      tracks: [{
+        id: 'audio',
+        name: 'Audio 1',
+        type: 'audio',
+        color: 'var(--multitrack-audio-bg)',
+        muted: false,
+        locked: false,
+        segments: [{
+          id: 'audio-segment',
+          start_frame: 0,
+          end_frame: 24,
+          color: 'var(--multitrack-audio-bg)',
+          content: { media_type: 'audio', volume_db: -4, muted: false },
+        }],
+      }],
+      total_length: 24,
       frame_rate: 24,
-    } as unknown as Parameters<typeof normalizeTrackData>[0])
-
-    expect(normalized).toMatchObject({ muted: false, volume_db: 0 })
-    expect(normalized.tracks[0]).toMatchObject({
-      name: 'Task 0',
-      type: 'task',
-      task_mode: 'default',
-      color: 'var(--multitrack-task-bg)',
     })
+
+    expect(normalized.volume_db).toBe(-12)
+    expect(normalized.tracks[0]).toMatchObject({ name: 'Audio 0', solo: false, volume_db: 0 })
+    expect(normalized.tracks[0].segments[0].content).toMatchObject({ muted: false, volume_db: -4 })
+    expect(multiTrackDbToLinearGain(6)).toBeCloseTo(1.995, 2)
   })
 
   it('normalizes invalid task segment modes and image lists', () => {
@@ -577,7 +530,6 @@ describe('multitrack utilities', () => {
               content: {
                 media_type: 'none',
                 task_mode: 'unknown',
-                text: 'Prompt',
                 images: 'not-an-array',
               },
             },
@@ -593,10 +545,8 @@ describe('multitrack utilities', () => {
       task_mode: 'default',
       continuity_mode: 'shot',
       ref_image_size: 'match',
-      user_prompt: 'Prompt',
       images: [],
     })
-    expect(normalized.tracks[0].segments[0].content.text).toBeUndefined()
   })
 
   it('does not migrate legacy second-based multitrack time fields', () => {
@@ -1477,42 +1427,6 @@ describe('multitrack utilities', () => {
       continuity_mode: 'context',
       ref_image_size: 'max',
     })
-  })
-
-  it('migrates legacy context swap continuity while normalizing track data', () => {
-    const data = createDefaultTrackData()
-    data.tracks[0].segments = [{
-      id: 'swap-task',
-      start_frame: 0,
-      end_frame: 120,
-      color: data.tracks[0].color,
-      content: {
-        media_type: 'none',
-        continuity_mode: 'context_swap',
-      },
-    }]
-
-    const normalized = normalizeTrackData(data)
-
-    expect(normalized.tracks[0].segments[0].content.continuity_mode).toBe('context_drift')
-    const matched = normalizeTrackData({
-      ...data,
-      tracks: data.tracks.map((track) => ({
-        ...track,
-        segments: track.segments.map((segment) => ({
-          ...segment,
-          content: {
-            ...segment.content,
-            continuity_mode: 'context_drift_matched' as const,
-            drift_seam_steps: 2,
-            drift_seam_noise: 0.3,
-          } as MultiTrackSegment['content'],
-        })),
-      })),
-    })
-    // The former matched mode is Drift without a taper; its seam-cap fields are obsolete.
-    expect(matched.tracks[0].segments[0].content).toMatchObject({ continuity_mode: 'context_drift', drift_taper_steps: 0 })
-    expect(JSON.stringify(matched)).not.toContain('drift_seam')
   })
 
   it('keeps valid non-default Drift taper settings and drops the rest while normalizing', () => {

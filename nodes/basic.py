@@ -19,7 +19,6 @@ from ..utils import (
     audio_db_to_gain,
     audio_is_muted,
     audio_volume_db,
-    build_minimax_multitrack_data_from_prompt_override,
     build_multitrack_data_from_prompt_override,
     burn_subtitles_with_ffmpeg,
     collect_multitrack_subtitle_segments,
@@ -31,7 +30,6 @@ from ..utils import (
     log_node_info,
     log_stage_time,
     iter_valid_audio_inputs,
-    is_minimax_prompt_override,
     merge_audio_inputs,
     audio_data_uris,
     image_tensor_data_uris,
@@ -43,7 +41,6 @@ from ..utils import (
     PromptEnhancerClient,
     prompt_enhancer_video_inputs,
     minimax_length_to_seconds,
-    minimax_prompt_override_media_types,
     merge_video_track_with_ffmpeg,
     canonicalize_multitrack_slot_content,
     multitrack_is_shared_reference,
@@ -935,10 +932,8 @@ def _build_tracks_info_and_media_outputs(
                 content = {}
 
             normalized_content = canonicalize_multitrack_slot_content(content)
-            normalized_content.pop("volume", None)
             if track_type in {"audio", "video"}:
                 normalized_content["shared_reference"] = multitrack_is_shared_reference(content)
-                normalized_content.pop("speaker_reference", None)
 
             if track_type == "task":
                 normalized_images: list[dict] = []
@@ -1024,12 +1019,10 @@ def _build_tracks_info_and_media_outputs(
                     track_video_segments.append((segment, rebuilt_video))
 
             normalized_segment = dict(segment)
-            normalized_segment.pop("volume", None)
             normalized_segment["content"] = normalized_content
             normalized_segments.append(normalized_segment)
 
         normalized_track = dict(track)
-        normalized_track.pop("volume", None)
         normalized_track["segments"] = normalized_segments
         track_total_length = timeline_total_length
         if format_name == "MiniMax" and track_type in ("audio", "video"):
@@ -1913,21 +1906,17 @@ class MultiTrackEditor(io.ComfyNode):
         audio: object = None,
         video: object = None,
     ) -> list[str]:
-        del resolution
-        raw_format = format[0] if isinstance(format, list) and format else format
+        del resolution, format
         raw_track_data = track_data[0] if isinstance(track_data, list) and track_data else track_data
         raw_override = (
             prompt_override[0]
             if isinstance(prompt_override, list) and len(prompt_override) == 1
             else prompt_override
         )
-        if raw_format == "MiniMax" and is_minimax_prompt_override(raw_override):
-            slot_types = minimax_prompt_override_media_types(raw_override)
-        else:
-            data = _parse_track_data(raw_track_data)
-            if prompt_override_has_value(raw_override):
-                data = build_multitrack_data_from_prompt_override(data, raw_override)
-            slot_types = multitrack_slot_media_types(data)
+        data = _parse_track_data(raw_track_data)
+        if prompt_override_has_value(raw_override):
+            data = build_multitrack_data_from_prompt_override(data, raw_override)
+        slot_types = multitrack_slot_media_types(data)
         values = {"image": image, "audio": audio, "video": video}
 
         def _missing_lazy_input(v):
@@ -1962,9 +1951,7 @@ class MultiTrackEditor(io.ComfyNode):
             prompt_override = prompt_override[0]
 
         data = _parse_track_data(track_data)
-        if format == "MiniMax" and is_minimax_prompt_override(prompt_override):
-            data = build_minimax_multitrack_data_from_prompt_override(data, prompt_override)
-        elif prompt_override_has_value(prompt_override):
+        if prompt_override_has_value(prompt_override):
             data = build_multitrack_data_from_prompt_override(data, prompt_override)
         if format == "MiniMax" and prompt_override_has_value(prompt_override) and data.get("h3_native"):
             from ..utils.h3_native_timing import reconcile_native_override

@@ -5,7 +5,7 @@ import hashlib
 import json
 from typing import Any
 
-from .h3_drift_taper import DEFAULT_DRIFT_TAPER, MATCHED_DRIFT_ALIAS, drift_taper
+from .h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_taper
 from .h3_native_timing import NativePlanError, compile_native_plan, native_task_segments
 
 
@@ -33,7 +33,7 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
         **({'drift_taper': list(taper) if isinstance(taper, tuple) else taper}
            if taper is not None and taper != DEFAULT_DRIFT_TAPER else {}),
         'task_mode': content.get('task_mode', 'default'),
-        'continuity_mode': {'context_swap': 'context_drift', 'context_test': 'context', MATCHED_DRIFT_ALIAS: 'context_drift'}.get(content.get('continuity_mode'), content.get('continuity_mode', 'shot')),
+        'continuity_mode': content.get('continuity_mode', 'shot'),
         'prompt': str(prompt or '').replace('@', ''),
         'ref_image_size': content.get('ref_image_size', 'match'),
         'images': [_content_fields(image)
@@ -64,8 +64,6 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
     states: dict[str, str] = {}
     for index, plan in enumerate(plans):
         segment = next((s for s in manifest.get('segments', {}).values() if s.get('segment_id') == plan.segment_id), {})
-        if not segment and not manifest.get('h3_native'):
-            segment = manifest.get('segments', {}).get(str(index), {})
         record = segment.get('generations', {}).get(str(segment.get('active_generation')), {})
         meta = record.get('native', {}).get('high', {}).get('metadata', {})
         recipe = record.get('native_recipe', meta.get('recipe', {}))
@@ -95,7 +93,5 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
             elif 'pending' in parent_states:
                 status = 'pending'
         states[plan.segment_id] = status
-        if plan.continuity_mode == 'context_masked':
-            status = 'retired'
         result.append({'segment_id': plan.segment_id, 'index': index, 'status': status})
     return result

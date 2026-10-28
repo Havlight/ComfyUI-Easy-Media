@@ -260,11 +260,7 @@ def _frame_value(value: Any, default: int = 0) -> int:
 
 def _h3_continuity_mode(value: Any) -> str:
     normalized = str(value or "shot").lower()
-    if normalized == "context_test":
-        return "context"
-    if normalized in {"context_swap", "context_drift_matched"}:
-        return "context_drift"
-    return normalized if normalized in {"context", "context_drift", "context_masked"} else "shot"
+    return normalized if normalized in {"context", "context_drift"} else "shot"
 
 
 def h3_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:

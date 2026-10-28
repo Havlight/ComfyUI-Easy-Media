@@ -52,7 +52,7 @@ def test_audio_clock_tracks_delivered_seams_without_accumulating_rounding():
 
 def _info(*segments):
     return {"format": "MiniMax", "frame_rate": 24,
-            "h3_native": {"version": 1, "allow_vae_fallback": False},
+            "h3_native": {"version": 2},
             "tracks": [{"type": "task", "segments": list(segments)}]}
 
 
@@ -90,7 +90,7 @@ def test_legacy_has_no_native_guarantee():
 
 
 def test_native_markers_expand_legal_stable_tasks():
-    info = {'h3_native': {'version': 1, 'allow_vae_fallback': False}, 'frame_rate': 24,
+    info = {'h3_native': {'version': 2}, 'frame_rate': 24,
             'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243, 'content': {}}]}],
             'task_markers': [{'id': 'cut', 'frame': 124}]}
     plans = timing.compile_native_plan(info)
@@ -100,14 +100,13 @@ def test_native_markers_expand_legal_stable_tasks():
         timing.compile_native_plan(info)
 
 
-def test_load_conversion_aligns_generation_only_and_preserves_legacy_policy():
+def test_load_conversion_aligns_generation_only():
     data = _info({"id": "a", "start_frame": 0, "end_frame": 240, "content": {}},
                  {"id": "b", "start_frame": 240, "end_frame": 480, "content": {"continuity_mode": "context"}})
-    data["h3_native"]["allow_vae_fallback"] = True
     media = {"type": "video", "locked": True, "segments": [{"start_frame": 0, "end_frame": 480}]}
     data["tracks"].append(media)
     converted = timing.normalize_native_timeline(data)
-    assert converted["h3_native"] == {"version": 2, "allow_vae_fallback": True}
+    assert converted["h3_native"] == {"version": 2}
     assert [(p.start_frame, p.end_frame) for p in timing.compile_native_plan(converted)] == [(0, 243), (243, 481)]
     assert converted["tracks"][1]["segments"] == media["segments"]
     assert data["tracks"][0]["segments"][0]["end_frame"] == 240

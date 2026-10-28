@@ -185,11 +185,7 @@ def commit_native_generation(
         segments: dict[str, Any] = {}
         for index, task in enumerate(tasks):
             sid = task["segment_id"]
-            prior = by_id.pop(sid, None)
-            if prior is None:
-                # Legacy versions remain visible during a first explicit migration.
-                prior = old_segments.get(str(index), {}) if not manifest.get("h3_native") else {}
-            segments[str(index)] = {**prior, "segment_id": sid}
+            segments[str(index)] = {**by_id.pop(sid, {}), "segment_id": sid}
         manifest["detached_segments"] = detached = by_id
         target = segments[str(segment_index)]
         if target["segment_id"] != meta["segment_id"]:

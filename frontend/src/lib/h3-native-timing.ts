@@ -38,7 +38,7 @@ export function isH3Continuation(segment: MultiTrackSegment): boolean {
  */
 export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
   if (!candidate.h3_native) return candidate
-  if (![1, 2].includes(candidate.h3_native.version) || (candidate.h3_native.allow_vae_fallback !== undefined && typeof candidate.h3_native.allow_vae_fallback !== 'boolean')) {
+  if (candidate.h3_native.version !== 2) {
     throw new H3NativeTimingError('POLICY_VERSION', 'Unsupported native timing policy.')
   }
   if (candidate.frame_rate !== 24) throw new H3NativeTimingError('FORMAT', 'Native H3 requires 24 fps.')
@@ -68,9 +68,7 @@ export function reconcileH3NativeTimeline(candidate: TrackData): TrackData {
       ...segment,
       start_frame: start,
       end_frame: start + duration,
-      content: { ...segment.content, continuity_mode: continuation
-        ? segment.content.continuity_mode === 'context_swap' ? 'context_drift' : segment.content.continuity_mode
-        : segment.content.continuity_mode === 'context_masked' ? 'context_masked' : 'shot' },
+      content: { ...segment.content, continuity_mode: continuation ? segment.content.continuity_mode : 'shot' },
     }
     const owner = candidate.tracks.find((track) => track.segments.some((item) => item.id === segment.id))
     if (owner?.locked && (next.start_frame !== segment.start_frame || next.end_frame !== segment.end_frame

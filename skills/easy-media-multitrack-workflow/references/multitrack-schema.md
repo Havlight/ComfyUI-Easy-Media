@@ -125,7 +125,7 @@ custom 示例：
 ```
 
 - `task_mode`: `default`、`l2v`、`ref`、`edit`。
-- `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）或 `context_drift`（上下文漂移控制）；旧值 `context_swap` 与 `context_drift_matched`（视为不渐变的漂移控制）仍可读取。
+- `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）或 `context_drift`（上下文漂移控制）；其他值会被拒绝。
 - `drift_taper_steps`（可选，0–12 的整数，默认 4）、`drift_taper_floor`（可选，0–1，默认 0）与 `drift_taper_low_only`（可选布尔值，默认 false）：仅对 `context_drift` 生效，调整衔接处的渐变；4 步、权重 0 即原本的漂移控制，0 步为不渐变。保持默认值时删除字段；用户没有要求时不要添加。
 - `ref_image_size`: `match` 或 `max`。
 - `images` 最多 9 张，顺序决定 Picture 引用顺序。
@@ -248,7 +248,6 @@ custom 示例：
 - 公用音频从源文件开头使用，最多 15 秒；公用视频使用该源视频作为各任务的参考视频。
 - 公用媒体是跨任务参考，不等于时间线原声复用。不要仅因为音频设为公用就同时设置 `audio_locked`；只有用户还要求原样保留音频并用它驱动时间线时，才分别评估 `audio_locked`。
 - 若用户既要某段音频/视频作为公用参考，又要它按普通时间线语义输出，应使用独立轨道或片段表达两个角色，并在交付摘要中说明。
-- `speaker_reference` 是旧版音频参考字段，只用于读取和迁移旧工作流；新建或更新工作流统一写 `shared_reference`。
 - 多个候选无法消歧时，列出媒体项或片段 ID、轨道名称、文件名、时长或帧范围，请用户指定；不要按第一项或最长片段选择。
 
 ## 自动编排决策

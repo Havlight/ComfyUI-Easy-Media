@@ -8,7 +8,7 @@ import type { TrackData } from '@/types/multitrack'
 
 function initialData(native = true): TrackData {
   return { frame_rate: 24, total_length: 243,
-    ...(native ? { h3_native: { version: 1 as const, allow_vae_fallback: false } } : {}),
+    ...(native ? { h3_native: { version: 2 as const } } : {}),
     tracks: [{ id: 'task', name: 'Task', type: 'task', color: 'var(--primary)', muted: false, locked: false,
       segments: [{ id: 'a', start_frame: 0, end_frame: 243, color: 'var(--primary)', content: { media_type: 'none', continuity_mode: 'shot' } }] }] }
 }
@@ -30,7 +30,7 @@ describe('native editor transactions', () => {
     expect(result.current.data.tracks[0].segments).toHaveLength(1)
     act(() => result.current.redo())
     expect(result.current.data.tracks[0].segments).toHaveLength(2)
-    expect(result.current.data.h3_native?.allow_vae_fallback).toBe(false)
+    expect(result.current.data.h3_native).toEqual({ version: 2 })
   })
 
   it('automatically aligns legacy data without confirmation and can undo/redo the whole conversion', () => {
@@ -59,16 +59,14 @@ describe('native editor transactions', () => {
     expect(result.current.canUndo).toBe(couldUndo)
   })
 
-  it('keeps source positions and native rules when VAE fallback is enabled', () => {
+  it('keeps source positions while smart split aligns native tasks', () => {
     const initial = initialData()
     initial.tracks.push({ ...initial.tracks[0], id: 'video', type: 'video', locked: true,
       segments: [{ ...initial.tracks[0].segments[0], id: 'media', end_frame: 243, content: { media_type: 'video', file_path: 'source.mp4' } }] })
     const { result } = renderHook(() => useEditor(initial))
-    act(() => result.current.commitEdit({ ...result.current.data, h3_native: { version: 1, allow_vae_fallback: true } }))
     act(() => result.current.commitEdit(() => applySmartSplitToMatchingTasks(result.current.data, 'media', { ranges: [[0, 120], [120, 243]] })))
     expect(result.current.data.tracks[0].segments.map((s) => s.end_frame)).toEqual([124, 243])
     expect(result.current.data.tracks[1].segments[0].end_frame).toBe(243)
-    expect(result.current.data.h3_native?.allow_vae_fallback).toBe(true)
   })
 
   it('enables strict native timing for the first edit of an empty H3 timeline', () => {
@@ -90,7 +88,7 @@ it('keeps native policy inactive for other formats and automatically aligns when
   delete edited.h3_native
   act(() => result.current.commitEdit(edited))
   expect(result.current.data.tracks[0].segments[0].end_frame).toBe(240)
-  expect(result.current.data.h3_native?.allow_vae_fallback).toBe(false)
+  expect(result.current.data.h3_native).toEqual({ version: 2 })
   rerender({ format: 'MiniMax' })
   expect(result.current.data.tracks[0].segments[0].end_frame).toBe(243)
 })

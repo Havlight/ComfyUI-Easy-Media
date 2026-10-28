@@ -52,7 +52,7 @@ export function useH3TimelineStatus(app: ComfyApp | undefined, node: object | un
     return () => { cancelled = true; clearTimeout(timer); controller.abort() }
   }, [app, serializedProjects, serialized, revision])
   const affected = [...new Set(results.flatMap((result) => result.tasks
-    .filter((task) => ['edited', 'parent_changed', 'legacy', 'retired'].includes(task.status))
+    .filter((task) => ['edited', 'parent_changed', 'legacy'].includes(task.status))
     .map((task) => task.segment_id.split(':marker:')[0])))]
   return { affected, error }
 }

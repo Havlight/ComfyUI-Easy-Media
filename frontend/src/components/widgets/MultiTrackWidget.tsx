@@ -743,7 +743,6 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
             content: {
               ...segment.content,
               shared_reference: enabled && segment.id === segmentId,
-              speaker_reference: undefined,
             },
           })),
         }

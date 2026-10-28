@@ -16,7 +16,7 @@ from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_pr
 from ..utils.h3_previous_frame import previous_frame_position
 from ..utils.h3_native_status import native_task_fingerprint
 from ..utils.h3_segment_loras import normalize_lora_plan
-from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, MATCHED_DRIFT_ALIAS, drift_stage_taper, drift_taper
+from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_stage_taper, drift_taper
 from ..utils.h3_lora_preflight import compile_project_loras
 from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
 from ..utils.h3_project import (
@@ -53,7 +53,7 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift"}
 H3_CONTEXT_SOURCE_FRAMES = 39
 
 
@@ -1057,14 +1057,10 @@ class EasyMultiTrackProject(io.ComfyNode):
         if not uses_linked_prepare:
             _require_minimax_h3_model(model)
         info = normalize_native_timeline(parse_tracks_info(kwargs.get("tracks_info")))
-        native_config = native_policy(info)
-        # Missing input in an old API workflow inherits its explicit Editor policy.
-        # A supplied Project value always wins, including an explicit false.
-        if kwargs.get("allow_vae_fallback") is not None:
-            value = _first_input(kwargs["allow_vae_fallback"])
-            if not isinstance(value, bool):
-                raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
-            native_config["allow_vae_fallback"] = value
+        allow_vae_fallback = _first_input(kwargs.get("allow_vae_fallback", False))
+        if not isinstance(allow_vae_fallback, bool):
+            raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
+        native_config = {**native_policy(info), "allow_vae_fallback": allow_vae_fallback}
         info["h3_native"] = native_config
         native_plans = compile_native_plan(info)
         hidden_inputs = getattr(cls, "hidden", None)
@@ -1213,8 +1209,6 @@ class EasyMultiTrackProject(io.ComfyNode):
                 raise NativePlanError("GENERATED_REFERENCE", "Generated project media would be encoded as a reference. Use its native context or allow VAE fallback: " + ", ".join(generated_paths))
             native_reference_reasons.append("GENERATED_REFERENCE")
         for task_index, entry in selected_entries:
-            if native_plans[task_index].continuity_mode == "context_masked" and not (h3_task_is_passthrough(entry) or is_passthrough):
-                raise NativePlanError("METHOD_RETIRED", "Masked is retired. Choose Context or Drift before generating.", native_plans[task_index].segment_id)
             if h3_task_is_passthrough(entry) or is_passthrough:
                 if native_plans[task_index].end_frame - native_plans[task_index].start_frame < 39:
                     raise NativePlanError("SEED_SHORT", "Native passthrough requires at least 39 delivered frames.", native_plans[task_index].segment_id)
@@ -1474,10 +1468,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 else "shot"
             )
             taper = drift_taper(content, native_plans[task_index].segment_id)
-            continuity_mode = {"context_test": "context", MATCHED_DRIFT_ALIAS: "context_drift"}.get(
-                continuity_mode, continuity_mode)
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
-            uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            uses_swap = continuity_mode == "context_drift"
             # The default taper keeps the original Drift graphs; low-only tapers
             # leave the high-resolution stage on the plain schedule.
             drift_low_inputs: dict[str, Any] = {}
@@ -1575,7 +1567,6 @@ class EasyMultiTrackProject(io.ComfyNode):
                       "upscale_model": selected_upscale_model, "upscale_by": upscale_by,
                       "seed": first_pass_seed, "sampling_plan": preset_name,
                       "task_content": content, "task_fingerprint": native_task_fingerprint(info, task_index), "disable_2nd_noise": disable_2nd_noise,
-                      "parent_index": task_index - 1,
                       "previous_segment_id": native_plans[task_index - 1].segment_id if task_index else None,
                       **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),
                       "fallback_reasons": fallback_reasons, "rho": 0.0,
@@ -1623,7 +1614,6 @@ class EasyMultiTrackProject(io.ComfyNode):
                         context_latent=first_pass_context_latent,
                         sigmas=first_pass_sigmas,
                         context_length=str(context_source_frames),
-                        seed=(first_pass_seed + task_index) & 0xFFFFFFFFFFFFFFFF,
                         continue_audio=True,
                         freeze_audio=False,
                         **drift_low_inputs,

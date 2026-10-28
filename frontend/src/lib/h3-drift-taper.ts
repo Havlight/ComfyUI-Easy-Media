@@ -17,8 +17,6 @@ import type {
  * original Drift graph and generation fingerprint.
  */
 export const DRIFT_TAPER_CONTINUITY_MODE: MultiTrackContinuityMode = 'context_drift'
-/** Former experimental mode: Drift without a taper. */
-export const MATCHED_DRIFT_ALIAS: MultiTrackContinuityMode = 'context_drift_matched'
 export const DRIFT_TAPER_DEFAULT_STEPS = 4
 export const DRIFT_TAPER_MAX_STEPS = 12
 export const DRIFT_TAPER_STEP_OPTIONS = [0, 1, 2, 3, 4, 6, 12] as const
@@ -119,18 +117,10 @@ export function continuityModeChangePatch(
 
 /**
  * Clean taper fields during track data normalization, after the continuity mode is
- * normalized. `wasMatchedAlias` marks a task saved with the former matched mode, which
- * becomes Drift without a taper. Non-Drift tasks, invalid values, defaults, and the
- * matched mode's obsolete seam-cap fields are dropped.
+ * normalized. Non-Drift tasks, invalid values and defaults are dropped.
  */
-export function normalizeDriftTaperContent(
-  content: MultiTrackSegmentContent,
-  wasMatchedAlias: boolean,
-): MultiTrackSegmentContent {
-  const normalized: MultiTrackSegmentContent & { drift_seam_steps?: unknown, drift_seam_noise?: unknown } = { ...content }
-  delete normalized.drift_seam_steps
-  delete normalized.drift_seam_noise
-  if (wasMatchedAlias && normalized.drift_taper_steps === undefined) normalized.drift_taper_steps = 0
+export function normalizeDriftTaperContent(content: MultiTrackSegmentContent): MultiTrackSegmentContent {
+  const normalized: MultiTrackSegmentContent = { ...content }
   const isDrift = normalized.continuity_mode === DRIFT_TAPER_CONTINUITY_MODE
   const steps = normalizeDriftTaperSteps(normalized.drift_taper_steps)
   const floor = normalizeDriftTaperFloor(normalized.drift_taper_floor)

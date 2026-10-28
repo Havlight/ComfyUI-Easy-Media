@@ -11,7 +11,7 @@ import type {
   TrackData,
 } from '@/types/multitrack'
 import { uuid } from './uuid'
-import { MATCHED_DRIFT_ALIAS, normalizeDriftTaperContent } from './h3-drift-taper'
+import { normalizeDriftTaperContent } from './h3-drift-taper'
 import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
 
@@ -395,9 +395,6 @@ function normalizeTaskMode(value: unknown): MultiTrackTaskMode {
 }
 
 function normalizeContinuityMode(value: unknown): MultiTrackContinuityMode {
-  if (value === 'context_swap' || value === MATCHED_DRIFT_ALIAS) return 'context_drift'
-  if (value === 'context_test') return 'context'
-  if (value === 'context_masked') return 'context_masked' // Preserve retired tasks until the user chooses a method.
   return typeof value === 'string' && (MULTITRACK_CONTINUITY_MODES as readonly string[]).includes(value)
     ? value as MultiTrackContinuityMode
     : MULTITRACK_DEFAULT_CONTINUITY_MODE
@@ -1601,18 +1598,17 @@ export function parseMultiTrackPreviewResolution(
   }
 }
 
-interface LegacyMultiTrackSegment extends Omit<MultiTrackSegment, 'start_frame' | 'end_frame'> {
+interface RawMultiTrackSegment extends Omit<MultiTrackSegment, 'start_frame' | 'end_frame'> {
   start_frame?: unknown
   end_frame?: unknown
 }
 
-interface LegacyMultiTrack extends Omit<MultiTrack, 'type' | 'segments'> {
-  type: MultiTrack['type'] | 'segment'
-  segments: LegacyMultiTrackSegment[]
+interface RawMultiTrack extends Omit<MultiTrack, 'segments'> {
+  segments: RawMultiTrackSegment[]
 }
 
-interface LegacyTrackData extends Omit<Partial<TrackData>, 'tracks' | 'total_length'> {
-  tracks: LegacyMultiTrack[]
+interface RawTrackData extends Omit<Partial<TrackData>, 'tracks' | 'total_length'> {
+  tracks: RawMultiTrack[]
   total_length?: unknown
 }
 
@@ -1631,30 +1627,22 @@ function normalizeSignedFrameValue(value: unknown): number | null {
   return numeric === null ? null : Math.round(numeric)
 }
 
-function omitLegacyVolume<T extends object>(value: T): Omit<T, 'volume'> {
-  const copy = { ...value } as T & { volume?: unknown }
-  delete copy.volume
-  return copy
-}
-
-function normalizeLegacySegment(segment: LegacyMultiTrackSegment): MultiTrackSegment {
+function normalizeRawSegment(segment: RawMultiTrackSegment): MultiTrackSegment {
   const startFrame = normalizeFrameValue(segment.start_frame)
     ?? 0
   const endFrame = normalizeFrameValue(segment.end_frame)
     ?? startFrame + 1
 
-  const content = {
-    ...omitLegacyVolume(segment.content),
+  const content: MultiTrackSegment['content'] = {
+    ...segment.content,
     muted: segment.content.muted === true,
     volume_db: normalizedVolumeDb(segment.content.volume_db),
-  } as MultiTrackSegment['content'] & { audio_locked?: unknown }
-  delete content.audio_locked
-  if (content.media_type === 'audio' || content.media_type === 'video') {
-    content.shared_reference = content.shared_reference === true || content.speaker_reference === true
   }
-  delete content.speaker_reference
+  if (content.media_type === 'audio' || content.media_type === 'video') {
+    content.shared_reference = content.shared_reference === true
+  }
   return {
-    ...omitLegacyVolume(segment),
+    ...segment,
     start_frame: startFrame,
     end_frame: Math.max(startFrame + 1, endFrame),
     origin_start_frame: normalizeSignedFrameValue(segment.origin_start_frame) ?? undefined,
@@ -1662,9 +1650,9 @@ function normalizeLegacySegment(segment: LegacyMultiTrackSegment): MultiTrackSeg
   }
 }
 
-function normalizeTrackSegments(track: LegacyMultiTrack): MultiTrackSegment[] {
+function normalizeTrackSegments(track: RawMultiTrack): MultiTrackSegment[] {
   const segments = track.segments
-    .map((segment) => normalizeLegacySegment(segment))
+    .map((segment) => normalizeRawSegment(segment))
     .sort((a, b) => a.start_frame - b.start_frame)
   if (track.type !== 'audio' && track.type !== 'video') return segments
 
@@ -1690,12 +1678,8 @@ function normalizeTaskSegmentContent(content: MultiTrackSegment['content']): Mul
     ref_image_size: normalizeRefImageSize(content.ref_image_size),
     images: Array.isArray(content.images) ? content.images : [],
   }
-  if (normalized.user_prompt === undefined && typeof normalized.text === 'string') {
-    normalized.user_prompt = normalized.text
-  }
-  delete normalized.text
   // Cleared taper settings arrive as undefined from spread patches; drop them with invalid values.
-  return normalizeDriftTaperContent(normalized, content.continuity_mode === MATCHED_DRIFT_ALIAS)
+  return normalizeDriftTaperContent(normalized)
 }
 
 function normalizeTotalLength(tracks: MultiTrack[], frameRate: number): number {
@@ -1738,56 +1722,32 @@ export function createDefaultTrackData(): TrackData {
   }
 }
 
-export function normalizeTrackData(raw: LegacyTrackData): TrackData {
+export function normalizeTrackData(raw: RawTrackData): TrackData {
   const frameRate = Math.max(1, Math.round(raw.frame_rate ?? MULTITRACK_DEFAULT_FRAME_RATE))
-  const tracks = raw.tracks.map((track) => {
-    const normalizedTrack = omitLegacyVolume(track)
-    const legacyAudioLocked = (track.type === 'audio' || track.type === 'video') && track.segments.some((segment) => (
-      (segment.content as MultiTrackSegment['content'] & { audio_locked?: unknown }).audio_locked === true
-    ))
+  const tracks = raw.tracks.map((track): MultiTrack => {
     const segments = normalizeTrackSegments(track)
     const audioSettings = {
       muted: track.muted === true,
       solo: track.solo === true,
       volume_db: normalizedVolumeDb(track.volume_db),
     }
-    if (track.type !== 'segment') {
-      if (track.type === 'task') {
-        return {
-          ...normalizedTrack,
-          ...audioSettings,
-          type: 'task' as const,
-          task_mode: normalizeTaskMode(track.task_mode),
-          color: track.color === 'var(--muted)' ? MULTITRACK_TRACK_COLORS.task : track.color,
-          segments: segments.map((segment) => ({
-            ...segment,
-            content: normalizeTaskSegmentContent(segment.content),
-          })),
-        }
-      }
+    if (track.type === 'task') {
       return {
-        ...normalizedTrack,
+        ...track,
         ...audioSettings,
-        type: track.type,
-        audio_locked: track.type === 'audio' || track.type === 'video'
-          ? track.audio_locked === true || legacyAudioLocked
-          : undefined,
-        visible: track.type === 'subtitle' ? track.visible !== false : track.visible,
-        segments,
-      } as MultiTrack
+        task_mode: normalizeTaskMode(track.task_mode),
+        segments: segments.map((segment) => ({
+          ...segment,
+          content: normalizeTaskSegmentContent(segment.content),
+        })),
+      }
     }
-
     return {
-      ...normalizedTrack,
+      ...track,
       ...audioSettings,
-      name: track.name,
-      type: 'task' as const,
-      task_mode: MULTITRACK_DEFAULT_TASK_MODE,
-      color: MULTITRACK_TRACK_COLORS.task,
-      segments: segments.map((segment) => ({
-        ...segment,
-        content: normalizeTaskSegmentContent(segment.content),
-      })),
+      audio_locked: track.type === 'audio' || track.type === 'video' ? track.audio_locked === true : undefined,
+      visible: track.type === 'subtitle' ? track.visible !== false : track.visible,
+      segments,
     }
   })
 
@@ -1809,7 +1769,7 @@ export function normalizeTrackData(raw: LegacyTrackData): TrackData {
   const taskMarkers = normalizeTaskMarkers(raw.task_markers, totalLength)
 
   return {
-    ...omitLegacyVolume(raw),
+    ...raw,
     muted: raw.muted ?? false,
     volume_db: normalizedVolumeDb(raw.volume_db),
     frame_rate: frameRate,

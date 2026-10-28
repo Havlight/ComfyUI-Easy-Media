@@ -16,7 +16,7 @@ def native_inputs(mode="single", fallback=False, **options):
     inputs = _h3_project_inputs(project_name="native-test", sampling_mode=_h3_sampling_mode(mode, **options))
     inputs["allow_vae_fallback"] = [fallback]
     info = inputs["tracks_info"][0]
-    info["h3_native"] = {"version": 1, "allow_vae_fallback": fallback}
+    info["h3_native"] = {"version": 2}
     first = info["tracks"][0]["segments"][0]
     first.update(id="a", end_frame=243)
     second = {"id": "b", "start_frame": 243, "end_frame": 481,
@@ -99,21 +99,6 @@ def _task_content(inputs):
 
 def _taper(node):
     return node["inputs"].get("seam_taper_steps"), node["inputs"].get("seam_taper_floor")
-
-
-@pytest.mark.parametrize("mode,options", DRIFT_MODES)
-def test_native_former_matched_mode_is_drift_without_a_taper(monkeypatch, mode, options):
-    module = _load_minimax_node(monkeypatch)
-    inputs = native_inputs(mode, **options)
-    _task_content(inputs)["continuity_mode"] = "context_drift_matched"
-    graph = module.EasyMultiTrackProject.execute(**inputs).expand
-    swaps = [n for n in graph.values() if n["class_type"] == "easy MiniMaxH3ContextSwap"]
-    assert len(swaps) == 1 and swaps[0]["inputs"]["context_length"] == "39"
-    high = [n for n in graph.values() if n["class_type"] == "easy h3NativeDriftModel"]
-    assert len(swaps) + len(high) == DRIFT_STAGES[mode]
-    assert all(_taper(n) == (0, 0.0) for n in [*swaps, *high])
-    plans = [json.loads(n["inputs"]["plan_json"]) for n in graph.values() if n["class_type"] == "easy h3NativePrepare"]
-    assert plans[1]["continuity_mode"] == "context_drift" and plans[1]["context_frames"] == 39
 
 
 @pytest.mark.parametrize("mode,options", DRIFT_MODES)
@@ -267,15 +252,6 @@ def test_native_locked_video_requests_raw_source_window_and_never_stretches(monk
         module.EasyMultiTrackProject.execute(**inputs)
 
 
-@pytest.mark.parametrize('mode', ['single', 'dual', 'selflift'])
-def test_retired_masked_blocks_generation_in_every_sampling_mode(monkeypatch, mode):
-    module = _load_minimax_node(monkeypatch)
-    inputs = native_inputs(mode, **({'upscale_by': [1.0]} if mode == 'dual' else {}))
-    inputs['tracks_info'][0]['tracks'][0]['segments'][1]['content']['continuity_mode'] = 'context_masked'
-    with pytest.raises(ValueError, match='METHOD_RETIRED'):
-        module.EasyMultiTrackProject.execute(**inputs)
-
-
 def test_native_lock_video_rejects_task_modes_that_ignore_video(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs()
@@ -333,17 +309,6 @@ def test_source_resize_rebuilds_both_stage_clocks_without_reencoding_native_audi
     assert bool(output.values[3]['high']['fallback_history']) is not imported
 
 
-def test_project_fallback_explicit_false_overrides_legacy_editor_preference(monkeypatch):
-    module = _load_minimax_node(monkeypatch)
-    inputs = native_inputs(fallback=True)
-    inputs.pop("allow_vae_fallback")
-    inputs['tracks_info'][0]['tracks'][0]['segments'][1]['content']['images'] = [{'source_type': 'previous_frame'}]
-    module.EasyMultiTrackProject.execute(**inputs)
-    inputs['allow_vae_fallback'] = [False]
-    with pytest.raises(ValueError, match='GENERATED_IMAGE'):
-        module.EasyMultiTrackProject.execute(**inputs)
-
-
 def test_all_samplers_depend_on_whole_run_preflight(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs('dual', upscale_by=[1.0])
@@ -382,7 +347,7 @@ def test_runtime_gate_rejects_invalid_second_schedule_before_task_work(monkeypat
             model, object(), object(), sigmas=torch.tensor([1.0, 0.0]), second_sigmas=torch.tensor(bad))
 
 @pytest.mark.parametrize('duration', [120, 124, 125])
-@pytest.mark.parametrize('method', ['shot', 'context', 'context_drift', 'context_drift_matched'])
+@pytest.mark.parametrize('method', ['shot', 'context', 'context_drift'])
 @pytest.mark.parametrize('mode', ['single', 'dual', 'selflift'])
 def test_locked_raw_windows_are_native_in_all_sampling_modes(monkeypatch, duration, method, mode):
     module = _load_minimax_node(monkeypatch)

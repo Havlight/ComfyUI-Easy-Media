@@ -1,15 +1,12 @@
 export type MultiTrackType = 'task' | 'video' | 'audio' | 'subtitle'
 
 export interface H3NativePolicy {
-  version: 1 | 2
-  /** Legacy editor preference, retained only for Project migration. */
-  allow_vae_fallback?: boolean
+  version: 2
 }
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
-// context_swap and context_drift_matched are legacy names that normalize to context_drift.
-export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_drift_matched' | 'context_swap' | 'context_masked'
+export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift'
 
 export type MultiTrackRefImageSize = 'match' | 'max'
 
@@ -72,8 +69,6 @@ export interface MultiTrackSegmentContent {
   media_index?: number
   shared_reference?: boolean
   shared_media_index?: number
-  /** @deprecated Migrated to shared_reference when legacy workflows are loaded. */
-  speaker_reference?: boolean
   subtitle_style?: MultiTrackSubtitleStyle
   subtitle_speech?: MultiTrackSubtitleSpeechSettings
 }

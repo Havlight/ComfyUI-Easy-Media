@@ -71,14 +71,6 @@ def test_fallback_does_not_hide_corruption_or_changed_parent_range(tmp_path):
         check(tmp_path, moved, [1], recipe(allow_vae_fallback=True))
 
 
-def test_later_retired_task_stops_whole_run(tmp_path):
-    from dataclasses import replace
-    plans = [_plan(), replace(_plan('b', 243, 51, 'a'), continuity_mode='context_masked')]
-    with pytest.raises(timing.NativePlanError, match='Task 2.*METHOD_RETIRED'):
-        check(tmp_path, plans, [0, 1])
-    assert not (tmp_path / 'project.json').exists()
-
-
 def test_edited_parent_content_still_continues_from_its_saved_latent(tmp_path):
     # Prompt-level edits do not change the saved latent a continuation reads.
     plans = [_plan(), _plan('b', 243, 51, 'a')]

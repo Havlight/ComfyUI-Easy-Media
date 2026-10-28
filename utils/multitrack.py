@@ -66,11 +66,7 @@ def canonicalize_multitrack_slot_content(content: dict) -> dict:
 
 
 def multitrack_is_shared_reference(content: dict) -> bool:
-    """Accept the unified flag and the legacy audio speaker-reference flag."""
-    return isinstance(content, dict) and (
-        content.get("shared_reference") is True
-        or content.get("speaker_reference") is True
-    )
+    return isinstance(content, dict) and content.get("shared_reference") is True
 
 
 def multitrack_is_muted_image(content: dict) -> bool:
@@ -114,7 +110,6 @@ def multitrack_shared_task_images(tracks: list) -> list[dict]:
                     continue
                 normalized = canonicalize_multitrack_slot_content(image)
                 normalized["shared_reference"] = True
-                normalized.pop("speaker_reference", None)
                 shared.append(normalized)
                 seen.add(identity)
     return shared[:MAX_MULTITRACK_TASK_IMAGES]
@@ -144,7 +139,6 @@ def multitrack_task_images_with_shared(
         if matching is None:
             normalized.pop("muted", None)
         normalized["shared_reference"] = True
-        normalized.pop("speaker_reference", None)
         prefixed.append(normalized)
     local = [
         canonicalize_multitrack_slot_content(image)

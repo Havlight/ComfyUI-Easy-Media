@@ -31,10 +31,8 @@ def native_stage_layout(recipe: dict[str, Any]) -> dict[str, tuple[str, tuple[in
     return stages
 
 
-def generation_snapshot(manifest: dict[str, Any], sid: str, index: int) -> dict[str, Any]:
+def generation_snapshot(manifest: dict[str, Any], sid: str) -> dict[str, Any]:
     matches = [(i, s) for i, s in manifest.get('segments', {}).items() if s.get('segment_id') == sid]
-    if not matches and not manifest.get('h3_native'):
-        matches = [(str(index), manifest.get('segments', {}).get(str(index), {}))]
     if not matches:
         raise NativePlanError('SOURCE_MISSING', 'Generate or restore the required predecessor first.', sid)
     saved_index, segment = matches[0]
@@ -79,16 +77,14 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
     errors: list[str] = []
     layout = native_stage_layout(recipe) if recipe['sampling_mode'] != 'passthrough' else {}
 
-    def existing(sid: str, index: int) -> dict[str, Any]:
+    def existing(sid: str) -> dict[str, Any]:
         if sid not in state['existing']:
-            state['existing'][sid] = generation_snapshot(manifest, sid, index)
+            state['existing'][sid] = generation_snapshot(manifest, sid)
         return state['existing'][sid]
 
     for index in selected:
         plan = plans[index]
         try:
-            if plan.continuity_mode == 'context_masked' and index not in passthrough:
-                raise NativePlanError('METHOD_RETIRED', 'Masked is retired. Choose Context or Drift before generating.', plan.segment_id)
             if index in previous_frames:
                 if index == 0 or recipe['target_width'] == recipe['target_height'] == 32:
                     raise NativePlanError('PREVIOUS_FRAME', 'A previous-frame reference requires a preceding video task.', plan.segment_id)
@@ -96,7 +92,7 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                     raise NativePlanError('IMAGE_SLOTS', 'At most nine image references are supported.', plan.segment_id)
                 parent = plans[index - 1]
                 if parent.segment_id not in contracts:
-                    source = existing(parent.segment_id, index - 1)
+                    source = existing(parent.segment_id)
                     record = source['record']
                     if not record.get('video') or record.get('sampling_pass') == 'first':
                         raise NativePlanError('PREVIOUS_FRAME', 'The predecessor needs a completed video.', plan.segment_id)
@@ -120,7 +116,7 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
             if plan.parent_segment_id:
                 parent = plans[index - 1]
                 planned = contracts.get(parent.segment_id)
-                source = None if planned is not None else existing(parent.segment_id, index - 1)
+                source = None if planned is not None else existing(parent.segment_id)
                 record = source['record'] if source else {}
                 # Content edits leave the saved latent usable; the run logs them.
                 imported = False

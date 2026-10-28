@@ -8,7 +8,7 @@ const segment = (id: string, start: number, end: number, continuation = false): 
   content: { media_type: 'none', continuity_mode: continuation ? 'context' : 'shot' },
 })
 const data = (segments: MultiTrackSegment[]): TrackData => ({
-  frame_rate: 24, total_length: 1000, h3_native: { version: 1, allow_vae_fallback: false },
+  frame_rate: 24, total_length: 1000, h3_native: { version: 2 },
   tracks: [{ id: 'tasks', name: 'Task 0', type: 'task', color: 'var(--primary)', muted: false, locked: false, segments }],
 })
 
@@ -19,12 +19,10 @@ describe('shared H3 native timing contract', () => {
   for (const test of fixtures.splits) it(`splits at ${test.requested}, continuation=${test.continuation}`, () => {
     expect(h3NativeSplitFrame(test.start, test.end, test.requested, test.continuation)).toBe(test.expected)
   })
-  it('uses identical geometry with fallback on or off', () => {
+  it('aligns a shot and its continuation to the native grid', () => {
     const input = data([segment('a', 0, 240), segment('b', 240, 480, true)])
     const strict = reconcileH3NativeTimeline(input)
     expect(strict.tracks[0].segments.map((s) => [s.start_frame, s.end_frame])).toEqual([[0, 243], [243, 481]])
-    input.h3_native!.allow_vae_fallback = true
-    expect(reconcileH3NativeTimeline(input).tracks).toEqual(strict.tracks)
   })
   it('preserves total duration when splitting a Shot into Shot and continuation', () => {
     const parts = splitH3NativeTask(segment('a', 0, 243), 120, 'b')
