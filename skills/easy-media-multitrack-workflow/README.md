@@ -123,6 +123,7 @@ easy-media-multitrack-workflow/
 ├── references/
 │   ├── multitrack-schema.md
 │   ├── execution-api.md
+│   ├── plan-file.md
 │   ├── template-workflow.md
 │   └── upload-api.md
 └── scripts/

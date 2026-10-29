@@ -75,6 +75,7 @@ import {
   type SubtitleSpeechSettings,
 } from '@/lib/subtitle-speech'
 import { createSubtitleSegmentsFromSrt } from '@/lib/subtitle-srt'
+import { exportH3Plan } from '@/lib/h3-plan'
 import { loadBrowserAudioMetadata } from '@/lib/audio-utils'
 import { invalidateMediaListCache } from '@/stores/media-list-store'
 import { uuid } from '@/lib/uuid'
@@ -84,6 +85,7 @@ import type { MultiTrack, MultiTrackSegment, MultiTrackSegmentContent, MultiTrac
 import { MultiTrackRuler, MULTITRACK_LEFT_GUTTER, MULTITRACK_RIGHT_RESERVE } from './multitrack/MultiTrackRuler'
 import { MultiTrackToolbar } from './multitrack/MultiTrackToolbar'
 import { PreviewArea } from './multitrack/PreviewArea'
+import { H3PlanImportDialog, type H3PlanImportRequest } from './multitrack/H3PlanImportDialog'
 import { SplitTaskSegmentDialog } from './multitrack/SplitTaskSegmentDialog'
 import { TrackArea } from './multitrack/TrackArea'
 
@@ -265,6 +267,8 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
 
   const nativeEditing = useH3NativeEditing(committedData, resolutionInput.format, commitTrackChange)
   const savedStatus = useH3TimelineStatus(app, node, committedData, resolutionInput.format === 'MiniMax')
+  const [planImport, setPlanImport] = useState<H3PlanImportRequest | null>(null)
+  const planFileInputRef = useRef<HTMLInputElement>(null)
   const commitNormalizedTrackChange = nativeEditing.commitEdit
 
   function setSingleSelectedSegment(segmentId: string | null) {
@@ -375,6 +379,20 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
         candidate.id === markerId ? { ...candidate, frame: snappedFrame } : candidate
       )),
     })
+  }
+
+  function handleExportPlan() {
+    const text = `${JSON.stringify(exportH3Plan(committedData), null, 2)}\n`
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${savedStatus.projects[0]?.name || 'h3'}-plan.json`
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  async function handleImportPlanFile(file: File) {
+    setPlanImport({ fileName: file.name, text: await file.text() })
   }
 
   function handleTaskOverviewChange(enabled: boolean) {
@@ -1523,6 +1541,20 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
             canRedo={canRedo}
             onUndo={undoTrackChange}
             onRedo={redoTrackChange}
+            onExportPlan={resolutionInput.format === 'MiniMax' ? handleExportPlan : undefined}
+            onImportPlan={resolutionInput.format === 'MiniMax' ? () => planFileInputRef.current?.click() : undefined}
+          />
+          <input
+            ref={planFileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            data-testid="h3-plan-file-input"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0]
+              event.currentTarget.value = ''
+              if (file) void handleImportPlanFile(file)
+            }}
           />
           <div
             data-testid="multitrack-timeline-panel"
@@ -1623,6 +1655,19 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
               </div>
             </div>
           ) : null}
+          <H3PlanImportDialog
+            request={planImport}
+            current={committedData}
+            format={resolutionInput.format}
+            app={app}
+            projects={savedStatus.projects}
+            currentStatuses={savedStatus.results}
+            onApply={(next) => {
+              commitNormalizedTrackChange(next)
+              setPlanImport(null)
+            }}
+            onClose={() => setPlanImport(null)}
+          />
           <SplitTaskSegmentDialog
             segment={splittingTaskSegment}
             frameRate={data.frame_rate}

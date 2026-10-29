@@ -1,15 +1,43 @@
 import { useEffect, useState } from 'react'
 import type { ComfyApp } from '@comfyorg/comfyui-frontend-types'
 import type { TrackData } from '@/types/multitrack'
-import { connectedH3ProjectNodes, type SnapshotNode } from '@/lib/h3-project-snapshot'
+import { connectedH3ProjectNodes, type ConnectedH3Project, type SnapshotNode } from '@/lib/h3-project-snapshot'
 import { useH3ProjectSnapshots } from '@/hooks/use-h3-project-snapshots'
 
-interface TimelineTaskStatus { segment_id: string; index: number; status: string }
-interface TimelineStatus { project_name: string; tasks: TimelineTaskStatus[] }
+export interface TimelineTaskStatus { segment_id: string; index: number; status: string }
+export interface TimelineStatus { project_name: string; tasks: TimelineTaskStatus[] }
+
+/** Statuses that mean a saved result no longer matches its task. */
+export const H3_STALE_STATUSES = new Set(['edited', 'parent_changed', 'legacy'])
 
 export function linkedH3Projects(nodeInput: object | undefined): string[] {
   return [...new Set(connectedH3ProjectNodes(nodeInput as SnapshotNode | undefined)
     .map((node) => String(node.widgets?.find((widget) => widget.name === 'project_name')?.value || 'default')))].sort()
+}
+
+/** Ask each linked Project how its saved results compare with `data`. */
+export function fetchH3TimelineStatuses(
+  app: ComfyApp,
+  projects: ConnectedH3Project[],
+  data: TrackData,
+  signal?: AbortSignal,
+): Promise<TimelineStatus[]> {
+  return Promise.all(projects.map(async (project) => {
+    const response = await app.api.fetchApi('/easy-media/project/timeline-status', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+      body: JSON.stringify({ project_name: project.name, tracks_info: data, project_snapshot: project.project_snapshot }),
+    })
+    const payload = await response.json()
+    if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
+    return payload as TimelineStatus
+  }))
+}
+
+/** Task ids whose status matches, across every linked Project; marker splits map to their task. */
+export function h3TasksWithStatus(results: TimelineStatus[], statuses: ReadonlySet<string>): string[] {
+  return [...new Set(results.flatMap((result) => result.tasks
+    .filter((task) => statuses.has(task.status))
+    .map((task) => task.segment_id.split(':marker:')[0])))]
 }
 
 /** Saved-result status is advisory; execution still performs full preflight. */
@@ -38,21 +66,12 @@ export function useH3TimelineStatus(app: ComfyApp | undefined, node: object | un
     let cancelled = false
     const controller = new AbortController()
     const timer = setTimeout(() => {
-      void Promise.all(projects.map(async (project) => {
-        const response = await app.api.fetchApi('/easy-media/project/timeline-status', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-          body: JSON.stringify({ project_name: project.name, tracks_info: JSON.parse(serialized), project_snapshot: project.project_snapshot }),
-        })
-        const payload = await response.json()
-        if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`)
-        return payload as TimelineStatus
-      })).then((value) => { if (!cancelled) { setResults(value); setError(null) } })
+      void fetchH3TimelineStatuses(app, projects, JSON.parse(serialized) as TrackData, controller.signal)
+        .then((value) => { if (!cancelled) { setResults(value); setError(null) } })
         .catch((cause: unknown) => { if (!cancelled) { setResults([]); setError(cause instanceof Error ? cause.message : String(cause)) } })
     }, 400)
     return () => { cancelled = true; clearTimeout(timer); controller.abort() }
   }, [app, serializedProjects, serialized, revision])
-  const affected = [...new Set(results.flatMap((result) => result.tasks
-    .filter((task) => ['edited', 'parent_changed', 'legacy'].includes(task.status))
-    .map((task) => task.segment_id.split(':marker:')[0])))]
-  return { affected, error }
+  const affected = h3TasksWithStatus(results, H3_STALE_STATUSES)
+  return { affected, error, results, projects: snapshots }
 }

@@ -3,6 +3,22 @@ import { H3NativeTimingError, reconcileH3NativeTimeline } from '@/lib/h3-native-
 import { normalizeTrackData } from '@/lib/multitrack-utils'
 import type { TrackData } from '@/types/multitrack'
 
+/**
+ * Normalize an edit and, for MiniMax, apply native timing; throws H3NativeTimingError to
+ * reject it. Plan imports use the same rules as manual edits.
+ */
+export function prepareH3NativeEdit(current: TrackData, candidate: TrackData, format: string | undefined): TrackData {
+  const next = normalizeTrackData(candidate)
+  if (format !== 'MiniMax') return { ...next, h3_native: current.h3_native }
+  for (const track of normalizeTrackData(current).tracks.filter((item) => item.locked)) {
+    const updated = next.tracks.find((item) => item.id === track.id)
+    if ((!updated || updated.locked) && JSON.stringify(track.segments) !== JSON.stringify(updated?.segments)) {
+      throw new H3NativeTimingError('TRACK_LOCKED', 'Unlock the track before editing its contents.')
+    }
+  }
+  return reconcileH3NativeTimeline({ ...next, h3_native: { ...next.h3_native, version: 2 } })
+}
+
 /** One accepted edit, including native ripple adjustments, is one history entry. */
 export function useH3NativeEditing(current: TrackData, format: string | undefined, commit: (next: TrackData) => void) {
   const [error, setError] = useState<{ code: string; message: string; segmentId?: string } | null>(null)
@@ -15,15 +31,7 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
   commitRef.current = commit
 
   function prepare(candidate: TrackData): TrackData {
-    const next = normalizeTrackData(candidate)
-    if (format !== 'MiniMax') return { ...next, h3_native: current.h3_native }
-    for (const track of normalizeTrackData(current).tracks.filter((item) => item.locked)) {
-      const updated = next.tracks.find((item) => item.id === track.id)
-      if ((!updated || updated.locked) && JSON.stringify(track.segments) !== JSON.stringify(updated?.segments)) {
-        throw new H3NativeTimingError('TRACK_LOCKED', 'Unlock the track before editing its contents.')
-      }
-    }
-    return reconcileH3NativeTimeline({ ...next, h3_native: { ...next.h3_native, version: 2 } })
+    return prepareH3NativeEdit(current, candidate, format)
   }
 
   function report(cause: unknown) {

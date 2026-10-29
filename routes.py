@@ -63,6 +63,7 @@ from .modules.asr.subtitle_recognition import (
     subtitle_recognition_options,
     validate_subtitle_recognition_method,
 )
+from .utils.plan_media import PlanMediaError, resolve_plan_media
 from .utils.speech import generate_voxcpm2_speech
 from .utils.workflow_submission import register_workflow_routes
 from .utils.video import (
@@ -602,6 +603,33 @@ async def handle_video_source_fps(request: web.Request) -> web.Response:
                 temp_path.unlink(missing_ok=True)
             except OSError as error:
                 print(f"[Easy Media] Failed to remove frame rate probe temporary video: {error}")
+
+
+MAX_PLAN_MEDIA_ITEMS = 256
+
+
+def _resolve_plan_item(item: object) -> dict:
+    try:
+        return resolve_plan_media(item)
+    except PlanMediaError as error:
+        return {"error": str(error)}
+
+
+@PromptServer.instance.routes.post("/easy-media/plan/resolve-media")
+async def handle_plan_resolve_media(request: web.Request) -> web.Response:
+    """Copy or check the files an imported H3 plan names; one result or error per item."""
+    try:
+        data = await request.json()
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) > MAX_PLAN_MEDIA_ITEMS:
+            raise ValueError(f"items must be a list of at most {MAX_PLAN_MEDIA_ITEMS} references")
+        results = await asyncio.to_thread(lambda: [_resolve_plan_item(item) for item in items])
+        return web.json_response({"results": results})
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except Exception as error:
+        traceback.print_exc()
+        return web.json_response({"error": f"Plan media import failed: {error}"}, status=500)
 
 
 MAX_AUDIO_PROBE_ITEMS = 64
