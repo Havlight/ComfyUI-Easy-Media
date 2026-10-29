@@ -3,6 +3,8 @@ import { prepareH3NativeEdit } from '@/hooks/use-h3-native-editing'
 import {
   buildH3PlanImport,
   exportH3Plan,
+  formatH3PlanTaskNumbers,
+  groupH3PlanIssues,
   h3PlanMediaKey,
   h3PlanMediaRequests,
   parseH3Plan,
@@ -163,6 +165,18 @@ describe('H3 plan files', () => {
 
     expect(codes(result)).toEqual(['warning:1:unknown_field', 'warning:1:prompt_reference'])
     expect(result.issues[1].params).toEqual({ tag: '<Audio 3>' })
+  })
+
+  it('merges issues that say the same thing about several tasks', () => {
+    const tag = (task: number, name: string) => ({ level: 'warning' as const, task, code: 'prompt_reference', params: { tag: name } })
+    const groups = groupH3PlanIssues([
+      { level: 'warning', code: 'foreign_ids', params: { count: 4 } },
+      tag(2, '<Video 1>'), tag(1, '<Video 1>'), tag(1, '<Video 2>'), tag(3, '<Video 1>'), tag(5, '<Video 1>'),
+    ])
+
+    expect(groups.map((group) => [group.code, group.params?.tag ?? null, formatH3PlanTaskNumbers(group.tasks)])).toEqual([
+      ['foreign_ids', null, ''], ['prompt_reference', '<Video 1>', '1–3, 5'], ['prompt_reference', '<Video 2>', '1'],
+    ])
   })
 
   it('rejects files that are not version 1 plans', () => {

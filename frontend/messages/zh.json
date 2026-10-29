@@ -549,6 +549,7 @@
     "apply": "套用",
     "blocked": "先修正上方列出的 {count} 个错误才能套用。",
     "taskPrefix": "第 {n} 段：",
+    "tasksPrefix": "第 {list} 段：",
     "columnChange": "变更",
     "columnSeconds": "秒数",
     "columnMode": "模式",
@@ -592,7 +593,7 @@
     "issue_previous_frame_first": "第一段没有上一段尾帧可以参考。",
     "issue_native": "时间轴无法套用这个规划：{message}",
     "issue_timing_adjusted": "时间已调整为 {start}s–{end}s（{seconds}s），以符合 H3 的帧格。",
-    "issue_prompt_reference": "提示词中的 {tag} 不对应这一段的任何参考。",
+    "issue_prompt_reference": "提示词中的 {tag} 没有对应的参考。",
     "issue_resolve_failed": "无法检查文件：{message}",
     "issue_status_unavailable": "无法比对已存结果：{message}"
   },

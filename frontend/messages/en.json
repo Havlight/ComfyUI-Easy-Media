@@ -549,6 +549,7 @@
     "apply": "Apply",
     "blocked": "Fix the {count} error(s) listed above before applying.",
     "taskPrefix": "Task {n}: ",
+    "tasksPrefix": "Tasks {list}: ",
     "columnChange": "Change",
     "columnSeconds": "Seconds",
     "columnMode": "Mode",
@@ -592,7 +593,7 @@
     "issue_previous_frame_first": "The first task has no previous frame to reference.",
     "issue_native": "The timeline cannot take this plan: {message}",
     "issue_timing_adjusted": "Timing adjusted to {start}s–{end}s ({seconds}s) to fit H3's frame grid.",
-    "issue_prompt_reference": "{tag} in the prompt names no reference of this task.",
+    "issue_prompt_reference": "{tag} in the prompt matches no reference.",
     "issue_resolve_failed": "The files could not be checked: {message}",
     "issue_status_unavailable": "Saved results could not be compared: {message}"
   },

@@ -633,3 +633,36 @@ export function buildH3PlanImport(
   const blocked = issues.some((item) => item.level === 'error')
   return { data: blocked ? null : data, rows, issues }
 }
+
+export interface H3PlanIssueGroup {
+  level: H3PlanIssue['level']
+  code: string
+  params?: H3PlanIssue['params']
+  /** 1-based task numbers in ascending order; empty for the whole file. */
+  tasks: number[]
+}
+
+/** Merge issues that say the same thing about several tasks, in the order each first appears. */
+export function groupH3PlanIssues(issues: readonly H3PlanIssue[]): H3PlanIssueGroup[] {
+  const groups = new Map<string, H3PlanIssueGroup>()
+  for (const item of issues) {
+    const key = JSON.stringify([item.level, item.code, item.params ?? null])
+    const group = groups.get(key) ?? { level: item.level, code: item.code, ...(item.params ? { params: item.params } : {}), tasks: [] }
+    groups.set(key, group)
+    if (item.task !== undefined && !group.tasks.includes(item.task)) group.tasks.push(item.task)
+  }
+  for (const group of groups.values()) group.tasks.sort((a, b) => a - b)
+  return [...groups.values()]
+}
+
+/** Task numbers with runs collapsed: [1, 2, 3, 5] → "1–3, 5". */
+export function formatH3PlanTaskNumbers(tasks: readonly number[]): string {
+  const parts: string[] = []
+  for (let index = 0; index < tasks.length;) {
+    let end = index
+    while (end + 1 < tasks.length && tasks[end + 1] === tasks[end] + 1) end += 1
+    parts.push(end > index ? `${tasks[index]}–${tasks[end]}` : String(tasks[index]))
+    index = end + 1
+  }
+  return parts.join(', ')
+}

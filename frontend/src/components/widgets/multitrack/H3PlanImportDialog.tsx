@@ -14,12 +14,15 @@ import { prepareH3NativeEdit } from '@/hooks/use-h3-native-editing'
 import { fetchH3TimelineStatuses, H3_STALE_STATUSES, h3TasksWithStatus, type TimelineStatus } from '@/hooks/use-h3-timeline-status'
 import {
   buildH3PlanImport,
+  formatH3PlanTaskNumbers,
+  groupH3PlanIssues,
   h3PlanMediaKey,
   h3PlanMediaRequests,
   parseH3Plan,
   type H3PlanChange,
   type H3PlanImport,
   type H3PlanIssue,
+  type H3PlanIssueGroup,
   type H3PlanMediaRequest,
   type H3PlanMediaResult,
 } from '@/lib/h3-plan'
@@ -128,12 +131,16 @@ export function H3PlanImportDialog({
   }, [request])
 
   const result = preview.state === 'ready' ? preview.result : null
-  const errors = result?.issues.filter((item) => item.level === 'error') ?? []
-  const warnings = result?.issues.filter((item) => item.level === 'warning') ?? []
+  const groups = groupH3PlanIssues(result?.issues ?? [])
+  const errors = groups.filter((item) => item.level === 'error')
+  const warnings = groups.filter((item) => item.level === 'warning')
   const counts = (change: H3PlanChange) => result?.rows.filter((row) => row.change === change).length ?? 0
-  const issueText = (item: H3PlanIssue) => (
-    `${item.task ? t('h3Plan.taskPrefix', { n: item.task }) : ''}${t(`h3Plan.issue_${item.code}`, item.params)}`
-  )
+  const issueText = (item: H3PlanIssueGroup) => {
+    const prefix = item.tasks.length === 0 ? ''
+      : item.tasks.length === 1 ? t('h3Plan.taskPrefix', { n: item.tasks[0] })
+        : t('h3Plan.tasksPrefix', { list: formatH3PlanTaskNumbers(item.tasks) })
+    return `${prefix}${t(`h3Plan.issue_${item.code}`, item.params)}`
+  }
 
   return (
     <Dialog open={request !== null} onOpenChange={(open) => { if (!open) onClose() }}>

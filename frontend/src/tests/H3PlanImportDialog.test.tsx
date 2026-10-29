@@ -67,4 +67,15 @@ describe('H3PlanImportDialog', () => {
     expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByTestId('h3-plan-blocked').textContent).toBe('Fix the 1 error(s) listed above before applying.')
   })
+
+  it('names the tasks once when several share a warning', async () => {
+    renderDialog(JSON.stringify({ version: 1, tasks: [
+      { id: 't1', audios: [{ track: 'gone' }] },
+      { seconds: 4.958, continuity: 'context', audios: [{ track: 'gone' }] },
+    ] }))
+
+    await waitFor(() => expect(screen.getByTestId('h3-plan-warnings').textContent)
+      .toBe('Tasks 1–2: No timeline track has id gone; this item is skipped.'))
+    expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(false)
+  })
 })
