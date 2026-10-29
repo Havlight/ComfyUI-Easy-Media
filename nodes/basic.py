@@ -81,6 +81,8 @@ from ..utils.multitrack import (
     _video_stream_source,
     multitrack_audio_lock_is_effective,
     multitrack_runtime_cache,
+    trim_reference_audio,
+    trim_reference_video,
 )
 from ..utils.video import extract_video_audio
 from ..utils.h3_references import plan_task_references, shared_reference_clip
@@ -635,7 +637,6 @@ def _collect_h3_shared_reference(
     if ref is None or ref.key in (audio_refs if ref.media_type == "audio" else video_refs):
         return
     content = clip.get("content", {})
-    duration = max(1, ref.frames)
     if ref.media_type == "audio":
         if deferred_audio:
             source = _resolve_multitrack_audio(content, None)
@@ -645,7 +646,7 @@ def _collect_h3_shared_reference(
             index = _shared_reference_output_index(clip)
             source = audio_items[index] if index is not None and 0 <= index < len(audio_items) else None
         if isinstance(source, dict):
-            audio_refs[ref.key] = _trim_track_audio(source, 0, duration, frame_rate)
+            audio_refs[ref.key] = trim_reference_audio(source, ref.frames, frame_rate, fit=ref.fit)
         return
     if deferred_video:
         source = _resolve_multitrack_video(content, None)
@@ -658,8 +659,43 @@ def _collect_h3_shared_reference(
         index = _shared_reference_output_index(clip)
         source = video_items[index] if index is not None and 0 <= index < len(video_items) else None
     if source is not None:
-        trimmed = source.as_trimmed(start_time=0.0, duration=duration / frame_rate, strict_duration=False)
-        video_refs[ref.key] = trimmed if trimmed is not None else source
+        video_refs[ref.key] = trim_reference_video(source, ref.frames, frame_rate)
+
+
+# Uploaded reference videos resize once per source file and size, not once per task.
+_UPLOAD_VIDEO_RESIZE_CACHE: dict[tuple, object] = {}
+_UPLOAD_VIDEO_RESIZE_CACHE_SIZE = 32
+
+
+def _resized_upload_video(video, info: dict):
+    width, height = int(info.get("width", 544)), int(info.get("height", 960))
+    method = str(info.get("resize_method", "stretch"))
+    source = _video_stream_source(video)
+    key = ((source, os.path.getmtime(source), width, height, method)
+           if isinstance(source, str) and os.path.isfile(source) else None)
+    if key is not None and key in _UPLOAD_VIDEO_RESIZE_CACHE:
+        return _UPLOAD_VIDEO_RESIZE_CACHE[key]
+    resized = _resize_multitrack_video(video, width, height, method, {}, lambda _ratio: None)
+    if key is not None:
+        if len(_UPLOAD_VIDEO_RESIZE_CACHE) >= _UPLOAD_VIDEO_RESIZE_CACHE_SIZE:
+            _UPLOAD_VIDEO_RESIZE_CACHE.clear()
+        _UPLOAD_VIDEO_RESIZE_CACHE[key] = resized
+    return resized
+
+
+def _load_h3_upload_reference(ref, info: dict, frame_rate: float):
+    """Load a task's own reference file. Uploads never reach the output mix or a lock."""
+    content = dict(ref.source)
+    name = content.get("file_name") or content.get("file_path") or content.get("local_path") or content.get("url")
+    if ref.media_type == "audio":
+        audio = _resolve_multitrack_audio(content, None)
+        if not isinstance(audio, dict):
+            raise ValueError(f"Reference audio {name!r} could not be loaded")
+        return trim_reference_audio(audio, ref.frames, frame_rate, fit=ref.fit)
+    video = _resolve_multitrack_video(content, None)
+    if video is None:
+        raise ValueError(f"Reference video {name!r} could not be loaded")
+    return trim_reference_video(_resized_upload_video(video, info), ref.frames, frame_rate)
 
 
 def _merge_video_track_tensor(
@@ -3149,11 +3185,12 @@ class MultiTrackTaskOutput(io.ComfyNode):
                     {**task, "start_frame": start_frame, "end_frame": end_frame},
                     next_task_start,
                     audio_only=(int(info.get("width", 0)), int(info.get("height", 0))) == (32, 32),
+                    frame_rate=frame_rate,
                 )
                 planned_windows = {
-                    ref.track_id: ref
+                    (ref.media_type, ref.track_id): ref
                     for ref in (*reference_plan.videos, *reference_plan.audios)
-                    if ref.kind != "shared"
+                    if ref.kind in {"track", "locked"}
                 }
             if output_full_timeline:
                 if not deferred_audio:
@@ -3212,7 +3249,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
                     continue
                 media_index = _track_output_index(track)
                 track_id = str(track.get("id", ""))
-                planned = planned_windows.get(track_id)
+                planned = planned_windows.get((track.get("type"), track_id))
                 if reference_plan is not None:
                     shared_clip = shared_reference_clip(track)
                     if shared_clip is not None:
@@ -3281,7 +3318,10 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             has_video = True
                         continue
                 track_media_duration_frames = media_duration_frames
-                if is_minimax:
+                if planned is not None and planned.kind == "track":
+                    # The plan sets the window, including audio that is not fitted.
+                    track_media_duration_frames = planned.frames
+                elif is_minimax:
                     # The last task's window ends with the task.
                     track_media_end = _track_media_end_frame(
                         track,
@@ -3473,11 +3513,22 @@ class MultiTrackTaskOutput(io.ComfyNode):
 
             video_soundtracks = ""
             if reference_plan is not None:
+                def planned_media(ref):
+                    if ref.kind == "upload":
+                        return _load_h3_upload_reference(ref, info, frame_rate)
+                    if ref.kind != "shared":
+                        return (window_audio if ref.media_type == "audio" else window_video).get(ref.track_id)
+                    # A Project preloads shared clips past the task; cut them to the plan.
+                    if ref.media_type == "audio":
+                        audio = shared_audio_refs.get(ref.key)
+                        return trim_reference_audio(audio, ref.frames, frame_rate, fit=ref.fit) if audio else None
+                    video = shared_video_refs.get(ref.key)
+                    return trim_reference_video(video, ref.frames, frame_rate) if video is not None else None
+
                 planned_videos = [
                     (video, ref.soundtrack)
                     for ref in reference_plan.videos
-                    for video in [(shared_video_refs if ref.kind == "shared" else window_video).get(
-                        ref.key if ref.kind == "shared" else ref.track_id)]
+                    for video in [planned_media(ref)]
                     if video is not None
                 ]
                 selected_video = [video for video, _soundtrack in planned_videos]
@@ -3485,8 +3536,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
                 selected_audio = [
                     audio
                     for ref in reference_plan.audios
-                    for audio in [(shared_audio_refs if ref.kind == "shared" else window_audio).get(
-                        ref.key if ref.kind == "shared" else ref.track_id)]
+                    for audio in [planned_media(ref)]
                     if audio is not None
                 ]
                 has_video = bool(reference_plan.videos)

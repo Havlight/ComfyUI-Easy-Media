@@ -43,22 +43,26 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
 
 
 def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
-    """Hash a task's content and the media tracks that can change its generation.
+    """Hash a task's content, its reference plan and the media tracks that can change it.
 
     A track counts when the task's reference plan uses it or when it is audio-locked
     and overlaps the task. Only its clips that reach the task's window, including the
-    39-frame context before it, and its shared clip are hashed, so edits elsewhere on
-    the timeline leave the task saved.
+    39-frame context before it and any unfitted reference after it, and its shared clip
+    are hashed, so edits elsewhere on the timeline leave the task saved. The plan covers
+    the task's own uploads and the order, muting and fitting of every reference.
     """
     tasks = native_task_segments(info)
     task = tasks[index]
     start, end = int(task['start_frame']), int(task['end_frame'])
     next_start = int(tasks[index + 1]['start_frame']) if index + 1 < len(tasks) else None
-    window = (start - CONTEXT_FRAMES, max(end, next_start or end))
     media = [track for track in info.get('tracks', []) if track.get('type') in {'audio', 'video'}]
     plan = plan_task_references(media, task, next_start,
-                                audio_only=(info.get('width'), info.get('height')) == (32, 32))
-    referenced = {ref.track_id for ref in (*plan.videos, *plan.audios)}
+                                audio_only=(info.get('width'), info.get('height')) == (32, 32),
+                                frame_rate=float(info.get('frame_rate', 24)))
+    references = (*plan.videos, *plan.audios)
+    window = (start - CONTEXT_FRAMES, max(end, next_start or end, *(
+        ref.start_frame + ref.frames for ref in references if ref.kind == 'track')))
+    referenced = {ref.track_id for ref in references if ref.kind != 'upload'}
     sources = []
     for track in media:
         shared = shared_reference_clip(track)
@@ -68,7 +72,9 @@ def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
             sources.append(_content_fields({**{k: v for k, v in track.items()
                                                if k in {'type', 'muted', 'solo', 'audio_locked', 'visible', 'volume_db'}},
                                             'segments': clips}))
-    value = {'content': task_content_signature(task.get('content', {})), 'sources': sources, 'muted': info.get('muted', False),
+    value = {'content': task_content_signature(task.get('content', {})), 'sources': sources,
+             'references': [{key: item for key, item in ref.as_dict().items() if key != 'key'} for ref in references],
+             'muted': info.get('muted', False),
              'solo': any(track.get('solo') is True for track in media),
              'volume_db': float(info.get('volume_db', 0))}
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()

@@ -14,6 +14,7 @@ import { uuid } from './uuid'
 import { normalizeDriftTaperContent } from './h3-drift-taper'
 import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
+import { synchronizeSharedTaskMedia } from './task-media-utils'
 
 export const MULTITRACK_DEFAULT_FRAME_RATE = 24
 export const MULTITRACK_DEFAULT_TOTAL_LENGTH = 120
@@ -1677,6 +1678,8 @@ function normalizeTaskSegmentContent(content: MultiTrackSegment['content']): Mul
     continuity_mode: normalizeContinuityMode(content.continuity_mode),
     ref_image_size: normalizeRefImageSize(content.ref_image_size),
     images: Array.isArray(content.images) ? content.images : [],
+    ...(content.videos !== undefined ? { videos: Array.isArray(content.videos) ? content.videos : [] } : {}),
+    ...(content.audios !== undefined ? { audios: Array.isArray(content.audios) ? content.audios : [] } : {}),
   }
   // Cleared taper settings arrive as undefined from spread patches; drop them with invalid values.
   return normalizeDriftTaperContent(normalized)
@@ -1764,7 +1767,7 @@ export function normalizeTrackData(raw: RawTrackData): TrackData {
     return { ...track, name: `${typeName} ${index}` }
   })
   const normalizedAudioLocks = normalizeMultiTrackAudioLocks(namedTracks)
-  const normalizedSharedImages = synchronizeSharedTaskImages(normalizedAudioLocks)
+  const normalizedSharedImages = synchronizeSharedTaskMedia(synchronizeSharedTaskImages(normalizedAudioLocks))
   const totalLength = normalizeTotalLength(normalizedSharedImages, frameRate)
   const taskMarkers = normalizeTaskMarkers(raw.task_markers, totalLength)
 

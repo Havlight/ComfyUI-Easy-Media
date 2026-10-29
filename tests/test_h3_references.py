@@ -28,12 +28,15 @@ references = _load("utils.h3_references")
 @pytest.mark.parametrize("case", FIXTURES["cases"], ids=[case["name"] for case in FIXTURES["cases"]])
 def test_shared_reference_plan_cases(case):
     plan = references.plan_task_references(
-        case["tracks"], case["task"], case["next_start"], audio_only=case.get("audio_only", False))
+        case["tracks"], case["task"], case["next_start"], audio_only=case.get("audio_only", False),
+        frame_rate=case.get("frame_rate", 24))
     expected = case["expected"]
-    fields = ("key", "kind", "start_frame", "frames", "soundtrack")
+    fields = ("key", "kind", "start_frame", "frames", "soundtrack", "fit")
+    # Cases list "fit" only when a reference is not fitted.
+    videos, audios = ([{"fit": True, **ref} for ref in expected[kind]] for kind in ("videos", "audios"))
     assert [image["id"] for image in plan.images] == expected["images"]
-    assert [{field: getattr(video, field) for field in fields} for video in plan.videos] == expected["videos"]
-    assert [{field: getattr(audio, field) for field in fields} for audio in plan.audios] == expected["audios"]
+    assert [{field: getattr(video, field) for field in fields} for video in plan.videos] == videos
+    assert [{field: getattr(audio, field) for field in fields} for audio in plan.audios] == audios
     assert plan.labels() == expected["labels"]
 
 

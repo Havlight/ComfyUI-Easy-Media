@@ -39,7 +39,15 @@ import {
   parseDriftTaperOptionValue,
 } from '@/lib/h3-drift-taper'
 import { isH3Continuation, parseH3Seconds, snapH3NativeDuration } from '@/lib/h3-native-timing'
-import { h3NextTaskStart, h3ReferenceLabels, planH3TaskReferences, type H3MediaReference } from '@/lib/h3-references'
+import {
+  H3_MEDIA_REFERENCE_LIMIT,
+  h3NextTaskStart,
+  h3PlanFromSlots,
+  h3ReferenceLabels,
+  h3TaskReferenceSlots,
+  type H3MediaReference,
+  type H3ReferenceMediaType,
+} from '@/lib/h3-references'
 import type { H3NativePolicy } from '@/types/multitrack'
 import { mediaContentToViewUrl } from '@/lib/media-url'
 import { getSegmentTrackPresentation } from '@/lib/multitrack-segment-style'
@@ -75,6 +83,14 @@ import {
   togglePreviousFrame,
   uploadTaskImageFile,
 } from '@/lib/task-image-utils'
+import {
+  canEnableSharedTaskMedia,
+  sharedTaskMediaUpdates,
+  taskMediaField,
+  taskMediaFromContent,
+  taskMediaIdentity,
+  type TaskMediaField,
+} from '@/lib/task-media-utils'
 import { invalidateMediaListCache } from '@/stores/media-list-store'
 import type {
   MultiTrack,
@@ -84,13 +100,16 @@ import type {
   MultiTrackSegmentContent,
   MultiTrackSourceType,
   MultiTrackTaskImage,
+  MultiTrackTaskMedia,
   MultiTrackTaskMode,
   MultiTrackUserPromptVariant,
 } from '@/types/multitrack'
 import { PanoramaImagePreview } from '@/components/widgets/panorama/PanoramaImagePreview'
 import { PromptContentEditor, type PromptReferenceResource } from './PromptContentEditor'
+import { TaskReferenceMediaPanel } from './TaskReferenceMediaPanel'
 
 type PromptTab = 'user' | 'system'
+type ReferenceTab = 'image' | H3ReferenceMediaType
 type EditMode = 'individual' | 'combined'
 
 const TASK_IMAGE_PANEL_MIN_SIZE = 180
@@ -159,6 +178,10 @@ function moveImage(images: MultiTrackTaskImage[], sourceId: string, targetId: st
   const [moved] = nextImages.splice(sourceIndex, 1)
   nextImages.splice(targetIndex, 0, moved)
   return nextImages
+}
+
+function taskMediaPatch(field: TaskMediaField, items: MultiTrackTaskMedia[]): Partial<MultiTrackSegmentContent> {
+  return field === 'videos' ? { videos: items } : { audios: items }
 }
 
 function imageDisplayName(image: MultiTrackTaskImage): string {
@@ -262,6 +285,7 @@ export function TaskSegmentEditor({
   const t = useT()
   const draggedImageIdRef = useRef<string | null>(null)
   const [promptTab, setPromptTab] = useState<PromptTab>('user')
+  const [referenceTab, setReferenceTab] = useState<ReferenceTab>('image')
   const [editMode, setEditMode] = useState<EditMode>('individual')
   const [mediaSelectorOpen, setMediaSelectorOpen] = useState(false)
   const [reselectImageId, setReselectImageId] = useState<string | null>(null)
@@ -389,13 +413,16 @@ export function TaskSegmentEditor({
     })
     return [...imageResources, ...videoAudioResources, ...audioResources, ...videoResources]
   }, [images, mediaTracks, t])
-  const referencePlan = useMemo(() => planH3TaskReferences(
-    mediaTracks, segment, h3NextTaskStart(trackSegments ?? [segment], segment),
-  ), [mediaTracks, segment, trackSegments])
+  const referenceSlots = useMemo(() => h3TaskReferenceSlots(
+    mediaTracks, segment, h3NextTaskStart(trackSegments ?? [segment], segment), { frameRate },
+  ), [mediaTracks, segment, trackSegments, frameRate])
+  const referencePlan = useMemo(() => h3PlanFromSlots(segment, referenceSlots), [segment, referenceSlots])
   const promptResources = useMemo<PromptReferenceResource[]>(() => {
     if (format !== 'MiniMax') return genericPromptResources
     const labels = h3ReferenceLabels(referencePlan)
-    const trackName = (reference: H3MediaReference) => mediaTracks.find((track) => track.id === reference.track_id)?.name ?? ''
+    const trackName = (reference: H3MediaReference) => reference.kind === 'upload'
+      ? reference.source.file_name ?? reference.source.file_path ?? reference.source.local_path ?? reference.source.url ?? ''
+      : mediaTracks.find((track) => track.id === reference.track_id)?.name ?? ''
     const detail = (reference: H3MediaReference) => reference.kind === 'shared'
       ? t('multitrack.referenceSharedClip', { name: trackName(reference) })
       : reference.kind === 'locked'
@@ -686,6 +713,49 @@ export function TaskSegmentEditor({
     if (current) onContentChange({ images: current.images })
   }
 
+  function handleTaskMediaChange(mediaType: H3ReferenceMediaType, items: MultiTrackTaskMedia[]) {
+    onContentChange(taskMediaPatch(taskMediaField(mediaType), items))
+  }
+
+  function handleSharedMediaChange(mediaType: H3ReferenceMediaType, item: MultiTrackTaskMedia, enabled: boolean) {
+    const field = taskMediaField(mediaType)
+    if (enabled && !canEnableSharedTaskMedia(editableSegments, field, item)) return
+    const updates = sharedTaskMediaUpdates(editableSegments, field, item, enabled)
+    if (onTrackSegmentsContentChange) {
+      onTrackSegmentsContentChange(updates.map((update) => ({
+        segmentId: update.segmentId,
+        patch: taskMediaPatch(field, update.items),
+      })))
+      return
+    }
+    const current = updates.find((update) => update.segmentId === segment.id)
+    if (current) onContentChange(taskMediaPatch(field, current.items))
+  }
+
+  function handleDeleteMedia(mediaType: H3ReferenceMediaType, item: MultiTrackTaskMedia) {
+    const field = taskMediaField(mediaType)
+    if (item.shared_reference === true && onTrackSegmentsContentChange) {
+      const identity = taskMediaIdentity(item)
+      onTrackSegmentsContentChange(sharedTaskMediaUpdates(editableSegments, field, item, false).map((update) => ({
+        segmentId: update.segmentId,
+        patch: taskMediaPatch(field, update.segmentId === segment.id
+          ? update.items.filter((candidate) => taskMediaIdentity(candidate) !== identity)
+          : update.items),
+      })))
+      return
+    }
+    onContentChange(taskMediaPatch(field, taskMediaFromContent(segment.content[field]).filter((candidate) => (
+      candidate.id !== item.id
+    ))))
+  }
+
+  function referenceTabLabel(mediaType: H3ReferenceMediaType): string {
+    const key = mediaType === 'video' ? 'multitrack.referenceTabVideos' : 'multitrack.referenceTabAudios'
+    if (!referenceSlots.customizable) return t(`${key}Plain`)
+    const count = referenceSlots[mediaType].filter((slot) => slot.status === 'active').length
+    return t(key, { count, limit: H3_MEDIA_REFERENCE_LIMIT })
+  }
+
   function handleMutedImageChange(imageId: string, muted: boolean) {
     onContentChange({
       images: images.map((image) => image.id === imageId ? { ...image, muted } : image),
@@ -739,7 +809,7 @@ export function TaskSegmentEditor({
     const observer = new ResizeObserver(update)
     observer.observe(target)
     return () => observer.disconnect()
-  }, [images.length])
+  }, [images.length, referenceTab])
 
   const actionSharedSize = Math.round(Math.max(14, Math.min(imageCellWidth * 0.07, 28)))
   const actionNormalSize = Math.round(Math.max(14, Math.min(imageCellWidth * 0.08, 32)))
@@ -826,17 +896,42 @@ export function TaskSegmentEditor({
             maxSize={TASK_IMAGE_PANEL_MAX_SIZE}
           >
             <div className="flex h-full min-h-0 flex-col gap-1">
-            {format === 'MiniMax' && mode !== 'passthrough' && taskIndex > 0 && (
-              <div className="flex shrink-0 justify-end">
-                <Button type="button" size="sm" variant={previousFrameImage && previousFrameImage.muted !== true ? 'secondary' : 'ghost'}
-                  className="h-6 px-2 text-[10px]" aria-pressed={!!previousFrameImage && previousFrameImage.muted !== true}
-                  disabled={!previousFrameImage && images.length >= MAX_TASK_IMAGES}
-                  title={t('multitrack.previousFrameTooltip')}
-                  onClick={() => onContentChange({ images: togglePreviousFrame(images) })}>
-                  {t('multitrack.previousFrame')}
-                </Button>
+            {format === 'MiniMax' && (
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-1">
+                <Tabs value={referenceTab} onValueChange={(value) => setReferenceTab(value as ReferenceTab)}>
+                  <TabsList aria-label={t('multitrack.referenceTabs')} className="h-7 bg-card p-1">
+                    <TabsTrigger value="image" className="h-full px-2 text-[10px]">
+                      {t('multitrack.referenceTabImages', { count: images.length, limit: MAX_TASK_IMAGES })}
+                    </TabsTrigger>
+                    <TabsTrigger value="video" className="h-full px-2 text-[10px]">{referenceTabLabel('video')}</TabsTrigger>
+                    <TabsTrigger value="audio" className="h-full px-2 text-[10px]">{referenceTabLabel('audio')}</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {mode !== 'passthrough' && taskIndex > 0 && (
+                  <Button type="button" size="sm" variant={previousFrameImage && previousFrameImage.muted !== true ? 'secondary' : 'ghost'}
+                    className="h-6 px-2 text-[10px]" aria-pressed={!!previousFrameImage && previousFrameImage.muted !== true}
+                    disabled={!previousFrameImage && images.length >= MAX_TASK_IMAGES}
+                    title={t('multitrack.previousFrameTooltip')}
+                    onClick={() => onContentChange({ images: togglePreviousFrame(images) })}>
+                    {t('multitrack.previousFrame')}
+                  </Button>
+                )}
               </div>
             )}
+            {format === 'MiniMax' && referenceTab !== 'image' ? (
+              <TaskReferenceMediaPanel
+                key={referenceTab}
+                mediaType={referenceTab}
+                slots={referenceSlots}
+                items={taskMediaFromContent(segment.content[taskMediaField(referenceTab)])}
+                mediaTracks={mediaTracks}
+                frameRate={frameRate}
+                canShare={(item) => canEnableSharedTaskMedia(editableSegments, taskMediaField(referenceTab), item)}
+                onItemsChange={(items) => handleTaskMediaChange(referenceTab, items)}
+                onSharedChange={(item, enabled) => handleSharedMediaChange(referenceTab, item, enabled)}
+                onDeleteItem={(item) => handleDeleteMedia(referenceTab, item)}
+              />
+            ) : (
             <div
               ref={imageDropZoneRef}
               data-testid="task-image-drop-zone"
@@ -1122,6 +1217,7 @@ export function TaskSegmentEditor({
               </PopoverContent>
             </Popover>
             </div>
+            )}
             </div>
           </ResizablePanel>
         )}
@@ -1488,7 +1584,7 @@ export function TaskSegmentEditor({
               {MULTITRACK_TASK_MODES.filter((taskMode) => taskMode !== 'passthrough' || format === 'MiniMax').map((taskMode) => (
                 <SelectItem key={taskMode} value={taskMode}>
                   <span className="text-[10px]">
-                    {t(`multitrackTaskModes.${getMultiTrackTaskType(taskMode, images.length, segmentHasVideoInRange)}`)}
+                    {t(`multitrackTaskModes.${getMultiTrackTaskType(taskMode, images.length, segmentHasVideoInRange || referencePlan.videos.length > 0)}`)}
                   </span>
                 </SelectItem>
               ))}

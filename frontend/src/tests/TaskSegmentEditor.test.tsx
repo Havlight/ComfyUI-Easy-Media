@@ -1089,6 +1089,126 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '<Picture 1>' })
   })
 
+  it('shows the reference tabs and explains that other modes use no reference media', () => {
+    render(
+      <TaskSegmentEditor
+        segment={taskSegment()}
+        format="MiniMax"
+        mediaTracks={[mediaTrack('audio', [{ ...videoSegment(0, 3), content: { media_type: 'audio', file_path: 'voice.wav' } }])]}
+        onContentChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('tab', { name: 'Images 2/9' })).not.toBeNull()
+    activateTab('Audio')
+    expect(screen.getByTestId('task-media-unused-audio').textContent).toContain('This mode does not use reference videos or audio.')
+  })
+
+  it('numbers timeline and uploaded references the way the sampler receives them', () => {
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      videos: [{ id: 'clip', source_type: 'input' as const, file_path: 'clip.mp4', file_name: 'clip.mp4' }],
+      audios: [{ id: 'line', source_type: 'input' as const, file_path: 'line.wav', file_name: 'line.wav' }],
+    } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[
+          mediaTrack('video', [videoSegment(0, 3)]),
+          mediaTrack('audio', [{ ...videoSegment(0, 3), content: { media_type: 'audio', file_path: 'voice.wav' } }]),
+        ]}
+        onContentChange={vi.fn()}
+      />,
+    )
+
+    activateTab('Videos 2/3')
+    expect(screen.getByTestId('task-media-index-track:video-track').textContent).toBe('Video 1')
+    expect(screen.getByTestId('task-media-index-upload:clip').textContent).toBe('Video 2')
+    activateTab('Audio 2/3')
+    // Both video soundtracks come first, then the voice track and the uploaded line.
+    expect(screen.getByTestId('task-media-soundtracks').textContent).toContain('Audio 2 ← Video 2 soundtrack · clip.mp4')
+    expect(screen.getByTestId('task-media-index-track:audio-track').textContent).toBe('Audio 3')
+    expect(screen.getByTestId('task-media-index-upload:line').textContent).toBe('Audio 4')
+    expect(screen.getByTestId('task-media-upload:line').textContent).toContain('Whole clip, up to 15s')
+  })
+
+  it('stores timeline settings in the shown order and changes uploads in place', () => {
+    const onContentChange = vi.fn()
+    const line = { id: 'line', source_type: 'input' as const, file_path: 'line.wav' }
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const, audios: [line] } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[mediaTrack('audio', [{ ...videoSegment(0, 3), content: { media_type: 'audio', file_path: 'voice.wav' } }])]}
+        onContentChange={onContentChange}
+      />,
+    )
+    activateTab('Audio 2/3')
+
+    fireEvent.click(screen.getByTestId('task-media-fit-track:audio-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
+      { id: expect.any(String), source_type: 'track', track_id: 'audio-track', fit: false }, line,
+    ] })
+
+    fireEvent.click(screen.getByTestId('task-media-muted-upload:line'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [{ ...line, muted: true }] })
+
+    fireEvent.dragStart(screen.getByTestId('task-media-upload:line'))
+    fireEvent.dragOver(screen.getByTestId('task-media-track:audio-track'))
+    fireEvent.drop(screen.getByTestId('task-media-track:audio-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
+      line, { id: expect.any(String), source_type: 'track', track_id: 'audio-track' },
+    ] })
+  })
+
+  it('shares and deletes an uploaded reference across tasks', () => {
+    const onTrackSegmentsContentChange = vi.fn()
+    const clip = { id: 'clip', source_type: 'input' as const, file_path: 'clip.mp4' }
+    const first = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const, videos: [clip] } }
+    const second = secondTaskSegment()
+    const editor = (segments: MultiTrackSegment[]) => (
+      <TaskSegmentEditor
+        segment={segments[0]}
+        trackSegments={segments}
+        format="MiniMax"
+        onContentChange={vi.fn()}
+        onTrackSegmentsContentChange={onTrackSegmentsContentChange}
+      />
+    )
+    const { rerender } = render(editor([first, second]))
+    activateTab('Videos 1/3')
+
+    fireEvent.click(screen.getByTestId('task-media-shared-upload:clip'))
+    expect(onTrackSegmentsContentChange).toHaveBeenLastCalledWith([
+      { segmentId: first.id, patch: { videos: [{ ...clip, shared_reference: true }] } },
+      { segmentId: second.id, patch: { videos: [
+        { ...clip, id: expect.any(String), shared_reference: true, shared_reference_copy: true },
+      ] } },
+    ])
+
+    rerender(editor([
+      { ...first, content: { ...first.content, videos: [{ ...clip, shared_reference: true }] } },
+      { ...second, content: { ...second.content, videos: [
+        { ...clip, id: 'copy', shared_reference: true, shared_reference_copy: true },
+      ] } },
+    ]))
+    fireEvent.click(screen.getByTestId('task-media-delete-upload:clip'))
+    expect(onTrackSegmentsContentChange).toHaveBeenLastCalledWith([
+      { segmentId: first.id, patch: { videos: [] } },
+      { segmentId: second.id, patch: { videos: [] } },
+    ])
+  })
+
+  it('lists uploaded MiniMax references in the @ menu by file name', () => {
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      audios: [{ id: 'line', source_type: 'input' as const, file_path: 'line.wav', file_name: 'line.wav' }] } }
+    render(<TaskSegmentEditor segment={segment} format="MiniMax" onContentChange={vi.fn()} />)
+
+    inputEditable(screen.getByRole('textbox', { name: 'Prompt' }), '@')
+    expect(screen.getByRole('option', { name: /Audio 1 line\.wav/ })).not.toBeNull()
+  })
+
   it('shows the interactive MiniMax placeholder only for an empty prompt', () => {
     const onContentChange = vi.fn()
     const segment = taskSegment()

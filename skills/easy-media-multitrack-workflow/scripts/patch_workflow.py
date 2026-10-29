@@ -412,6 +412,25 @@ def validate_track_data(
                         raise WorkflowError(
                             f"{where}.content.images[{image_index}].shared_reference must be a boolean"
                         )
+            for field in ("videos", "audios"):
+                if track_type != "task" or field not in content:
+                    continue
+                media_items = content[field]
+                if not isinstance(media_items, list):
+                    raise WorkflowError(f"{where}.content.{field} must be a list")
+                for item_index, item in enumerate(media_items):
+                    item_where = f"{where}.content.{field}[{item_index}]"
+                    if not isinstance(item, dict):
+                        raise WorkflowError(f"{item_where} must be an object")
+                    for flag in ("shared_reference", "muted", "fit", "soundtrack"):
+                        if flag in item and not isinstance(item[flag], bool):
+                            raise WorkflowError(f"{item_where}.{flag} must be a boolean")
+                    if item.get("source_type") == "track":
+                        if not isinstance(item.get("track_id"), str) or not item["track_id"]:
+                            raise WorkflowError(f"{item_where} is a timeline placeholder and needs a track_id")
+                    elif not any(isinstance(item.get(key), str) and item[key]
+                                 for key in ("file_path", "local_path", "url")):
+                        raise WorkflowError(f"{item_where} needs a file_path, local_path or url")
 
     for locked_type in ("audio", "video"):
         locked_ids = [

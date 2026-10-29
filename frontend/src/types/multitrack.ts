@@ -39,6 +39,30 @@ export interface MultiTrackTaskImage {
   muted?: boolean
 }
 
+/** 'track' marks a placeholder that places or adjusts a timeline reference. */
+export type MultiTrackTaskMediaSource = MultiTrackSourceType | 'track'
+
+/** A task's own reference video or audio, or a placeholder for a timeline reference. */
+export interface MultiTrackTaskMedia {
+  id: string
+  source_type?: MultiTrackTaskMediaSource
+  file_path?: string
+  local_path?: string
+  url?: string
+  slot_name?: string
+  file_name?: string
+  /** Placeholders: the timeline track, plus the shared clip when the placeholder stands for one. */
+  track_id?: string
+  segment_id?: string
+  shared_reference?: boolean
+  shared_reference_copy?: boolean
+  muted?: boolean
+  /** Audio: cut to the task (timeline default) instead of taking up to 15 s (upload default). */
+  fit?: boolean
+  /** Video: give the video an <Audio N> soundtrack. */
+  soundtrack?: boolean
+}
+
 export interface MultiTrackSegmentContent {
   media_type: MultiTrackMediaType
   source_type?: MultiTrackSourceType
@@ -62,6 +86,9 @@ export interface MultiTrackSegmentContent {
   drift_taper_low_only?: boolean
   ref_image_size?: MultiTrackRefImageSize
   images?: MultiTrackTaskImage[]
+  /** Ref and edit tasks: reference videos and audios beside the timeline's. */
+  videos?: MultiTrackTaskMedia[]
+  audios?: MultiTrackTaskMedia[]
   duration?: number
   volume_db?: number
   muted?: boolean

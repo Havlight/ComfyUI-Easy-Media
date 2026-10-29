@@ -151,3 +151,31 @@ def test_source_fingerprint_only_tracks_media_that_reaches_the_task():
     shared_edit = copy.deepcopy(shared)
     shared_edit['tracks'][1]['segments'][1]['content']['file_path'] = 'other.wav'
     assert status.native_task_fingerprint(shared_edit, 0) != status.native_task_fingerprint(shared, 0)
+
+
+def test_source_fingerprint_follows_the_task_reference_lists():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    clip = lambda sid, start, end: {'id': sid, 'start_frame': start, 'end_frame': end,
+                                    'content': {'media_type': 'audio', 'file_path': f'{sid}.wav'}}
+    info = {'frame_rate': 24, 'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90, 'content': {'task_mode': 'ref'}},
+                                      {'id': 'b', 'start_frame': 90, 'end_frame': 180, 'content': {}}]},
+        {'id': 'voice', 'type': 'audio', 'segments': [clip('near', 0, 60)]},
+        {'id': 'later', 'type': 'audio', 'segments': [clip('late', 300, 350)]}]}
+
+    def with_audios(*audios):
+        changed = copy.deepcopy(info)
+        changed['tracks'][0]['segments'][0]['content']['audios'] = list(audios)
+        return status.native_task_fingerprint(changed, 0), changed
+
+    base = status.native_task_fingerprint(info, 0)
+    # Placing a reference where the plan already puts it changes nothing.
+    assert with_audios({'id': 'p', 'source_type': 'track', 'track_id': 'voice'})[0] == base
+    assert with_audios({'id': 'u', 'source_type': 'input', 'file_path': 'line.wav'})[0] != base
+    assert with_audios({'id': 'p', 'source_type': 'track', 'track_id': 'voice', 'muted': True})[0] != base
+    # Unfitted audio reaches 15 s past the task start, so the late clip now counts.
+    unfitted, unfitted_info = with_audios({'id': 'p', 'source_type': 'track', 'track_id': 'later', 'fit': False})
+    assert unfitted != base
+    unfitted_info['tracks'][2]['segments'][0]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(unfitted_info, 0) != unfitted

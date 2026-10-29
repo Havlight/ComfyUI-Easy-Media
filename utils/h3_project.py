@@ -39,9 +39,11 @@ from .multitrack import (
     multitrack_is_muted_image,
     multitrack_media_identity,
     multitrack_segments_in_window,
+    trim_reference_audio,
+    trim_reference_video,
 )
 from .video import extract_video_audio
-from .h3_references import shared_reference_clip
+from .h3_references import reference_cap_frames, shared_reference_clip
 
 
 H3_FRAME_STEP = 17
@@ -1689,22 +1691,22 @@ def crop_multitrack_project_media(
     duration_frames: int,
     frame_rate: float,
 ) -> tuple[dict[str, dict], dict[str, object], dict | None]:
-    """Create task-length views of media already loaded for the project."""
+    """Create task views of media already loaded for the project.
+
+    Shared clips keep up to the task length or the 15 s reference limit, whichever
+    is longer, so a task's plan can cut them to fit or not.
+    """
     duration_frames = max(1, duration_frames)
     frame_rate = max(0.001, frame_rate)
+    reference_frames = max(duration_frames, reference_cap_frames(frame_rate))
     cropped_audio = {
-        key: _trim_track_audio(audio, 0, duration_frames, frame_rate)
+        key: trim_reference_audio(audio, reference_frames, frame_rate, fit=False)
         for key, audio in shared_audio.items()
     }
-    cropped_video: dict[str, object] = {}
-    for key, video in shared_video.items():
-        trimmed = video.as_trimmed(
-            start_time=0.0,
-            duration=duration_frames / frame_rate,
-            strict_duration=False,
-        )
-        if trimmed is not None:
-            cropped_video[key] = trimmed
+    cropped_video = {
+        key: trim_reference_video(video, reference_frames, frame_rate)
+        for key, video in shared_video.items()
+    }
     cropped_locked_audio = (
         _trim_track_audio(
             locked_audio,

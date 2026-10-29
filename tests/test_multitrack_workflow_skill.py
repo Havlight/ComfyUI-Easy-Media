@@ -329,6 +329,23 @@ def test_validates_drift_taper_settings(patch_workflow_module, field, value, val
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
 
 
+@pytest.mark.parametrize("item,error", [
+    ({"id": "u", "source_type": "input", "file_path": "line.wav", "fit": False}, None),
+    ({"id": "p", "source_type": "track", "track_id": "voice", "muted": True}, None),
+    ({"id": "p", "source_type": "track"}, "needs a track_id"),
+    ({"id": "u", "source_type": "input"}, "needs a file_path"),
+    ({"id": "u", "source_type": "input", "file_path": "line.wav", "fit": "no"}, "fit must be a boolean"),
+])
+def test_validates_task_reference_media(patch_workflow_module, item, error):
+    track_data = _single_task_track_data({"task_mode": "ref", "audios": [item]})
+
+    if error is None:
+        patch_workflow_module.validate_track_data(track_data, recalculate=False)
+        return
+    with pytest.raises(patch_workflow_module.WorkflowError, match=error):
+        patch_workflow_module.validate_track_data(track_data, recalculate=False)
+
+
 def test_shared_media_accepts_task_images_audio_and_video(
     patch_workflow_module,
 ):

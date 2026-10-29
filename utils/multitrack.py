@@ -656,3 +656,25 @@ def _trim_track_audio(
     if trimmed.shape[-1] < sample_count:
         trimmed = F.pad(trimmed, (0, sample_count - trimmed.shape[-1]))
     return {"waveform": trimmed, "sample_rate": sample_rate}
+
+
+def trim_reference_audio(audio: dict, frames: int, frame_rate: float, *, fit: bool = True) -> dict:
+    """Cut a reference audio from its start.
+
+    Fitted audio covers exactly ``frames``, padding with silence; unfitted audio keeps
+    at most that much of its source.
+    """
+    if fit:
+        return _trim_track_audio(audio, 0, max(1, frames), frame_rate)
+    waveform = audio.get("waveform")
+    if not isinstance(waveform, torch.Tensor):
+        return audio
+    sample_rate = int(audio.get("sample_rate", 44100))
+    return {"waveform": waveform[..., :max(1, round(frames * sample_rate / frame_rate))],
+            "sample_rate": sample_rate}
+
+
+def trim_reference_video(video, frames: int, frame_rate: float):
+    """Cut a reference video from its start; a source that cannot be trimmed stays whole."""
+    trimmed = video.as_trimmed(start_time=0.0, duration=max(1, frames) / frame_rate, strict_duration=False)
+    return trimmed if trimmed is not None else video

@@ -147,6 +147,27 @@ custom 示例：
 
 上下文分段需要反复使用同一张参考图时，可在图片项上设置 `"shared_reference": true`。该图片会成为公用图片，自动排在每个任务片段的私有图片之前；公用和私有图片合计仍不得超过 9 张。不要为了共享而在每个任务中手工复制相同图片。
 
+### 任务参考视频与音频（仅 `ref`、`edit`）
+
+`content.videos` 与 `content.audios` 是该任务自己的参考列表，其他模式会忽略它们。项目格式与任务参考图相同，另有：
+
+- `fit`（仅音频，布尔值）：`true` 截到片段长度；上传项默认 `false`，即整段使用，最长 15 秒。视频一律截到片段长度。
+- `soundtrack`（仅视频，布尔值）：是否带原声，带原声时占用一个 `<Audio N>`；上传项默认 `true`。
+- `muted: true`：只在此片段排除该项。
+- `shared_reference: true`：上传项加到所有片段（同公用图片）。
+
+时间轴上覆盖该片段的影音轨会自动成为参考。要调整它们的顺序或设置，写占位项 `{"id": "uuid", "source_type": "track", "track_id": "<轨道 id>"}`；对应公用片段时再加 `"segment_id"`。占位项可带 `muted`、`fit`（时间轴项默认 `true`；`false` 时从片段起点最多取 15 秒）与 `soundtrack`。没有占位项的时间轴参考排在最前，之后依列表顺序；每段最多使用 3 个视频与 3 个音频。上传的参考只作参考，不会混入输出音轨，也不参与音频锁定。
+
+```json
+{
+  "task_mode": "ref",
+  "audios": [
+    {"id": "uuid-1", "source_type": "input", "file_path": "voice/line01.wav", "file_name": "line01.wav"},
+    {"id": "uuid-2", "source_type": "track", "track_id": "bgm-track", "muted": true}
+  ]
+}
+```
+
 ## 上下文漂移控制模式
 
 `context_drift` 是“上下文漂移控制”衔接模式：沿用前一段的场景和运动上下文，同时允许模型根据参考视频替换主体、人物、物体或局部区域。用户提供视频作为主体替换、人物替换、物体替换、服装/脸部等局部替换参考时，按以下规则编排：

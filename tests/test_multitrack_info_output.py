@@ -3775,6 +3775,41 @@ def test_minimax_task_output_follows_the_reference_plan():
     assert result.values[9] == ""
 
 
+def test_minimax_task_output_loads_task_uploads_in_plan_order():
+    module = _load_basic_module()
+    sources = {name: {"waveform": torch.full((1, 1, 30), float(index)), "sample_rate": 1}
+               for index, name in enumerate(["bed.wav", "voice.wav", "line.wav"])}
+    module._resolve_multitrack_audio = lambda content, _audio: sources.get(content.get("file_path"))
+    clip_video = _FakeVideo(_VideoComponents(torch.zeros(30, 2, 2, 3), None, Fraction(1)))
+    module._resolve_multitrack_video = lambda content, _video: clip_video if content.get("file_path") == "clip.mp4" else None
+    task = {"id": "t1", "start_frame": 0, "end_frame": 4, "content": {"task_mode": "ref", "audios": [
+        {"id": "voice", "source_type": "input", "file_path": "voice.wav"},
+        {"id": "line", "source_type": "input", "file_path": "line.wav", "fit": True},
+        {"id": "bed-slot", "source_type": "track", "track_id": "bed", "muted": True},
+    ], "videos": [{"id": "clip", "source_type": "input", "file_path": "clip.mp4", "soundtrack": False}]}}
+    tracks_info = {
+        "media_loading": "deferred", "format": "MiniMax", "width": 2, "height": 2, "frame_rate": 1,
+        "tracks": [
+            {"id": "tasks", "type": "task", "segments": [task]},
+            {"id": "bed", "type": "audio", "segments": [{"id": "bed-1", "start_frame": 0, "end_frame": 8,
+                "content": {"media_type": "audio", "file_path": "bed.wav"}}]},
+        ],
+    }
+
+    result = module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
+
+    # The muted placeholder drops the bed; the unfitted voice keeps up to 15 s, the fitted line
+    # covers the task, and the uploaded video keeps the task length without a soundtrack.
+    assert [audio["waveform"].flatten().tolist() for audio in result.values[5]] == [[1.0] * 15, [2.0] * 4]
+    assert result.values[6] == [clip_video] and clip_video.trim_calls == [(0.0, 4.0, False)]
+    assert result.values[9] == "0"
+    assert result.values[8] is None
+
+    task["content"]["videos"][0]["file_path"] = "missing.mp4"
+    with pytest.raises(ValueError, match="missing.mp4"):
+        module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
+
+
 def test_multitrack_task_output_minus_one_does_not_stop_at_the_next_minimax_task():
     module = _load_basic_module()
     source_audio = {
@@ -4426,7 +4461,7 @@ def test_prepare_multitrack_project_media_muted_video_does_not_lock_audio(
     assert video.components_calls == 0
 
 
-def test_crop_multitrack_project_media_crops_reused_audio_and_video():
+def test_crop_multitrack_project_media_keeps_shared_clips_to_the_reference_limit():
     _load_basic_module()
     project_module = sys.modules["easy_media.utils.h3_project"]
     shared_audio = {
@@ -4446,8 +4481,9 @@ def test_crop_multitrack_project_media_crops_reused_audio_and_video():
         2,
     )
 
-    assert audios["shared:audio"]["waveform"].flatten().tolist() == [0, 1, 2, 3]
-    assert shared_video.trim_calls == [(0.0, 2.0, False)]
+    # Shared clips keep up to 15 s unpadded, so each task's plan can cut or not cut them.
+    assert audios["shared:audio"]["waveform"].flatten().tolist() == list(range(8))
+    assert shared_video.trim_calls == [(0.0, 15.0, False)]
     assert list(videos) == ["shared:video"]
     assert locked["waveform"].flatten().tolist() == [2, 3, 4, 5]
 
