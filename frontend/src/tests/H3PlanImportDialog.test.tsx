@@ -65,5 +65,6 @@ describe('H3PlanImportDialog', () => {
 
     await waitFor(() => expect(screen.getByTestId('h3-plan-errors').textContent).toContain('Task 1: Mode "r2v" is not one of'))
     expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByTestId('h3-plan-blocked').textContent).toBe('Fix the 1 error(s) listed above before applying.')
   })
 })

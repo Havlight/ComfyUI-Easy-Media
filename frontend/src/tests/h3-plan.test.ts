@@ -126,15 +126,38 @@ describe('H3 plan files', () => {
 
     expect(result.data).toBeNull()
     expect(codes(result)).toEqual(expect.arrayContaining([
-      'error:1:invalid_mode', 'error:2:duplicate_id', 'error:3:file_failed', 'error:3:unknown_track',
-      'error:3:track_type', 'error:4:missing_seconds',
+      'error:1:invalid_mode', 'error:2:duplicate_id', 'error:3:file_failed', 'error:3:track_type',
+      'error:4:missing_seconds',
     ]))
+  })
+
+  it('takes a plan from another workflow, skipping placeholders for tracks this timeline lacks', () => {
+    const current = project()
+    const result = importPlan(current, { version: 1, tasks: [
+      { id: 'other-1', seconds: 5, mode: 'ref', prompt: '<Audio 1> plays, then <Audio 1> again',
+        audios: [{ track: 'elsewhere' }, { track: 'song', clip: 'gone' }] },
+      { id: 'other-2', seconds: 5, continuity: 'context' },
+    ] })
+
+    expect(codes(result)).toEqual([
+      'warning:-:foreign_ids', 'warning:1:unknown_track', 'warning:1:unknown_clip',
+      'warning:1:timing_adjusted', 'warning:1:prompt_reference', 'warning:2:timing_adjusted',
+    ])
+    expect(result.issues[0].params).toEqual({ count: 2 })
+    expect(result.data!.tracks[0].segments[0].content.audios).toBeUndefined()
+    expect(result.rows.map((row) => [row.id, row.change])).toEqual([
+      ['other-1', 'added'], ['other-2', 'added'], ['t1', 'removed'], ['t2', 'removed'],
+    ])
+
+    // Once some ids match, each unknown one is named on its task.
+    expect(codes(importPlan(current, { version: 1, tasks: [{ id: 't1' }, { id: 'stray', seconds: 5, continuity: 'context' }] })))
+      .toContain('warning:2:new_id')
   })
 
   it('warns about prompt tags that name a missing reference and fields it does not know', () => {
     const current = project()
     const result = importPlan(current, { version: 1, tasks: [
-      { id: 't1', prompt: '<Picture 1> sings with <Audio 3>', lora: 'x' },
+      { id: 't1', prompt: '<Picture 1> sings with <Audio 3>, then <Audio 3> fades', lora: 'x' },
       { id: 't2' },
     ] })
 

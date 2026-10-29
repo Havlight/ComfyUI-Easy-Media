@@ -137,7 +137,8 @@ export function H3PlanImportDialog({
 
   return (
     <Dialog open={request !== null} onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden" data-testid="h3-plan-import-dialog">
+      {/* A column so the preview scrolls between a fixed header and footer; above ComfyUI's top bar (z 999). */}
+      <DialogContent className="z-[1000] flex max-h-[85vh] max-w-4xl flex-col overflow-hidden" data-testid="h3-plan-import-dialog">
         <DialogHeader>
           <DialogTitle>{t('h3Plan.importTitle')}</DialogTitle>
           <DialogDescription>
@@ -154,6 +155,16 @@ export function H3PlanImportDialog({
           </div>
         ) : (
           <div className="flex min-h-0 flex-col gap-3 overflow-y-auto text-[11px]">
+            {errors.length > 0 && (
+              <ul className="flex flex-col gap-1" data-testid="h3-plan-errors">
+                {errors.map((item, index) => (
+                  <li key={`error-${index}`} className="flex items-start gap-1 text-destructive">
+                    <XCircle className="mt-px h-3 w-3 shrink-0" />
+                    {issueText(item)}
+                  </li>
+                ))}
+              </ul>
+            )}
             {result && result.rows.length > 0 && (
               <table className="w-full table-fixed border-collapse" data-testid="h3-plan-rows">
                 <thead className="text-left text-muted-foreground">
@@ -163,7 +174,7 @@ export function H3PlanImportDialog({
                     <th className="w-24 py-1">{t('h3Plan.columnSeconds')}</th>
                     <th className="w-20 py-1">{t('h3Plan.columnMode')}</th>
                     <th className="w-24 py-1">{t('h3Plan.columnContinuity')}</th>
-                    <th className="w-24 py-1">{t('h3Plan.columnReferences')}</th>
+                    <th className="w-32 py-1">{t('h3Plan.columnReferences')}</th>
                     <th className="py-1">{t('h3Plan.columnPrompt')}</th>
                   </tr>
                 </thead>
@@ -194,16 +205,6 @@ export function H3PlanImportDialog({
                 </tbody>
               </table>
             )}
-            {errors.length > 0 && (
-              <ul className="flex flex-col gap-1" data-testid="h3-plan-errors">
-                {errors.map((item, index) => (
-                  <li key={`error-${index}`} className="flex items-start gap-1 text-destructive">
-                    <XCircle className="mt-px h-3 w-3 shrink-0" />
-                    {issueText(item)}
-                  </li>
-                ))}
-              </ul>
-            )}
             {warnings.length > 0 && (
               <ul className="flex flex-col gap-1" data-testid="h3-plan-warnings">
                 {warnings.map((item, index) => (
@@ -216,7 +217,12 @@ export function H3PlanImportDialog({
             )}
           </div>
         )}
-        <DialogFooter>
+        <DialogFooter className="items-center">
+          {errors.length > 0 && (
+            <span className="text-[11px] text-destructive sm:mr-auto" data-testid="h3-plan-blocked">
+              {t('h3Plan.blocked', { count: errors.length })}
+            </span>
+          )}
           <Button type="button" variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
           <Button
             type="button"

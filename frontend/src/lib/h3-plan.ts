@@ -396,9 +396,11 @@ function buildMedia(
     warnIgnoredFlags(reference, flagNames, field, context)
     let item: MultiTrackTaskMedia
     if (reference.kind === 'track') {
+      // A placeholder only arranges a timeline track's references, so one whose track or clip
+      // is missing (a plan from another workflow) has nothing to arrange and is skipped.
       const track = context.tracks.find((candidate) => candidate.id === reference.value)
       if (!track) {
-        issue(context, 'error', 'unknown_track', { track: reference.value })
+        issue(context, 'warning', 'unknown_track', { track: reference.value })
         return
       }
       if (track.type !== mediaType) {
@@ -406,7 +408,7 @@ function buildMedia(
         return
       }
       if (reference.clip && h3SharedReferenceClip(track)?.id !== reference.clip) {
-        issue(context, 'error', 'unknown_clip', { clip: reference.clip, track: reference.value })
+        issue(context, 'warning', 'unknown_clip', { clip: reference.clip, track: reference.value })
         return
       }
       const placeholder: MultiTrackTaskMedia = {
@@ -486,10 +488,12 @@ function referenceCounts(data: TrackData, segment: MultiTrackSegment): { images:
 function promptTagIssues(prompt: string, labels: ReturnType<typeof h3ReferenceLabels>, context: ImportContext) {
   const known = new Set([...labels.images, ...labels.videos, ...labels.audios,
     ...labels.video_soundtracks.filter((label): label is string => label !== null)])
+  const missing = new Set<string>()
   for (const match of prompt.matchAll(PROMPT_TAG)) {
     const label = `${match[1]} ${match[2]}`
-    if (!known.has(label)) issue(context, 'warning', 'prompt_reference', { tag: `<${label}>` })
+    if (!known.has(label)) missing.add(label)
   }
+  for (const label of missing) issue(context, 'warning', 'prompt_reference', { tag: `<${label}>` })
 }
 
 function sameSegment(left: MultiTrackSegment, right: MultiTrackSegment): boolean {
@@ -517,6 +521,14 @@ export function buildH3PlanImport(
   const fps = current.frame_rate
   const before = orderedTasks(current)
   const existing = new Map(before.map((segment) => [segment.id, segment]))
+  // When no id matches, the plan likely comes from another workflow: say so once instead of
+  // once per task. An empty task track has nothing to match, so it says nothing.
+  const planIds = plan.tasks.flatMap((task) => (
+    task && typeof task === 'object' && typeof task.id === 'string' && task.id ? [task.id] : []
+  ))
+  const foreign = before.length > 0 && planIds.length > 0 && planIds.every((id) => !existing.has(id))
+  if (foreign) issues.push({ level: 'warning', code: 'foreign_ids', params: { count: planIds.length } })
+  const reportNewIds = before.length > 0 && !foreign
   const seen = new Set<string>()
   const requested = new Map<string, { start: number; end: number }>()
   const color = before[0]?.color ?? taskTrack.color
@@ -539,7 +551,7 @@ export function buildH3PlanImport(
     }
     if (task.id) seen.add(task.id)
     const old = task.id ? existing.get(task.id) : undefined
-    if (task.id && !old) issue(context, 'warning', 'new_id', { id: task.id })
+    if (task.id && !old && reportNewIds) issue(context, 'warning', 'new_id', { id: task.id })
     if (task.seconds !== undefined && !(typeof task.seconds === 'number' && Number.isFinite(task.seconds) && task.seconds > 0)) {
       issue(context, 'error', 'invalid_seconds')
       return
