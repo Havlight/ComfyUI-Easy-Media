@@ -28,6 +28,7 @@ python3 scripts/submit_workflow.py RESULT.json
 - `client_id` 是本接口为每个页面生成的 ID；`session_id` 是对应 ComfyUI WebSocket ID。同一个页面里的多个工作流 tab 不计为多个客户端。
 - `--request-id ID` 提供重试标识；脚本在 POST 前把它输出到 stderr。相同 ID 和相同参数只返回已有请求，不重复执行；相同 ID 更换参数会报错。
 - `--status ID` 查询已有请求，不再次提交。`--timeout` 仅控制等待浏览器回执的秒数，不代表生成时限，不取消已经提交的任务。
+- `--wait 秒数` 在入队后（或配合 `--status`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --wait 540` 继续等，不重新提交。
 
 提交开始后到返回 `queued` / `loaded` 前，不要在目标页面手动切换工作流或连续点击运行；冲突会停止自动提交并报告错误。
 
@@ -61,11 +62,23 @@ python3 scripts/submit_workflow.py RESULT.json
 | `failed` | 加载失败或尚未入队就停止，附带 `error` |
 | `unknown` | 执行结果未确认；可能已入队，先检查 queue/history，不能自动重跑 |
 
-HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙或请求 ID 冲突，503 表示没有可用前端或服务容量已满。前端轮询领取并回传结果，不向全部 WebSocket 广播。无回执时不会重新派发已领取的工作流。
+HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙或请求 ID 冲突，503 表示没有可用前端或服务容量已满。服务器只通过目标页面的 WebSocket 通知它领取（不广播），页面在背景时也会立即领取；页面本身也每秒轮询作为备援。WebSocket 连着的页面在 5 分钟内都算在线。无回执时不会重新派发已领取的工作流。
+
+### 规划转换
+
+`POST /easy-media/workflow/convert` 让页面用 Editor 的导入逻辑把 H3 规划转换成 track data，不开分页、不改画布：
+
+```json
+{ "track_data": { "tracks": [] }, "format": "MiniMax", "plan": { "version": 1, "tasks": [] }, "request_id": "...", "client_id": "..." }
+```
+
+状态查询同上；完成时 `status` 为 `converted`，`conversion` 含 `track_data`（有错误时为 null）、`errors`、`warnings`、`tasks`、`tracks`。转换没有副作用，页面 120 秒内没完成时直接 `failed`，可以重试。一般用 `scripts/plan_workflow.py convert`，见 [automation.md](automation.md)。
 
 请求状态只保存在当前 ComfyUI 进程内：完成记录保留一小时；未领取请求 60 秒后失败，领取后超过 120 秒无回执变成 `unknown`。`unknown` 会阻止向同一页面再次自动提交；先检查队列和历史，确认后可刷新页面重新注册。重启或记录过期后不能依赖原 ID 去重。
 
 ## 生成完成判定
+
+`submit_workflow.py --wait` 已按下列步骤判定；自己查询时：
 
 1. 保存 `request_id`，等待到 `queued` 并记录 `prompt_id`。`loaded`、`pending`、`loading` 都不表示已运行。
 2. 用 `GET /queue` 查看 pending/running；用 `GET /history/{prompt_id}` 等待终态。

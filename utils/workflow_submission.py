@@ -1,4 +1,8 @@
-"""In-memory handoff from API callers to a single ComfyUI browser page."""
+"""In-memory handoff from API callers to a single ComfyUI browser page.
+
+Two kinds of job go to a page: a UI workflow to open (and optionally run), and an H3 plan to
+convert into Editor track data with the page's own importer, which touches no tab.
+"""
 
 import hashlib
 import json
@@ -9,23 +13,39 @@ from collections.abc import Callable
 
 from aiohttp import web
 
+# A page polls every second, but a hidden browser tab may slow its timers to about once a
+# minute; while its WebSocket stays connected it is still there, and a job wakes it at once.
+HEARTBEAT_SECONDS = 300
+PAYLOAD_KEYS = ("workflow", "track_data", "plan")
+JOB_EVENT = "easy_media_workflow_job"
+
 
 class WorkflowSubmissions:
-    def __init__(self, connected: Callable[[str], bool]) -> None:
+    def __init__(
+        self,
+        connected: Callable[[str], bool],
+        notify: Callable[[str, dict], None] | None = None,
+    ) -> None:
         self.connected = connected
+        self.notify = notify
         self.clients: dict[str, dict] = {}
         self.jobs: dict[str, dict] = {}
 
     def _prune(self) -> None:
         now = time.time()
         self.clients = {key: value for key, value in self.clients.items()
-                        if now - value["last_seen"] < 30 and self.connected(value["session_id"])}
+                        if now - value["last_seen"] < HEARTBEAT_SECONDS and self.connected(value["session_id"])}
         for job in self.jobs.values():
             if job["status"] == "pending" and now - job["created_at"] > 60:
-                job.update(status="failed", error="Browser did not accept the workflow within 60 seconds")
-                job.pop("workflow", None)
+                job.update(status="failed", error="Browser did not accept the job within 60 seconds")
+                for key in PAYLOAD_KEYS:
+                    job.pop(key, None)
             if job["status"] == "loading" and now - job["claimed_at"] > 120:
-                job.update(status="unknown", error="Browser result unavailable; check queue/history before retrying")
+                # A conversion changes nothing, so it can simply fail and be retried.
+                if job["kind"] == "plan":
+                    job.update(status="failed", error="Browser did not finish converting the plan within 120 seconds")
+                else:
+                    job.update(status="unknown", error="Browser result unavailable; check queue/history before retrying")
         self.jobs = {key: value for key, value in self.jobs.items()
                      if now - value["created_at"] < 3600 or value["status"] in {"loading", "unknown"}}
 
@@ -42,7 +62,55 @@ class WorkflowSubmissions:
     @staticmethod
     def summary(job: dict) -> dict:
         return {key: value for key, value in job.items()
-                if key not in {"workflow", "fingerprint", "claim_token"}}
+                if key not in {*PAYLOAD_KEYS, "fingerprint", "claim_token"}}
+
+    def _create(self, payload: dict, kind: str, fields: dict) -> dict:
+        """Record a job for one page, or return the existing one for a repeated request."""
+        request_id = self._identifier(payload.get("request_id", str(uuid.uuid4())), "request_id")
+        client_id = payload.get("client_id")
+        if client_id is not None:
+            self._identifier(client_id, "client_id")
+        fingerprint = hashlib.sha256(json.dumps(
+            [kind, fields, client_id], sort_keys=True, allow_nan=False,
+        ).encode()).hexdigest()
+        previous = self.jobs.get(request_id)
+        if previous:
+            if previous["fingerprint"] != fingerprint:
+                raise web.HTTPConflict(text="request_id was already used with a different payload")
+            return self.summary(previous)
+        if client_id is None:
+            if len(self.clients) > 1:
+                raise web.HTTPConflict(text="Multiple browser pages available; select client_id from GET /easy-media/workflow/clients")
+            client_id = next(iter(self.clients), None)
+        if client_id not in self.clients:
+            raise web.HTTPServiceUnavailable(text="Open or refresh a ComfyUI page with the Easy Media extension first")
+        if any(job["client_id"] == client_id and job["status"] in {"pending", "loading", "unknown"} for job in self.jobs.values()):
+            raise web.HTTPConflict(text="This browser already has an unfinished submission; check its status before retrying")
+        if len(self.jobs) >= 256:
+            raise web.HTTPServiceUnavailable(text="Submission history is full; retry after old requests expire")
+        job = dict(request_id=request_id, client_id=client_id, kind=kind, **fields, status="pending",
+                   created_at=time.time(), fingerprint=fingerprint)
+        self.jobs[request_id] = job
+        if self.notify:
+            try:
+                self.notify(self.clients[client_id]["session_id"], {"request_id": request_id})
+            except Exception as error:  # noqa: BLE001 - the page's own polling still delivers the job
+                print(f"[Easy Media] Could not wake the browser page: {error}")  # noqa: T201
+        return self.summary(job)
+
+    def submit_plan(self, payload: dict) -> dict:
+        """Ask a page to convert an H3 plan into track data; nothing opens or runs."""
+        self._prune()
+        track_data = payload.get("track_data")
+        if not isinstance(track_data, dict) or not isinstance(track_data.get("tracks"), list):
+            raise ValueError("track_data must be Editor track data with a tracks list")
+        plan = payload.get("plan")
+        if not isinstance(plan, dict):
+            raise ValueError("plan must be an H3 plan object")
+        editor_format = payload.get("format", "MiniMax")
+        if not isinstance(editor_format, str) or not editor_format:
+            raise ValueError("format must be the Editor format, such as MiniMax")
+        return self._create(payload, "plan", dict(track_data=track_data, plan=plan, format=editor_format))
 
     def submit(self, payload: dict) -> dict:
         self._prune()
@@ -60,33 +128,7 @@ class WorkflowSubmissions:
         name = payload.get("name", "Skill workflow")
         if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(c in name for c in "/\\\x00"):
             raise ValueError("name must be a filename without directory separators, up to 200 characters")
-        request_id = self._identifier(payload.get("request_id", str(uuid.uuid4())), "request_id")
-        client_id = payload.get("client_id")
-        if client_id is not None:
-            self._identifier(client_id, "client_id")
-        fingerprint = hashlib.sha256(json.dumps(
-            [workflow, mode, auto_queue, name, client_id], sort_keys=True, allow_nan=False,
-        ).encode()).hexdigest()
-        previous = self.jobs.get(request_id)
-        if previous:
-            if previous["fingerprint"] != fingerprint:
-                raise web.HTTPConflict(text="request_id was already used with a different payload")
-            return self.summary(previous)
-        if client_id is None:
-            if len(self.clients) > 1:
-                raise web.HTTPConflict(text="Multiple browser pages available; select client_id from GET /easy-media/workflow/clients")
-            client_id = next(iter(self.clients), None)
-        if client_id not in self.clients:
-            raise web.HTTPServiceUnavailable(text="Open or refresh a ComfyUI page with the Easy Media extension first")
-        if any(job["client_id"] == client_id and job["status"] in {"pending", "loading", "unknown"} for job in self.jobs.values()):
-            raise web.HTTPConflict(text="This browser already has an unfinished submission; check its status before retrying")
-        if len(self.jobs) >= 256:
-            raise web.HTTPServiceUnavailable(text="Submission history is full; retry after old requests expire")
-        job = dict(request_id=request_id, client_id=client_id, workflow=workflow,
-                   mode=mode, auto_queue=auto_queue, name=name, status="pending",
-                   created_at=time.time(), fingerprint=fingerprint)
-        self.jobs[request_id] = job
-        return self.summary(job)
+        return self._create(payload, "workflow", dict(workflow=workflow, mode=mode, auto_queue=auto_queue, name=name))
 
     def poll(self, payload: dict) -> dict | None:
         self._prune()
@@ -101,8 +143,8 @@ class WorkflowSubmissions:
         for job in self.jobs.values():
             if job["client_id"] == client_id and job["status"] == "pending":
                 job.update(status="loading", claimed_at=time.time(), claim_token=str(uuid.uuid4()))
-                delivery = {**self.summary(job), "workflow": job.pop("workflow"), "claim_token": job["claim_token"]}
-                return delivery
+                payload_fields = {key: job.pop(key) for key in PAYLOAD_KEYS if key in job}
+                return {**self.summary(job), **payload_fields, "claim_token": job["claim_token"]}
         return None
 
     def get(self, request_id: str) -> dict:
@@ -117,9 +159,15 @@ class WorkflowSubmissions:
         if not job.get("claim_token") or payload.get("claim_token") != job["claim_token"]:
             raise web.HTTPForbidden(text="Invalid claim token")
         status = payload.get("status")
-        if status not in ("loaded", "queued", "failed", "unknown"):
+        allowed = ("converted", "failed") if job["kind"] == "plan" else ("loaded", "queued", "failed", "unknown")
+        if status not in allowed:
             raise ValueError("Invalid result status")
         result = {"status": status}
+        if status == "converted":
+            conversion = payload.get("conversion")
+            if not isinstance(conversion, dict):
+                raise ValueError("conversion must be an object")
+            result["conversion"] = conversion
         if status == "queued":
             result["prompt_id"] = self._identifier(payload.get("prompt_id"), "prompt_id")
         if status in ("failed", "unknown"):
@@ -136,8 +184,12 @@ class WorkflowSubmissions:
         return self.summary(job)
 
 
-def register_workflow_routes(routes: web.RouteTableDef, connected: Callable[[str], bool]) -> None:
-    submissions = WorkflowSubmissions(connected)
+def register_workflow_routes(
+    routes: web.RouteTableDef,
+    connected: Callable[[str], bool],
+    notify: Callable[[str, dict], None] | None = None,
+) -> None:
+    submissions = WorkflowSubmissions(connected, notify)
 
     async def read_payload(request: web.Request) -> dict:
         # Reject cross-site form posts even when the server permits broad CORS.
@@ -169,6 +221,10 @@ def register_workflow_routes(routes: web.RouteTableDef, connected: Callable[[str
     @routes.post("/easy-media/workflow/submit")
     async def submit(request: web.Request) -> web.Response:
         return await respond(submissions.submit, await read_payload(request))
+
+    @routes.post("/easy-media/workflow/convert")
+    async def convert(request: web.Request) -> web.Response:
+        return await respond(submissions.submit_plan, await read_payload(request))
 
     @routes.post("/easy-media/workflow/poll")
     async def poll(request: web.Request) -> web.Response:

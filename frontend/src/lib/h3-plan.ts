@@ -1134,6 +1134,15 @@ export function buildH3PlanImport(
 
   const rows: H3PlanRow[] = []
   if (data) {
+    // Tasks past a locked track's end have no locked audio or picture to follow there.
+    const tasksEnd = orderedTasks(data).at(-1)?.end_frame ?? 0
+    for (const type of ['audio', 'video'] as const) {
+      const locked = data.tracks.find((track) => track.type === type && track.audio_locked === true && track.segments.length > 0)
+      const lockedEnd = locked ? Math.max(...locked.segments.map((segment) => segment.end_frame)) : Infinity
+      if (tasksEnd > lockedEnd) {
+        issues.push({ level: 'warning', code: `past_locked_${type}`, params: { tasks: round3(tasksEnd / fps), end: round3(lockedEnd / fps) } })
+      }
+    }
     const after = orderedTasks(data)
     after.forEach((segment, index) => {
       const context: ImportContext = { at: { task: index + 1 }, tracks: data!.tracks, media, issues }

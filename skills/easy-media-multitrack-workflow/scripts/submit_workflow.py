@@ -24,27 +24,33 @@ def default_config_path() -> Path:
     return Path.cwd() / "config.yaml"
 
 
+def read_config_value(name: str, config_path: Path | None = None) -> object:
+    """One field of the node pack's config.yaml, or None when the file or field is absent."""
+    path = config_path if config_path is not None else default_config_path()
+    if not path.exists():
+        return None
+    # Keep the copied skill self-contained; backend utils also import
+    # ComfyUI/model dependencies. YAML is needed only for config.
+    try:
+        import yaml
+    except ImportError as error:
+        raise RuntimeError("Reading config.yaml requires PyYAML; use the ComfyUI Python environment or install PyYAML") from error
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        # Parser errors may contain unrelated API keys from the file.
+        raise ValueError(f"Invalid YAML in {path}; fix the config before submitting") from error
+    if config is not None and not isinstance(config, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return config.get(name) if config else None
+
+
 def resolve_comfyui_url(explicit_url: str | None, config_path: Path | None = None) -> str:
     value = explicit_url
     if value is None:
-        path = config_path if config_path is not None else default_config_path()
-        if path.exists():
-            # Keep the copied skill self-contained; backend utils also import
-            # ComfyUI/model dependencies. YAML is needed only for config.
-            try:
-                import yaml
-            except ImportError as error:
-                raise RuntimeError("Reading config.yaml requires PyYAML; use the ComfyUI Python environment or install PyYAML") from error
-            try:
-                config = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except yaml.YAMLError as error:
-                # Parser errors may contain unrelated API keys from the file.
-                raise ValueError(f"Invalid YAML in {path}; fix the config before submitting") from error
-            if config is not None and not isinstance(config, dict):
-                raise ValueError(f"{path} must contain a YAML mapping")
-            value = config.get("COMFYUI_URL") if config else None
-            if value is not None and not isinstance(value, str):
-                raise ValueError("COMFYUI_URL must be a string")
+        value = read_config_value("COMFYUI_URL", config_path)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("COMFYUI_URL must be a string")
         if value is None or not value.strip():
             value = "http://127.0.0.1:8188"
     base_url = value.strip().rstrip("/")
@@ -57,17 +63,58 @@ def resolve_comfyui_url(explicit_url: str | None, config_path: Path | None = Non
     return base_url
 
 
-def request_json(base_url: str, path: str, payload: dict | None = None) -> dict:
+def request_json(base_url: str, path: str, payload: dict | None = None, timeout: float = 20) -> dict:
     data = None if payload is None else json.dumps(payload, allow_nan=False).encode("utf-8")
     request = Request(base_url + path, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=20) as response:
+        with urlopen(request, timeout=timeout) as response:
             return json.load(response)
     except HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {error.code}: {detail}") from error
     except (URLError, TimeoutError) as error:
         raise RuntimeError(f"ComfyUI request failed: {error}. Do not resubmit with a new request_id; query the existing request first.") from error
+
+
+def history_outputs(entry: dict) -> list[dict]:
+    """Every file a finished prompt reported, as /view can serve it."""
+    files = []
+    for node_id, output in (entry.get("outputs") or {}).items():
+        for kind, items in (output or {}).items():
+            for item in items if isinstance(items, list) else []:
+                if isinstance(item, dict) and isinstance(item.get("filename"), str):
+                    files.append({"node": node_id, "kind": kind, "filename": item["filename"],
+                                  "subfolder": item.get("subfolder", ""), "type": item.get("type", "output")})
+    return files
+
+
+def generation_state(base_url: str, prompt_id: str) -> dict:
+    """Where a queued prompt is now: finished (success or error), running, pending or unknown."""
+    entry = request_json(base_url, f"/history/{quote(prompt_id, safe='')}").get(prompt_id)
+    if entry:
+        status = entry.get("status") or {}
+        if status.get("status_str") == "success" and status.get("completed"):
+            return {"state": "success", "outputs": history_outputs(entry)}
+        errors = [message[1] for message in status.get("messages", [])
+                  if isinstance(message, list) and len(message) == 2 and message[0] == "execution_error"]
+        detail = errors[0] if errors else {}
+        return {"state": "error", "node_type": detail.get("node_type"), "message": detail.get("exception_message")}
+    queue = request_json(base_url, "/queue")
+    for state, key in (("running", "queue_running"), ("pending", "queue_pending")):
+        ids = [item[1] for item in queue.get(key, []) if isinstance(item, list) and len(item) > 1]
+        if prompt_id in ids:
+            return {"state": state, **({"ahead": ids.index(prompt_id)} if state == "pending" else {})}
+    return {"state": "unknown"}
+
+
+def wait_for_generation(base_url: str, prompt_id: str, seconds: float, interval: float = 5) -> dict:
+    """Wait at most `seconds`; calling again later continues the same wait without resubmitting."""
+    deadline = time.monotonic() + seconds
+    while True:
+        state = generation_state(base_url, prompt_id)
+        if state["state"] in {"success", "error"} or time.monotonic() >= deadline:
+            return state
+        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
 
 
 def main() -> int:
@@ -83,9 +130,14 @@ def main() -> int:
     parser.add_argument("--clients", action="store_true", help="List available browser pages")
     parser.add_argument("--status", metavar="REQUEST_ID", help="Read an existing submission without resubmitting")
     parser.add_argument("--timeout", type=float, default=150, help="Seconds to wait for browser acknowledgement, not generation")
+    parser.add_argument("--wait", type=float, default=0, metavar="SECONDS",
+                        help="After queueing (or with --status), wait up to this long for the generation to finish; "
+                             "exit 3 while it still runs, so the same command can be repeated")
     args = parser.parse_args()
     if not 0 < args.timeout <= 3600:
         parser.error("--timeout must be between 0 and 3600 seconds")
+    if not 0 <= args.wait <= 3600:
+        parser.error("--wait must be between 0 and 3600 seconds")
     try:
         base_url = resolve_comfyui_url(args.url, args.config)
         if args.clients:
@@ -110,7 +162,11 @@ def main() -> int:
             while result["status"] in {"pending", "loading"} and time.monotonic() < deadline:
                 time.sleep(1)
                 result = request_json(base_url, f"/easy-media/workflow/submissions/{quote(request_id, safe='')}")
+        if args.wait and result.get("status") == "queued" and result.get("prompt_id"):
+            result["generation"] = wait_for_generation(base_url, result["prompt_id"], args.wait)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if "generation" in result:
+            return {"success": 0, "error": 2}.get(result["generation"]["state"], 3)
         return 0 if "clients" in result or result.get("status") in {"loaded", "queued"} else 2
     except (OSError, ValueError, RuntimeError) as error:
         print(str(error), file=sys.stderr)

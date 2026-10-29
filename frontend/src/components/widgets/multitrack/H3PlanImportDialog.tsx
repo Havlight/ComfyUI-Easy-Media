@@ -14,18 +14,16 @@ import { prepareH3NativeEdit } from '@/hooks/use-h3-native-editing'
 import { fetchH3TimelineStatuses, H3_STALE_STATUSES, h3TasksWithStatus, type TimelineStatus } from '@/hooks/use-h3-timeline-status'
 import {
   buildH3PlanImport,
-  formatH3PlanTaskNumbers,
   groupH3PlanIssues,
-  h3PlanMediaKey,
   h3PlanMediaRequests,
   parseH3Plan,
   type H3PlanChange,
   type H3PlanImport,
   type H3PlanIssue,
   type H3PlanIssueGroup,
-  type H3PlanMediaRequest,
   type H3PlanMediaResult,
 } from '@/lib/h3-plan'
+import { h3PlanIssueText, resolveH3PlanMedia } from '@/lib/h3-plan-convert'
 import type { ConnectedH3Project } from '@/lib/h3-project-snapshot'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -57,18 +55,6 @@ const CHANGE_CLASSES: Record<H3PlanChange, string> = {
   modified: 'text-highlight',
   added: 'text-primary',
   removed: 'text-destructive line-through',
-}
-
-async function resolvePlanMedia(requests: H3PlanMediaRequest[]): Promise<Map<string, H3PlanMediaResult>> {
-  if (requests.length === 0) return new Map()
-  const response = await fetch('/easy-media/plan/resolve-media', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items: requests }),
-  })
-  const payload = await response.json() as { results?: H3PlanMediaResult[]; error?: string }
-  if (!response.ok || !Array.isArray(payload.results)) throw new Error(payload.error ?? `HTTP ${response.status}`)
-  return new Map(requests.map((request, index) => [h3PlanMediaKey(request), payload.results![index]]))
 }
 
 /**
@@ -104,7 +90,7 @@ export function H3PlanImportDialog({
     void (async () => {
       let media: Map<string, H3PlanMediaResult>
       try {
-        media = await resolvePlanMedia(h3PlanMediaRequests(plan))
+        media = await resolveH3PlanMedia(h3PlanMediaRequests(plan))
       } catch (cause: unknown) {
         fail([{ level: 'error', code: 'resolve_failed', params: { message: cause instanceof Error ? cause.message : String(cause) } }])
         return
@@ -135,14 +121,7 @@ export function H3PlanImportDialog({
   const errors = groups.filter((item) => item.level === 'error')
   const warnings = groups.filter((item) => item.level === 'warning')
   const counts = (change: H3PlanChange) => result?.rows.filter((row) => row.change === change).length ?? 0
-  const issueText = (item: H3PlanIssueGroup) => {
-    const prefix = item.track !== undefined
-      ? item.clip !== undefined ? t('h3Plan.clipPrefix', { track: item.track, clip: item.clip }) : t('h3Plan.trackPrefix', { track: item.track })
-      : item.tasks.length === 0 ? ''
-        : item.tasks.length === 1 ? t('h3Plan.taskPrefix', { n: item.tasks[0] })
-          : t('h3Plan.tasksPrefix', { list: formatH3PlanTaskNumbers(item.tasks) })
-    return `${prefix}${t(`h3Plan.issue_${item.code}`, item.params)}`
-  }
+  const issueText = (item: H3PlanIssueGroup) => h3PlanIssueText(item, t)
 
   return (
     <Dialog open={request !== null} onOpenChange={(open) => { if (!open) onClose() }}>

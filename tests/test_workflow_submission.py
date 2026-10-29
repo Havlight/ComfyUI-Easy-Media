@@ -51,8 +51,58 @@ def test_disconnect_and_expired_heartbeat_are_not_selectable(monkeypatch):
     sockets.add("socket-1")
     register(store)
     now = module.time.time()
-    monkeypatch.setattr(module.time, "time", lambda: now + 31)
+    # A hidden tab may poll only once a minute; its connected WebSocket keeps it listed.
+    monkeypatch.setattr(module.time, "time", lambda: now + 90)
+    assert [client["client_id"] for client in store.list_clients()] == ["page-1"]
+    monkeypatch.setattr(module.time, "time", lambda: now + module.HEARTBEAT_SECONDS + 1)
     assert store.list_clients() == []
+
+
+def plan_payload(**kwargs):
+    return {"request_id": "plan-1", "track_data": {"tracks": [], "frame_rate": 24}, "format": "MiniMax",
+            "plan": {"version": 1, "tasks": []}, **kwargs}
+
+
+def test_a_job_wakes_only_the_page_it_is_for():
+    woken = []
+    store = module.WorkflowSubmissions(lambda _: True, lambda session, data: woken.append((session, data)))
+    register(store, "page-1", "socket-1")
+    register(store, "page-2", "socket-2")
+    store.submit(payload(client_id="page-2"))
+    store.submit_plan(plan_payload(client_id="page-1"))
+    assert woken == [("socket-2", {"request_id": "request-1"}), ("socket-1", {"request_id": "plan-1"})]
+
+
+def test_plan_conversions_return_track_data_and_fail_safely(monkeypatch):
+    now = module.time.time()
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    store = module.WorkflowSubmissions(lambda _: True, lambda *_: (_ for _ in ()).throw(RuntimeError("socket gone")))
+    register(store)
+    # A failed wake-up still leaves the job for the page's own polling.
+    assert store.submit_plan(plan_payload())["status"] == "pending"
+    job = register(store)
+    assert job["kind"] == "plan" and job["plan"] == plan_payload()["plan"] and "workflow" not in job
+    assert "plan" not in store.get("plan-1")
+    with pytest.raises(ValueError):
+        store.complete("plan-1", {"claim_token": job["claim_token"], "status": "queued", "prompt_id": "p"})
+    conversion = {"track_data": {"tracks": []}, "issues": []}
+    result = store.complete("plan-1", {"claim_token": job["claim_token"], "status": "converted", "conversion": conversion})
+    assert result["conversion"] == conversion
+    # A conversion the page never finishes fails instead of blocking the page as unknown.
+    store.submit_plan(plan_payload(request_id="plan-2"))
+    register(store)
+    now += 121
+    assert store.get("plan-2")["status"] == "failed"
+    assert store.submit(payload())["status"] == "pending"
+
+
+@pytest.mark.parametrize("change", [{"track_data": {"tracks": {}}}, {"plan": []}, {"format": ""}])
+def test_invalid_plan_conversions_do_not_create_jobs(change):
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    with pytest.raises(ValueError):
+        store.submit_plan(plan_payload(**change))
+    assert not store.jobs
 
 
 def test_idempotency_survives_claim_and_result():

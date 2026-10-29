@@ -4,6 +4,7 @@
 
 ## 它能做什么
 
+- 用 H3 规划文件描述影片（任务、提示词、参考素材、时间轴上的歌曲或影片），套到用户准备好的模板工作流，执行、等待结果，并可选择抽画面检查后自行修改重跑。流程见 [自动循环](references/automation.md)。
 - 将本地图片、视频和音频上传到 ComfyUI `input` 目录或指定子目录。
 - 自动创建和编排任务、视频、音频时间线片段。
 - 把用户提示词、系统提示词和参考图片放入对应任务片段。
@@ -57,6 +58,14 @@ ln -s "$(pwd)/skills/easy-media-multitrack-workflow" \
 ```
 
 目标位置已有同名文件或目录时，`ln` 会停止并报错，不会覆盖它。安装完成后，新建一个 Codex 任务以刷新可用 Skill 列表。
+
+### 其他 agent 工具
+
+Claude Code 的目录是 `~/.claude/skills/`，做法同上（复制或符号链接整个 `easy-media-multitrack-workflow` 目录）。没有 skill 机制的工具，在对话开头请它先读 `SKILL.md`。
+
+Windows 的 Codex 若跑在 WSL 里，本机路径与 ComfyUI 看到的不同；`plan_workflow.py` 会自动上传 ComfyUI 读不到的文件。
+
+抽画面检查默认关闭；要让 agent 自己看结果，在节点包 `config.yaml` 设 `AGENT_FRAME_REVIEW: true`，或在需求里请它检查。
 
 ## 使用方法
 
@@ -121,6 +130,7 @@ easy-media-multitrack-workflow/
 ├── agents/openai.yaml
 ├── assets/templates/v1.3.0-blank-workflow.json
 ├── references/
+│   ├── automation.md
 │   ├── multitrack-schema.md
 │   ├── execution-api.md
 │   ├── plan-file.md
@@ -128,7 +138,10 @@ easy-media-multitrack-workflow/
 │   └── upload-api.md
 └── scripts/
     ├── customize_template.py
-    └── patch_workflow.py
+    ├── patch_workflow.py
+    ├── plan_workflow.py
+    ├── review_frames.py
+    └── submit_workflow.py
 ```
 
 `SKILL.md` 是 Codex 入口；`README.md` 面向安装和使用者；模板资产用于新建流程；`references` 保存数据结构与节点替换规则；脚本负责安全定制模板、定位节点、校验补丁并生成新的工作流文件。

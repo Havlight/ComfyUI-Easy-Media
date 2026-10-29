@@ -42,9 +42,13 @@ def test_file_references_are_copied_once_by_content(plan_media, tmp_path):
 
     assert first == again
     assert first["source_type"] == "input" and first["file_name"] == "alice.png"
-    assert first["file_path"].startswith("easy_media/imports/") and first["file_path"].endswith(".png")
+    # One folder per content hash keeps the original name for the Editor.
+    assert first["file_path"].startswith("easy_media/imports/") and first["file_path"].endswith("/alice.png")
     assert (tmp_path / "input" / first["file_path"]).read_bytes() == b"png-bytes"
     assert len([path for path in (tmp_path / "input/easy_media/imports").iterdir()]) == 1
+    renamed = tmp_path / "shots" / "copy.png"
+    renamed.write_bytes(b"png-bytes")
+    assert plan_media.resolve_plan_media({"media_type": "image", "file": str(renamed)})["file_path"] == first["file_path"]
 
 
 def test_folder_and_local_references_are_checked_in_place(plan_media, tmp_path):

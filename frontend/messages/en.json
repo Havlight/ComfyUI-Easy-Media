@@ -626,6 +626,8 @@
     "issue_clip_end": "end must come after start.",
     "issue_clip_overlap": "Clips {first} and {second} overlap.",
     "issue_shared_clips": "{count} clips are shared; a track shares at most one.",
+    "issue_past_locked_audio": "Tasks run to {tasks}s, past the end of the locked audio at {end}s.",
+    "issue_past_locked_video": "Tasks run to {tasks}s, past the end of the locked video at {end}s.",
     "issue_resolve_failed": "The files could not be checked: {message}",
     "issue_status_unavailable": "Saved results could not be compared: {message}"
   },

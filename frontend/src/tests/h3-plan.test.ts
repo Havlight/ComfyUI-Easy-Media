@@ -193,7 +193,9 @@ describe('H3 plan files', () => {
         images: ['previous_frame', 'C:/shots/bob.png'], audios: [{ file: 'D:/voice/line.wav', fit: true }] },
     ] })
 
-    expect(codes(result)).toEqual(['warning:3:timing_adjusted'])
+    // The new task runs past the locked song, which ends with task 2.
+    expect(codes(result)).toEqual(['warning:-:past_locked_audio', 'warning:3:timing_adjusted'])
+    expect(result.issues[0].params).toEqual({ tasks: 15.083, end: 10.125 })
     const added = result.data!.tracks[0].segments[2]
     expect([added.start_frame, added.end_frame]).toEqual([243, 362])
     expect(added.content.images?.map((image) => image.file_path ?? image.source_type)).toEqual([

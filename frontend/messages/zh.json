@@ -626,6 +626,8 @@
     "issue_clip_end": "end 必须晚于 start。",
     "issue_clip_overlap": "第 {first} 和第 {second} 个片段重叠。",
     "issue_shared_clips": "共 {count} 个片段设为公用，每条轨道最多一个。",
+    "issue_past_locked_audio": "任务排到 {tasks}s，超过锁定音频在 {end}s 的结尾。",
+    "issue_past_locked_video": "任务排到 {tasks}s，超过锁定视频在 {end}s 的结尾。",
     "issue_resolve_failed": "无法检查文件：{message}",
     "issue_status_unavailable": "无法比对已存结果：{message}"
   },

@@ -2,14 +2,16 @@
 
 A plan names references by local path or URL (``file``), by a path under ComfyUI's
 input or output folder (``input`` / ``output``), or as a local file kept in place
-(``local``). ``file`` references are copied under ``input/easy_media/imports`` and
-named by their content hash, so repeated imports reuse one copy and the project
-keeps working after the source folder changes. The other kinds are only checked.
+(``local``). ``file`` references are copied to ``input/easy_media/imports/<hash>/<name>``,
+one folder per content hash, so repeated imports reuse one copy, the Editor keeps the
+original name, and the project keeps working after the source folder changes. The skill
+uploads files the server cannot read to the same place. The other kinds are only checked.
 """
 from __future__ import annotations
 
 import hashlib
 import os
+import re
 import tempfile
 import urllib.parse
 import urllib.request
@@ -51,16 +53,34 @@ def _import_directory() -> Path:
     return directory
 
 
-def _store(source: Path, extension: str) -> str:
-    """Copy a file under the import folder by content hash; return its input path."""
+def content_hash(source: Path) -> str:
+    """The import folder name for a file: the first 16 hex digits of its SHA-256."""
     digest = hashlib.sha256()
     with source.open("rb") as handle:
         for chunk in iter(lambda: handle.read(CHUNK_SIZE), b""):
             digest.update(chunk)
-    name = f"{digest.hexdigest()[:16]}{extension}"
-    target = _import_directory() / name
-    if not target.exists():
-        partial = target.with_name(f".{name}.{uuid.uuid4().hex[:8]}.part")
+    return digest.hexdigest()[:16]
+
+
+def _safe_name(name: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(name).name).strip(" .")
+    return cleaned or "media"
+
+
+def _store(source: Path, name: str) -> tuple[str, str]:
+    """Copy a file to ``imports/<hash>/<name>``; return (input path, stored name).
+
+    One folder per content keeps the original name for the Editor and stores a file once,
+    whatever it was called when imported again.
+    """
+    folder = _import_directory() / content_hash(source)
+    existing = sorted(path for path in folder.glob("*") if path.is_file() and not path.name.startswith(".")) if folder.is_dir() else []
+    if existing:
+        target = existing[0]
+    else:
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / _safe_name(name)
+        partial = folder / f".{target.name}.{uuid.uuid4().hex[:8]}.part"
         try:
             with source.open("rb") as reader, partial.open("wb") as writer:
                 for chunk in iter(lambda: reader.read(CHUNK_SIZE), b""):
@@ -68,7 +88,7 @@ def _store(source: Path, extension: str) -> str:
             os.replace(partial, target)
         finally:
             partial.unlink(missing_ok=True)
-    return f"{IMPORT_SUBFOLDER}/{name}"
+    return f"{IMPORT_SUBFOLDER}/{folder.name}/{target.name}", target.name
 
 
 def _download(url: str, media_type: str) -> tuple[str, str]:
@@ -96,7 +116,7 @@ def _download(url: str, media_type: str) -> tuple[str, str]:
         else:
             extension = _extension(f"download{CONTENT_TYPE_EXTENSIONS.get(content_type, '')}", media_type)
             name = f"{Path(name).stem or 'download'}{extension}"
-        return _store(path, extension), name
+        return _store(path, name)
 
 
 def _folder_file(base: str, relative: str, media_type: str) -> tuple[Path, str]:
@@ -162,10 +182,10 @@ def _resolve(item: Any) -> dict[str, str]:
             raise PlanMediaError(f"{value} is not an absolute path")
         if not path.is_file():
             raise PlanMediaError(f"{value} was not found")
-        extension = _extension(path.name, media_type)
+        _extension(path.name, media_type)
         if kind == "local":
             return {"source_type": "local", "local_path": str(path), "file_name": path.name}
-        return {"source_type": "input", "file_path": _store(path, extension), "file_name": path.name}
+        return {"source_type": "input", "file_path": _store(path, path.name)[0], "file_name": path.name}
     base = folder_paths.get_input_directory() if kind == "input" else folder_paths.get_output_directory()
     path, normalized = _folder_file(base, value, media_type)
     return {"source_type": kind, "file_path": normalized, "file_name": path.name}

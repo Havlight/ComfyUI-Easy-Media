@@ -64,8 +64,9 @@ from .modules.asr.subtitle_recognition import (
     validate_subtitle_recognition_method,
 )
 from .utils.plan_media import PlanMediaError, resolve_plan_media
+from .utils.review_frames import ReviewError, contact_sheet
 from .utils.speech import generate_voxcpm2_speech
-from .utils.workflow_submission import register_workflow_routes
+from .utils.workflow_submission import JOB_EVENT as WORKFLOW_JOB_EVENT, register_workflow_routes
 from .utils.video import (
     decode_multitrack_preview_frame,
     download_audio_to_temp,
@@ -85,6 +86,8 @@ _RUNNINGHUB_ACCOUNT_ENDPOINT = "https://www.runninghub.cn/uc/openapi/accountStat
 register_workflow_routes(
     PromptServer.instance.routes,
     lambda session_id: session_id in PromptServer.instance.sockets,
+    # Wake only the chosen page; a hidden tab's own polling may run once a minute.
+    lambda session_id, data: PromptServer.instance.send_sync(WORKFLOW_JOB_EVENT, data, session_id),
 )
 
 
@@ -630,6 +633,36 @@ async def handle_plan_resolve_media(request: web.Request) -> web.Response:
     except Exception as error:
         traceback.print_exc()
         return web.json_response({"error": f"Plan media import failed: {error}"}, status=500)
+
+
+MAX_REVIEW_ITEMS = 32
+
+
+def _review_item(item: object, frames: object, width: object) -> dict:
+    try:
+        return contact_sheet(item.get("file_path") if isinstance(item, dict) else None, frames, width)
+    except ReviewError as error:
+        return {"error": str(error)}
+
+
+@PromptServer.instance.routes.post("/easy-media/review/contact-sheet")
+async def handle_review_contact_sheet(request: web.Request) -> web.Response:
+    """Contact sheets of output videos, for an agent that reviews its own runs."""
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("Request must contain a JSON object")
+        items = data.get("items")
+        if not isinstance(items, list) or not 0 < len(items) <= MAX_REVIEW_ITEMS:
+            raise ValueError(f"items must be a list of 1 to {MAX_REVIEW_ITEMS} videos")
+        frames, width = data.get("frames", 4), data.get("width", 1024)
+        results = await asyncio.to_thread(lambda: [_review_item(item, frames, width) for item in items])
+        return web.json_response({"results": results})
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except Exception as error:
+        traceback.print_exc()
+        return web.json_response({"error": f"Contact sheet failed: {error}"}, status=500)
 
 
 MAX_AUDIO_PROBE_ITEMS = 64

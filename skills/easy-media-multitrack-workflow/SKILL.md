@@ -1,28 +1,52 @@
 ---
 name: easy-media-multitrack-workflow
-description: "Create, edit, and optionally run ComfyUI Easy Media MultiTrack workflows from a blank bundled template or a user-provided workflow, including media upload, timeline arrangement, subject or partial video replacement continuity, audio roles, resolution, and MultiTrack Project settings."
+description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) videos: write H3 plan files (tasks, prompts, reference media, timeline audio and video), turn them into workflows from the user's templates, queue them, wait for the results and optionally review frames; or patch workflow JSON directly for resolution, Project settings and node changes."
 ---
 
 # Easy Media MultiTrack 工作流
 
-根据用户需求生成一份可复核的新工作流 JSON；用户明确要求实际生成视频时，也可以上传素材并提交到 ComfyUI 执行。
+用 H3 规划文件描述影片内容，套到用户准备好的模板工作流后在 ComfyUI 执行；规划文件管不到的设置，直接修改工作流 JSON。
 
-## 选择基线
+## 必守规则
 
-只有两条路径：
+- **执行要明确授权**：只有用户说「执行、生成、出片、排队」时才排入队列；「做一个工作流／规划」只产生文件。
+- **任务 id 固定**：规划里每段任务都写自己的 `id`（如 `s01`、`s02`），修改时保留。已存结果依 id 对应，没有 id 每次修改都会全部重新生成。
+- **路径**：素材写绝对路径。ComfyUI 读不到时（agent 在 WSL、容器或另一台机器），`plan_workflow.py` 会自动上传。
+- **不要卡着等生成**：`submit_workflow.py --wait 540` 最多等 9 分钟；返回码 3 表示还在跑，之后用 `--status <request_id> --wait 540` 继续等，不要重新提交。
+- **重跑上限**：同一个需求最多自动重新生成 3 轮，再要重跑先问用户。
+- **看画面检查默认关闭**：只有 `config.yaml` 的 `AGENT_FRAME_REVIEW: true` 或用户要求检查结果时才用 `review_frames.py`；模型不能看图就不要用，改为回报输出文件。每轮只看这轮重新生成的段落。
+- **环境**：需要一个开着的 ComfyUI 页面。Codex 等有沙盒的工具要允许连到 ComfyUI 地址（本机网络）。地址依序取用户给的地址、节点包 `config.yaml` 的 `COMFYUI_URL`、`http://127.0.0.1:8188`。
 
-1. **空模板生成**：用户明确要求新建、从空模板开始，或没有提供可编辑工作流时，使用 `assets/templates/v1.3.0-blank-workflow.json`。需要模板节点替换时阅读 [references/template-workflow.md](references/template-workflow.md)。
-2. **已有工作流生成**：用户提供了工作流/模板时，以该文件为唯一基线，只打补丁；保留未涉及的节点、连线、节点 ID、分组、布局和配置。即使其节点图与内置模板不同，也不得用内置模板覆盖。
+## 选路线
 
-用户同时提供工作流又明确要求“从空模板重建”时，遵循空模板路径；否则优先已有工作流路径。
+1. **规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片。写规划文件（[references/plan-file.md](references/plan-file.md)），按 [references/automation.md](references/automation.md) 转换、执行、等待与检查。
+2. **直接改工作流**：分辨率、Project 采样设置、片段 LoRA、字幕、loader／attention 替换，或用户要求修改某个工作流文件。按下方「直接改工作流」。
 
-## 编辑流程
+用户没有给模板时，两条路线都以 `assets/templates/v1.3.0-blank-workflow.json` 为基线；给了工作流或模板时，以它为唯一基线，不用内置模板覆盖。
 
-1. 保留源文件，运行 `scripts/patch_workflow.py inspect WORKFLOW.json`，确认连接的 `easy multiTrackEditor` / `easy multitrackProject`、分辨率、format、FPS、轨道和项目参数。
-2. 需要时间线、分辨率或音频角色时阅读 [references/multitrack-schema.md](references/multitrack-schema.md)，生成完整的新 `track_data`。空模板必须用目标内容替换空 TRACK_DATA；已有对象保留 ID 和未知字段，只为新增对象生成 UUID。
-3. 仅当用户明确要求上传或执行时，阅读 [references/upload-api.md](references/upload-api.md) 并把本地/URL 素材交给 ComfyUI。使用用户地址，未提供地址时先读取 Easy Media 节点包 `config.yaml` 的 `COMFYUI_URL`，文件或字段不存在（含空值）时才回退至 `http://127.0.0.1:8188`；TRACK_DATA 只写接口返回的媒体路径。
-4. 用户明确要求受支持的 loader/attention 替换时，按 [references/template-workflow.md](references/template-workflow.md) 原位处理；其他情况不改节点图。
-5. 按 [references/multitrack-schema.md](references/multitrack-schema.md#补丁-plan) 生成只包含实际变更的 plan，先 dry-run，再写入新文件并重新 inspect：
+## 自动循环
+
+1. `plan_workflow.py probe` 读出歌曲、影片长度，据此分段。
+2. 写规划文件。
+3. `plan_workflow.py convert 模板 规划 --project-name 名称`：有错误就修正规划再转换；确认警告、已有结果的段落与开始段。
+4. 用户授权执行后：`submit_workflow.py 输出.workflow.json --wait 540`。
+5. （可选）`review_frames.py --project 名称 --tasks 重跑的段落`。
+6. 需要修改时改规划，回到第 3 步；没改到的段落沿用已存结果，从第一个需要重跑的段落开始。
+
+## 关键决策
+
+- **主体或局部替换**：用户提供视频作为主体或局部替换参考时，全部目标任务用 `continuity: context_drift`，该视频轨设 `audio_locked: true` 保留画面时间线。未另锁音频时沿用视频原声；另有锁定音频轨时优先用它的音频。用户没给片段长度时按连续 10 秒拆分，末段用剩余时长。
+- **主音频／影片原声**：需要原样沿用并驱动节奏（MV、歌词视频、旁白）时，在那条音频或视频轨设 `audio_locked: true`。同类型最多锁一条；音频与视频可各锁一条，并存时音频优先，视频继续约束画面。主音频不只一个候选时先问用户。
+- **接缝**：`context_drift` 任务默认 `seam: "soft"`，用户要求接缝贴紧上一段时用 `"clean"`。
+- **公用媒体**：多段要用同一张图、同一段音频或影片时设 `shared: true`。公用图片排在各段自己的图片之前，每段合计最多 9 张；每条音频或视频轨最多一个公用片段。
+- **分辨率**：用户没提就保留模板的设置；要改时走直接改工作流，规则见 [references/multitrack-schema.md](references/multitrack-schema.md)。
+
+## 直接改工作流
+
+1. 保留源文件，`scripts/patch_workflow.py inspect WORKFLOW.json` 确认连接的 `easy multiTrackEditor` / `easy multitrackProject`、分辨率、format、FPS、轨道和项目参数。
+2. 改时间线、分辨率或音频角色时读 [references/multitrack-schema.md](references/multitrack-schema.md)，写完整的 `track_data`：保留既有对象的 ID 和未知字段，只为新增对象生成 UUID。
+3. loader／attention 替换按 [references/template-workflow.md](references/template-workflow.md)；其他情况不改节点图。
+4. 写只含实际变更的补丁 plan，先 dry-run，再写入新文件并重新 inspect：
 
    ```bash
    python3 scripts/patch_workflow.py apply SOURCE.json --plan PLAN.json
@@ -30,24 +54,8 @@ description: "Create, edit, and optionally run ComfyUI Easy Media MultiTrack wor
    python3 scripts/patch_workflow.py inspect RESULT.json
    ```
 
-6. 复核节点数、link 数和非目标节点不变量。脚本报告目标歧义、schema 不兼容或媒体无效时停止，不绕过校验。
-
-## 关键决策
-
-- **分辨率**：用户未表达意图时保留现值。`16:9 0.9mp` 等表达选择 megapixels 模式，并映射完整 `aspect_ratio`；精确尺寸、auto、短/长边和 custom 规则见 schema 参考。
-- **上下文漂移控制**：用户提供视频作为主体或局部替换参考时，将全部目标 task segment 的 `content.continuity_mode` 设为 `context_drift`，并在该视频轨设置 `audio_locked: true` 以保留画面时间线。未另设音频锁时沿用视频原声；另有锁定 audio track 时优先用其音频替换。用户未指定片段长度时，默认把任务范围按连续 10 秒拆分，末段使用剩余时长；完整规则见 schema 参考。
-- **主音频/视频原声**：需要原样沿用并驱动任务时长/节奏时，在目标 audio 或 video 轨设置 `audio_locked: true`。同类型最多锁一条；video 与 audio 可各锁一条，并存时 audio 优先执行音频锁定，video 继续约束画面时间线。
-- **公用媒体**：上下文分段需要使用同一张图片、同一段音频或同一段视频作为参考时，将对应媒体设置为 `shared_reference: true`。任务图片把字段写在 `content.images[]` 项上；音频/视频把字段写在媒体片段的 `content` 上。公用图片会排在各任务私有图片之前且每个任务合计仍最多 9 张；同一音频或视频轨最多一个公用片段；公用音频与视频都从源文件开头使用，截到各任务的长度，并排在各任务的时间线参考之前。它是跨任务参考，不等于轨道级 `audio_locked`。
-- **任务参考视频与音频**：`ref`、`edit` 任务可在 `content.videos` / `content.audios` 放自己的参考文件，或用 `source_type: "track"` 占位项调整时间轴参考的顺序、排除与裁切；格式见 `references/multitrack-schema.md`。
-- **规划文件**：用户在 ComfyUI 画面上操作、只需改任务（片段、提示词、参考素材）或把整个素材文件放到某段开头时，可以改用 Editor 的「导出规划／导入规划」JSON 文件，不必改工作流；格式与规则见 [references/plan-file.md](references/plan-file.md)。
-- **项目范围**：排队前复核 `segment_start_number`、`segment_count`、`project_save` 和 sampling 设置，尤其是 `override` 的覆盖范围。
-
-## 可选：提交生成
-
-“创建/生成一个工作流”只授权生成 JSON；“运行、执行、开始生成、提交队列、直接出片”等明确意图才授权上传素材并执行。
-
-用户要求在 ComfyUI 中打开或执行时，阅读 [references/execution-api.md](references/execution-api.md)，使用 `scripts/submit_workflow.py` 提交 **UI workflow JSON**。默认新开工作流 tab，再通过前端原生运行入口入队；只要求打开时传 `--no-queue`，明确要求覆盖当前 tab 时传 `--mode replace`。不改用 API-format prompt 或直接 POST `/prompt`。未指定目标且只有一个在线页面时自动选择；多个页面时列出客户端让用户指定，不猜测。使用用户地址，未提供地址时先读取 Easy Media 节点包 `config.yaml` 的 `COMFYUI_URL`，文件或字段不存在（含空值）时才回退至 `http://127.0.0.1:8188`；所有素材必须上传到同一实例。执行后记录 `request_id` 和 `prompt_id`，等待到成功、失败或用户要求的停止条件，不以“已排队”冒充“已生成”。
+5. 复核节点数、link 数和非目标节点不变量。脚本报告歧义、schema 不兼容或媒体无效时停止，不绕过校验。上传素材见 [references/upload-api.md](references/upload-api.md)，提交与底层接口见 [references/execution-api.md](references/execution-api.md)。
 
 ## 交付
 
-说明基线路径、输出文件、目标节点 ID、分辨率、时间线摘要、媒体路径、主体替换衔接模式、锁定媒体轨/公用媒体、项目参数和图结构是否保持。若已执行，再报告 ComfyUI 地址、`prompt_id`、最终状态和输出摘要。
+说明用了哪个模板或基线、输出文件、项目名称、任务与时间轴摘要、锁定轨与公用媒体、开始段，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态和输出文件；不以「已排队」冒充「已生成」。

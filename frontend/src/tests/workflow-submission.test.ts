@@ -1,6 +1,12 @@
 import type { ComfyApp } from '@comfyorg/comfyui-frontend-types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installWorkflowSubmission, runWorkflowSubmission, type WorkflowSubmission } from '@/lib/workflow-submission'
+import {
+  installWorkflowSubmission,
+  runWorkflowSubmission,
+  WORKFLOW_JOB_EVENT,
+  type PlanConversionJob,
+  type WorkflowSubmission,
+} from '@/lib/workflow-submission'
 
 function setup() {
   const current = { path: 'workflows/original.json' }
@@ -96,6 +102,45 @@ describe('UI workflow submission', () => {
     expect(await runWorkflowSubmission(nativeApp, job)).toEqual({ status: 'unknown', error: 'Network error' })
     expect(original).toHaveBeenCalledTimes(1)
     expect(app.api.queuePrompt).toBe(original)
+  })
+
+  it('converts a plan without opening a tab and polls at once when the server wakes the page', async () => {
+    vi.useFakeTimers()
+    const { app, nativeApp } = setup()
+    const listeners = new Map<string, () => void>()
+    Object.assign(app.api, {
+      addCustomEventListener: vi.fn((type: string, callback: () => void) => listeners.set(type, callback)),
+      removeCustomEventListener: vi.fn((type: string) => listeners.delete(type)),
+    })
+    const planJob: PlanConversionJob = {
+      kind: 'plan', request_id: 'plan-1', claim_token: 'token', format: 'MiniMax',
+      track_data: { total_length: 120, frame_rate: 24, h3_native: { version: 2 }, tracks: [
+        { id: 'tasks', name: 'Task 0', type: 'task', color: '', muted: false, locked: false, segments: [] },
+      ] },
+      plan: { version: 1, tasks: [{ id: 's01', seconds: 5 }] },
+    }
+    let queued: PlanConversionJob | null = null
+    app.api.fetchApi.mockImplementation(async (path: string) => {
+      if (path.endsWith('/poll')) {
+        const job = queued
+        queued = null
+        return { ok: true, json: async () => ({ job }) }
+      }
+      return { ok: true, json: async () => ({}) }
+    })
+    const stop = installWorkflowSubmission(nativeApp)
+    await vi.advanceTimersByTimeAsync(1000)
+    queued = planJob
+    listeners.get(WORKFLOW_JOB_EVENT)!()
+    await vi.advanceTimersByTimeAsync(10)
+
+    const resultCall = app.api.fetchApi.mock.calls.find(([path]) => path.endsWith('/submissions/plan-1/result'))
+    expect(resultCall).toBeDefined()
+    const body = JSON.parse((resultCall as unknown as [string, RequestInit])[1].body as string)
+    expect(body).toMatchObject({ status: 'converted', claim_token: 'token', conversion: { errors: [], tasks: [{ id: 's01', change: 'added' }] } })
+    expect(app.loadGraphData).not.toHaveBeenCalled()
+    stop()
+    expect(listeners.size).toBe(0)
   })
 
   it('retries only the acknowledgement if result delivery fails', async () => {
