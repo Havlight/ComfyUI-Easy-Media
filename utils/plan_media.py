@@ -112,8 +112,39 @@ def _folder_file(base: str, relative: str, media_type: str) -> tuple[Path, str]:
     return path, normalized
 
 
-def resolve_plan_media(item: Any) -> dict[str, str]:
-    """Resolve one plan reference; raise PlanMediaError when it cannot be used."""
+def _media_path(result: dict[str, Any]) -> Path:
+    if result["source_type"] == "local":
+        return Path(result["local_path"])
+    base = folder_paths.get_input_directory() if result["source_type"] == "input" else folder_paths.get_output_directory()
+    return Path(base) / result["file_path"]
+
+
+def _probe(path: Path) -> dict[str, Any]:
+    from .video import ffprobe_info
+
+    try:
+        return ffprobe_info(str(path)) or {}
+    except RuntimeError:
+        return {}
+
+
+def resolve_plan_media(item: Any) -> dict[str, Any]:
+    """Resolve one plan reference; raise PlanMediaError when it cannot be used.
+
+    With ``probe: true`` a video or audio result also carries ``duration`` in seconds, and a
+    video ``has_audio``; either is None when the file cannot be read. Timeline clips placed
+    without an end take the whole file, so they need its length.
+    """
+    result: dict[str, Any] = _resolve(item)
+    if item.get("probe") is True and item["media_type"] in {"video", "audio"}:
+        info = _probe(_media_path(result))
+        result["duration"] = info.get("duration")
+        if item["media_type"] == "video":
+            result["has_audio"] = info.get("has_audio") if info else None
+    return result
+
+
+def _resolve(item: Any) -> dict[str, str]:
     if not isinstance(item, dict) or item.get("media_type") not in MEDIA_EXTENSIONS:
         raise PlanMediaError("each item needs a media_type of image, video or audio")
     media_type = str(item["media_type"])

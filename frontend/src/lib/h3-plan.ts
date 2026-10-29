@@ -1,4 +1,18 @@
-import { continuityModeChangePatch } from '@/lib/h3-drift-taper'
+import {
+  continuityModeChangePatch,
+  DRIFT_TAPER_CONTINUITY_MODE,
+  DRIFT_TAPER_DEFAULT_FLOOR,
+  DRIFT_TAPER_DEFAULT_STEPS,
+  driftTaperFloorPatch,
+  driftTaperLowOnlyPatch,
+  driftTaperStepsPatch,
+  getDriftTaperFloor,
+  getDriftTaperLowOnly,
+  getDriftTaperSteps,
+  normalizeDriftTaperFloor,
+  normalizeDriftTaperSteps,
+  type DriftTaperContent,
+} from '@/lib/h3-drift-taper'
 import {
   H3_MEDIA_REFERENCE_LIMIT,
   H3_TRACK_SOURCE,
@@ -12,7 +26,11 @@ import {
   getSelectedTaskUserPrompt,
   getSelectedTaskUserPromptPatch,
   MULTITRACK_CONTINUITY_MODES,
+  MULTITRACK_DEFAULT_VOLUME_DB,
+  MULTITRACK_MEDIA_TRACK_LIMIT,
+  MULTITRACK_REF_IMAGE_SIZES,
   MULTITRACK_TASK_MODES,
+  MULTITRACK_TRACK_COLORS,
 } from '@/lib/multitrack-utils'
 import { MAX_TASK_IMAGES, taskImageIdentity } from '@/lib/task-image-utils'
 import { taskMediaIdentity } from '@/lib/task-media-utils'
@@ -20,6 +38,7 @@ import { uuid } from '@/lib/uuid'
 import type {
   MultiTrack,
   MultiTrackContinuityMode,
+  MultiTrackRefImageSize,
   MultiTrackSegment,
   MultiTrackSegmentContent,
   MultiTrackTaskImage,
@@ -29,18 +48,25 @@ import type {
 } from '@/types/multitrack'
 
 /**
- * H3 plan files: the task track as JSON that a person or an agent can edit and import.
+ * H3 plan files: the task track and the timeline's video and audio tracks as JSON that a
+ * person or an agent can edit and import, and that rebuilds the Editor in another workflow.
  *
  * The file lists every task in order. A task with an `id` updates that task and keeps its
  * saved results where nothing relevant changed; a task without one is new; tasks missing
- * from the file are removed. Fields left out of an existing task keep their value. Timeline
- * media tracks, Project settings and segment LoRAs are not part of the plan.
+ * from the file are removed. Fields left out of an existing task keep their value. Subtitle
+ * tracks, system prompts, prompt B, resolution, Project settings and segment LoRAs are not
+ * part of the plan and stay as they are.
  *
  * References are strings or objects. A string is a local path or URL to copy into ComfyUI's
  * input folder (`file`), or "previous_frame". Objects name the source with one of `file`,
  * `local` (kept in place), `url` (kept as a URL), `input`, `output`, `slot`, `track` (a
  * timeline placeholder, with `clip` for a shared clip) or `previous_frame: true`, plus
  * `muted`, `shared`, `fit` (audio) and `soundtrack` (video).
+ *
+ * `tracks`, when present, lists every video and audio track; tracks and clips missing from it
+ * are removed. A clip with a source is described in full, so its unwritten settings are the
+ * defaults. A clip with only an `id` is an existing clip, which `at` or `start` can move.
+ * `at` places a clip at a task's start: a task id, or the task's 1-based position in the file.
  */
 export const H3_PLAN_FORMAT = 'easy-media-h3-plan'
 export const H3_PLAN_VERSION = 1
@@ -63,23 +89,56 @@ export interface H3PlanReferenceObject {
 
 export type H3PlanReference = string | H3PlanReferenceObject
 
+/**
+ * The Drift seam. Agents pick "soft" (taper 4 to 0.4, the plan default for new Drift tasks)
+ * or "clean" (taper 4 to 0, original Drift-Control); other settings export as an object.
+ */
+export type H3PlanSeam = 'soft' | 'clean' | { taper?: number; floor?: number; low_only?: boolean }
+
 export interface H3PlanTask {
   id?: string
   seconds?: number
   gap_before?: number
   mode?: MultiTrackTaskMode
   continuity?: MultiTrackContinuityMode
+  seam?: H3PlanSeam
+  ref_image_size?: MultiTrackRefImageSize
   prompt?: string
   images?: H3PlanReference[]
   videos?: H3PlanReference[]
   audios?: H3PlanReference[]
 }
 
+/** A timeline clip; times are seconds on the timeline, `from` is seconds into the source. */
+export interface H3PlanClip extends Pick<H3PlanReferenceObject, 'file' | 'local' | 'url' | 'input' | 'output' | 'slot'> {
+  id?: string
+  at?: string | number
+  start?: number
+  end?: number
+  from?: number
+  volume?: number
+  muted?: boolean
+  shared?: boolean
+}
+
+export interface H3PlanTrack {
+  id?: string
+  type: 'video' | 'audio'
+  audio_locked?: boolean
+  muted?: boolean
+  volume?: number
+  clips: H3PlanClip[]
+}
+
 export interface H3PlanFile {
   format: typeof H3_PLAN_FORMAT
   version: typeof H3_PLAN_VERSION
   frame_rate?: number
+  /** The timeline's master volume and mute; left out, they stay as they are. */
+  volume?: number
+  muted?: boolean
   tasks: H3PlanTask[]
+  tracks?: H3PlanTrack[]
 }
 
 export type H3PlanMediaType = 'image' | 'video' | 'audio'
@@ -91,16 +150,28 @@ export interface H3PlanMediaRequest {
   local?: string
   input?: string
   output?: string
+  /** Also read the length (and for video, whether it has sound) of a clip placed without an end. */
+  probe?: boolean
 }
 
 export type H3PlanMediaResult =
-  | { source_type: 'input' | 'output' | 'local'; file_path?: string; local_path?: string; file_name: string }
+  | {
+    source_type: 'input' | 'output' | 'local'
+    file_path?: string
+    local_path?: string
+    file_name: string
+    duration?: number | null
+    has_audio?: boolean | null
+  }
   | { error: string }
 
 export interface H3PlanIssue {
   level: 'error' | 'warning'
   /** 1-based task number in the file; absent for the whole file. */
   task?: number
+  /** 1-based track number in `tracks`, and clip number in that track. */
+  track?: number
+  clip?: number
   code: string
   params?: Record<string, string | number>
 }
@@ -122,21 +193,58 @@ export interface H3PlanRow {
   prompt: string
 }
 
+export interface H3PlanClipSummary {
+  name: string
+  start: number
+  end: number
+}
+
+export interface H3PlanTrackRow {
+  id: string
+  /** 1-based position among the video and audio tracks; removed tracks keep their old one. */
+  index: number
+  type: 'video' | 'audio'
+  change: H3PlanChange
+  audioLocked: boolean
+  muted: boolean
+  clips: H3PlanClipSummary[]
+}
+
 export interface H3PlanImport {
   data: TrackData | null
   rows: H3PlanRow[]
+  /** Video and audio tracks; empty when the plan leaves them out. */
+  trackRows: H3PlanTrackRow[]
   issues: H3PlanIssue[]
 }
 
+type FileReference = { kind: 'file' | 'local' | 'url' | 'input' | 'output' | 'slot'; value: string; flags: H3PlanReferenceObject }
+
 type ParsedReference =
   | { kind: 'previous_frame'; flags: H3PlanReferenceObject }
-  | { kind: 'file' | 'local' | 'url' | 'input' | 'output' | 'slot'; value: string; flags: H3PlanReferenceObject }
+  | FileReference
   | { kind: 'track'; value: string; clip?: string; flags: H3PlanReferenceObject }
 
 const SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot', 'track', 'previous_frame'] as const
-const TASK_KEYS = new Set(['id', 'seconds', 'gap_before', 'mode', 'continuity', 'prompt', 'images', 'videos', 'audios'])
+const CLIP_SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot'] as const
+const TASK_KEYS = new Set(['id', 'seconds', 'gap_before', 'mode', 'continuity', 'seam', 'ref_image_size', 'prompt', 'images', 'videos', 'audios'])
+const TRACK_KEYS = new Set(['id', 'type', 'audio_locked', 'muted', 'volume', 'clips'])
+const CLIP_KEYS = new Set([...CLIP_SOURCE_KEYS, 'id', 'at', 'start', 'end', 'from', 'volume', 'muted', 'shared'])
 const REFERENCE_FIELDS = [['images', 'image'], ['videos', 'video'], ['audios', 'audio']] as const
 const PROMPT_TAG = /<(Picture|Video|Audio) (\d+)>/g
+
+interface SeamSettings {
+  steps: number
+  floor: number
+  lowOnly: boolean
+}
+
+const SEAM_PRESETS: Record<'soft' | 'clean', SeamSettings> = {
+  soft: { steps: 4, floor: 0.4, lowOnly: false },
+  clean: { steps: DRIFT_TAPER_DEFAULT_STEPS, floor: DRIFT_TAPER_DEFAULT_FLOOR, lowOnly: false },
+}
+/** New Drift tasks from a plan; the Editor's own default stays "clean". */
+const PLAN_DEFAULT_SEAM: keyof typeof SEAM_PRESETS = 'soft'
 
 function round3(value: number): number {
   return Math.round(value * 1000) / 1000
@@ -152,6 +260,10 @@ function taskTrackOf(data: TrackData): MultiTrack | undefined {
 
 function orderedTasks(data: TrackData): MultiTrackSegment[] {
   return [...(taskTrackOf(data)?.segments ?? [])].sort((a, b) => a.start_frame - b.start_frame)
+}
+
+function isMediaTrack(track: MultiTrack): track is MultiTrack & { type: 'video' | 'audio' } {
+  return track.type === 'video' || track.type === 'audio'
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +306,45 @@ function exportMedia(item: MultiTrackTaskMedia, mediaType: 'video' | 'audio'): H
   })
 }
 
-/** The task track as a plan file; importing it unchanged changes nothing. */
+function exportSeam(content: DriftTaperContent): H3PlanSeam {
+  const seam: SeamSettings = { steps: getDriftTaperSteps(content), floor: getDriftTaperFloor(content), lowOnly: getDriftTaperLowOnly(content) }
+  for (const [name, preset] of Object.entries(SEAM_PRESETS) as [keyof typeof SEAM_PRESETS, SeamSettings][]) {
+    if (preset.steps === seam.steps && preset.floor === seam.floor && preset.lowOnly === seam.lowOnly) return name
+  }
+  return {
+    ...(seam.steps !== DRIFT_TAPER_DEFAULT_STEPS ? { taper: seam.steps } : {}),
+    ...(seam.floor !== DRIFT_TAPER_DEFAULT_FLOOR ? { floor: seam.floor } : {}),
+    ...(seam.lowOnly ? { low_only: true } : {}),
+  }
+}
+
+function exportClip(segment: MultiTrackSegment, fps: number): H3PlanClip {
+  const content = segment.content
+  const from = segment.origin_start_frame === undefined ? 0 : segment.start_frame - segment.origin_start_frame
+  return {
+    id: segment.id,
+    ...(exportSource({ id: segment.id, ...content }) as H3PlanReferenceObject),
+    start: round3(segment.start_frame / fps),
+    end: round3(segment.end_frame / fps),
+    ...(from !== 0 ? { from: round3(from / fps) } : {}),
+    ...(content.volume_db ? { volume: content.volume_db } : {}),
+    ...(content.muted === true ? { muted: true } : {}),
+    ...(content.shared_reference === true ? { shared: true } : {}),
+  }
+}
+
+function exportTrack(track: MultiTrack, fps: number): H3PlanTrack {
+  return {
+    id: track.id,
+    type: track.type as H3PlanTrack['type'],
+    ...(track.audio_locked === true ? { audio_locked: true } : {}),
+    ...(track.muted ? { muted: true } : {}),
+    ...(track.volume_db ? { volume: track.volume_db } : {}),
+    clips: [...track.segments].sort((a, b) => a.start_frame - b.start_frame).map((segment) => exportClip(segment, fps)),
+  }
+}
+
+/** The task track and the video and audio tracks as a plan file; importing it unchanged changes nothing. */
 export function exportH3Plan(data: TrackData): H3PlanFile {
   const fps = data.frame_rate
   let cursor = 0
@@ -208,13 +358,23 @@ export function exportH3Plan(data: TrackData): H3PlanFile {
       ...(gap > 0 ? { gap_before: round3(gap / fps) } : {}),
       mode: content.task_mode ?? 'default',
       continuity: content.continuity_mode ?? 'shot',
+      ...(content.continuity_mode === DRIFT_TAPER_CONTINUITY_MODE ? { seam: exportSeam(content) } : {}),
+      ...(content.ref_image_size === 'max' ? { ref_image_size: content.ref_image_size } : {}),
       prompt: getSelectedTaskUserPrompt(content),
       images: (content.images ?? []).map(exportImage),
       videos: (content.videos ?? []).map((item) => exportMedia(item, 'video')),
       audios: (content.audios ?? []).map((item) => exportMedia(item, 'audio')),
     }
   })
-  return { format: H3_PLAN_FORMAT, version: H3_PLAN_VERSION, frame_rate: fps, tasks }
+  return {
+    format: H3_PLAN_FORMAT,
+    version: H3_PLAN_VERSION,
+    frame_rate: fps,
+    ...(data.volume_db ? { volume: data.volume_db } : {}),
+    ...(data.muted ? { muted: true } : {}),
+    tasks,
+    tracks: data.tracks.filter(isMediaTrack).map((track) => exportTrack(track, fps)),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +397,36 @@ export function parseH3Plan(text: string): { plan: H3PlanFile | null; issues: H3
     return { plan: null, issues: [{ level: 'error', code: 'invalid_version', params: { version: String(file.version) } }] }
   }
   if (!Array.isArray(file.tasks)) return { plan: null, issues: [{ level: 'error', code: 'invalid_format' }] }
-  return { plan: { format: H3_PLAN_FORMAT, version: H3_PLAN_VERSION, frame_rate: file.frame_rate, tasks: file.tasks }, issues: [] }
+  return {
+    plan: {
+      format: H3_PLAN_FORMAT,
+      version: H3_PLAN_VERSION,
+      frame_rate: file.frame_rate,
+      ...(file.volume !== undefined ? { volume: file.volume } : {}),
+      ...(file.muted !== undefined ? { muted: file.muted } : {}),
+      tasks: file.tasks,
+      ...(file.tracks !== undefined ? { tracks: file.tracks } : {}),
+    },
+    issues: [],
+  }
+}
+
+/** A clip's source, or null for an id-only clip; undefined when it names more than one. */
+function parseClipSource(clip: H3PlanClip): FileReference | null | undefined {
+  const keys = CLIP_SOURCE_KEYS.filter((key) => clip[key] !== undefined)
+  if (keys.length === 0) return null
+  const value = clip[keys[0]]
+  if (keys.length > 1 || typeof value !== 'string' || !value) return undefined
+  return { kind: keys[0], value, flags: {} }
+}
+
+function planClips(plan: H3PlanFile): { track: H3PlanTrack; clip: H3PlanClip }[] {
+  if (!Array.isArray(plan.tracks)) return []
+  return plan.tracks.flatMap((track) => (
+    track && typeof track === 'object' && Array.isArray(track.clips)
+      ? track.clips.filter((clip) => clip && typeof clip === 'object').map((clip) => ({ track, clip }))
+      : []
+  ))
 }
 
 function parseReference(raw: unknown): ParsedReference | null {
@@ -284,6 +473,16 @@ export function h3PlanMediaRequests(plan: H3PlanFile): H3PlanMediaRequest[] {
       }
     }
   }
+  for (const { track, clip } of planClips(plan)) {
+    const reference = parseClipSource(clip)
+    if (!reference || (track.type !== 'video' && track.type !== 'audio')) continue
+    const request = mediaRequest(reference, track.type)
+    if (!request) continue
+    const key = h3PlanMediaKey(request)
+    // Only a clip without an end needs the file's length.
+    const probe = clip.end === undefined || requests.get(key)?.probe === true
+    requests.set(key, probe ? { ...request, probe } : request)
+  }
   return [...requests.values()]
 }
 
@@ -292,14 +491,15 @@ export function h3PlanMediaRequests(plan: H3PlanFile): H3PlanMediaRequest[] {
 // ---------------------------------------------------------------------------
 
 interface ImportContext {
-  taskNumber: number
+  /** Where a problem is: a task, or a track and clip of `tracks`. */
+  at: Pick<H3PlanIssue, 'task' | 'track' | 'clip'>
   tracks: MultiTrack[]
   media: ReadonlyMap<string, H3PlanMediaResult>
   issues: H3PlanIssue[]
 }
 
 function issue(context: ImportContext, level: H3PlanIssue['level'], code: string, params?: H3PlanIssue['params']) {
-  context.issues.push({ level, task: context.taskNumber, code, ...(params ? { params } : {}) })
+  context.issues.push({ level, ...context.at, code, ...(params ? { params } : {}) })
 }
 
 /** The source fields of a reference that names a file; null after reporting why it cannot. */
@@ -347,6 +547,22 @@ function setSwitch<T extends object>(item: T, key: string, enabled: boolean, ...
 function setOptional<T extends object>(item: T, key: string, value: boolean | undefined): T {
   if ((item as Record<string, unknown>)[key] === value) return item
   return value === undefined ? withoutKeys(item, key) : { ...item, [key]: value }
+}
+
+function parseSeam(raw: unknown): SeamSettings | null {
+  if (raw === 'soft' || raw === 'clean') return SEAM_PRESETS[raw]
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const object = raw as Record<string, unknown>
+  if (Object.keys(object).some((key) => key !== 'taper' && key !== 'floor' && key !== 'low_only')) return null
+  const steps = object.taper === undefined ? DRIFT_TAPER_DEFAULT_STEPS : normalizeDriftTaperSteps(object.taper)
+  const floor = object.floor === undefined ? DRIFT_TAPER_DEFAULT_FLOOR : normalizeDriftTaperFloor(object.floor)
+  if (steps === undefined || floor === undefined) return null
+  if (object.low_only !== undefined && typeof object.low_only !== 'boolean') return null
+  return { steps, floor, lowOnly: object.low_only === true }
+}
+
+function seamPatch(seam: SeamSettings): DriftTaperContent {
+  return { ...driftTaperStepsPatch(seam.steps), ...driftTaperFloorPatch(seam.floor), ...driftTaperLowOnlyPatch(seam.lowOnly) }
 }
 
 function buildImages(raw: unknown[], old: MultiTrackTaskImage[], context: ImportContext): MultiTrackTaskImage[] {
@@ -458,6 +674,20 @@ function buildContent(
       issue(context, 'error', 'invalid_continuity', { value: String(task.continuity), allowed: MULTITRACK_CONTINUITY_MODES.join(', ') })
     }
   }
+  const drift = content.continuity_mode === DRIFT_TAPER_CONTINUITY_MODE
+  if (task.seam !== undefined) {
+    const seam = parseSeam(task.seam)
+    if (!seam) issue(context, 'error', 'invalid_seam')
+    else if (!drift) issue(context, 'warning', 'seam_ignored')
+    else content = { ...content, ...seamPatch(seam) }
+  } else if (drift && old?.continuity_mode !== DRIFT_TAPER_CONTINUITY_MODE) {
+    // A task the plan makes Drift, new or not, starts from the plan's seam.
+    content = { ...content, ...seamPatch(SEAM_PRESETS[PLAN_DEFAULT_SEAM]) }
+  }
+  if (task.ref_image_size !== undefined) {
+    if ((MULTITRACK_REF_IMAGE_SIZES as readonly string[]).includes(task.ref_image_size)) content.ref_image_size = task.ref_image_size
+    else issue(context, 'error', 'invalid_ref_image_size', { value: String(task.ref_image_size), allowed: MULTITRACK_REF_IMAGE_SIZES.join(', ') })
+  }
   if (task.prompt !== undefined) {
     if (typeof task.prompt !== 'string') issue(context, 'error', 'invalid_prompt')
     else if (task.prompt !== getSelectedTaskUserPrompt(content)) content = { ...content, ...getSelectedTaskUserPromptPatch(content, task.prompt) }
@@ -501,6 +731,301 @@ function sameSegment(left: MultiTrackSegment, right: MultiTrackSegment): boolean
     && JSON.stringify(left.content) === JSON.stringify(right.content)
 }
 
+// ---------------------------------------------------------------------------
+// Timeline tracks
+// ---------------------------------------------------------------------------
+
+/** Resolve `at` to a frame: a task id, or a task's 1-based position in the file. */
+type ClipAnchor = (at: string | number) => number | undefined
+
+function readFlag(value: unknown, flag: string, context: ImportContext): boolean {
+  if (value === undefined || typeof value === 'boolean') return value === true
+  issue(context, 'error', 'invalid_flag', { flag })
+  return false
+}
+
+function readVolume(value: unknown, context: ImportContext): number {
+  if (value === undefined) return MULTITRACK_DEFAULT_VOLUME_DB
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  issue(context, 'error', 'invalid_volume')
+  return MULTITRACK_DEFAULT_VOLUME_DB
+}
+
+function readSeconds(value: unknown, field: string, context: ImportContext): number | undefined | null {
+  if (value === undefined) return undefined
+  if (typeof value === 'number' && Number.isFinite(value) && (field === 'from' || value >= 0)) return value
+  issue(context, 'error', 'invalid_clip_time', { field })
+  return null
+}
+
+function sourceIdentity(content: MultiTrackSegmentContent | Partial<MultiTrackTaskImage>): string {
+  return taskMediaIdentity({ id: '', ...content } as MultiTrackTaskMedia)
+}
+
+function clipStart(clip: H3PlanClip, anchor: ClipAnchor, fps: number, context: ImportContext): number | undefined | null {
+  if (clip.at !== undefined) {
+    const valid = (typeof clip.at === 'string' && clip.at) || (typeof clip.at === 'number' && Number.isInteger(clip.at) && clip.at > 0)
+    const frame = valid ? anchor(clip.at) : undefined
+    if (frame === undefined) issue(context, 'error', 'unknown_anchor', { at: String(clip.at) })
+    return frame ?? null
+  }
+  const start = readSeconds(clip.start, 'start', context)
+  return typeof start === 'number' ? Math.round(start * fps) : start
+}
+
+/** One clip of `tracks`, or null after reporting why it cannot be placed. */
+function buildClip(
+  clip: H3PlanClip,
+  track: MultiTrack & { type: 'video' | 'audio' },
+  oldClips: ReadonlyMap<string, MultiTrackSegment>,
+  anchor: ClipAnchor,
+  fps: number,
+  context: ImportContext,
+): MultiTrackSegment | null {
+  for (const key of Object.keys(clip)) if (!CLIP_KEYS.has(key)) issue(context, 'warning', 'unknown_field', { field: key })
+  const source = parseClipSource(clip)
+  const old = clip.id ? oldClips.get(clip.id) : undefined
+  if (source === undefined || (source === null && !clip.id)) {
+    issue(context, 'error', 'invalid_clip')
+    return null
+  }
+  if (clip.at !== undefined && (clip.start !== undefined || clip.end !== undefined)) {
+    issue(context, 'error', 'clip_timing')
+    return null
+  }
+  const start = clipStart(clip, anchor, fps, context)
+  if (start === null) return null
+  const volume = clip.volume === undefined ? undefined : readVolume(clip.volume, context)
+
+  if (source === null) {
+    // An existing clip, moved by `at` or `start`; settings it does not write are kept.
+    if (!old) {
+      issue(context, 'error', 'unknown_clip_id', { id: clip.id! })
+      return null
+    }
+    if (old.content.media_type !== track.type || clip.end !== undefined || clip.from !== undefined) {
+      issue(context, 'error', old.content.media_type !== track.type ? 'clip_type' : 'clip_timing')
+      return null
+    }
+    const startFrame = start ?? old.start_frame
+    const shift = startFrame - old.start_frame
+    return {
+      ...old,
+      start_frame: startFrame,
+      end_frame: old.end_frame + shift,
+      ...(old.origin_start_frame === undefined ? {} : { origin_start_frame: old.origin_start_frame + shift }),
+      content: {
+        ...old.content,
+        ...(clip.muted !== undefined ? { muted: readFlag(clip.muted, 'muted', context) } : {}),
+        ...(volume !== undefined ? { volume_db: volume } : {}),
+        ...(clip.shared !== undefined ? { shared_reference: readFlag(clip.shared, 'shared', context) } : {}),
+      },
+    }
+  }
+
+  // A clip with a source is described in full: unwritten settings take their defaults.
+  if (start === undefined) {
+    issue(context, 'error', 'clip_timing')
+    return null
+  }
+  const fields = sourceFields(source, track.type, context)
+  if (!fields) return null
+  const request = mediaRequest(source, track.type)
+  const resolved = request ? context.media.get(h3PlanMediaKey(request)) : undefined
+  const probed = resolved && !('error' in resolved) ? resolved : undefined
+  const sameSource = old !== undefined && old.content.media_type === track.type && sourceIdentity(old.content) === sourceIdentity(fields)
+  const duration = probed?.duration ?? (sameSource ? old!.content.duration : undefined)
+  const from = readSeconds(clip.from, 'from', context)
+  const end = readSeconds(clip.end, 'end', context)
+  if (from === null || end === null) return null
+  const fromFrames = Math.round((from ?? 0) * fps)
+  let endFrame: number
+  if (end !== undefined) {
+    endFrame = Math.round(end * fps)
+  } else if (typeof duration === 'number' && duration > 0) {
+    // Placed without an end, a clip takes the rest of its file.
+    endFrame = start + Math.max(1, Math.round(duration * fps) - fromFrames)
+  } else {
+    issue(context, 'error', 'clip_duration', { source: source.value })
+    return null
+  }
+  if (endFrame <= start) {
+    issue(context, 'error', 'clip_end')
+    return null
+  }
+  const base: MultiTrackSegmentContent = sameSource ? { ...old!.content } : {
+    media_type: track.type,
+    ...fields,
+    ...(typeof duration === 'number' && duration > 0 ? { duration } : {}),
+    ...(track.type === 'video' && typeof probed?.has_audio === 'boolean' ? { has_audio: probed.has_audio } : {}),
+  }
+  // Spreading the existing clip keeps its key order, which the Editor's lock check compares.
+  const segment: MultiTrackSegment = {
+    ...old,
+    id: clip.id ?? uuid(),
+    start_frame: start,
+    end_frame: endFrame,
+    color: old?.color ?? track.color,
+    content: {
+      ...base,
+      muted: readFlag(clip.muted, 'muted', context),
+      volume_db: volume ?? MULTITRACK_DEFAULT_VOLUME_DB,
+      shared_reference: readFlag(clip.shared, 'shared', context),
+    },
+  }
+  // The Editor leaves the source origin unset until a clip is trimmed.
+  const originStart = start - fromFrames
+  if (originStart !== start || old?.origin_start_frame !== undefined) segment.origin_start_frame = originStart
+  else delete segment.origin_start_frame
+  return segment
+}
+
+/** The video and audio tracks `tracks` describes, in its order, or null when the plan leaves them out. */
+function buildMediaTracks(
+  current: TrackData,
+  plan: H3PlanFile,
+  media: ReadonlyMap<string, H3PlanMediaResult>,
+  anchor: ClipAnchor,
+  issues: H3PlanIssue[],
+): MultiTrack[] | null {
+  if (plan.tracks === undefined) return null
+  if (!Array.isArray(plan.tracks)) {
+    issues.push({ level: 'error', code: 'invalid_list', params: { field: 'tracks' } })
+    return null
+  }
+  const fps = current.frame_rate
+  const oldTracks = current.tracks.filter(isMediaTrack)
+  const oldClips = new Map(oldTracks.flatMap((track) => track.segments.map((segment) => [segment.id, segment] as const)))
+  const trackIds = new Set<string>()
+  const clipIds = new Set<string>()
+  const tracks: MultiTrack[] = []
+  plan.tracks.forEach((raw: unknown, trackIndex) => {
+    const context: ImportContext = { at: { track: trackIndex + 1 }, tracks: current.tracks, media, issues }
+    const planTrack = raw as H3PlanTrack
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (planTrack.type !== 'video' && planTrack.type !== 'audio')) {
+      issue(context, 'error', 'invalid_track')
+      return
+    }
+    for (const key of Object.keys(planTrack)) if (!TRACK_KEYS.has(key)) issue(context, 'warning', 'unknown_field', { field: key })
+    if (planTrack.id !== undefined && (typeof planTrack.id !== 'string' || !planTrack.id)) {
+      issue(context, 'error', 'invalid_id')
+      return
+    }
+    if (planTrack.id && trackIds.has(planTrack.id)) {
+      issue(context, 'error', 'duplicate_track_id', { id: planTrack.id })
+      return
+    }
+    if (planTrack.id) trackIds.add(planTrack.id)
+    const old = planTrack.id ? current.tracks.find((track) => track.id === planTrack.id) : undefined
+    if (old && old.type !== planTrack.type) {
+      issue(context, 'error', 'track_type_changed', { id: old.id, type: planTrack.type })
+      return
+    }
+    if (!Array.isArray(planTrack.clips)) {
+      issue(context, 'error', 'invalid_list', { field: 'clips' })
+      return
+    }
+    const track = {
+      ...(old ?? {
+        id: planTrack.id ?? uuid(), name: '', color: MULTITRACK_TRACK_COLORS[planTrack.type], solo: false, locked: false,
+      }),
+      type: planTrack.type,
+      // A track is described in full: unwritten settings take their defaults.
+      audio_locked: readFlag(planTrack.audio_locked, 'audio_locked', context),
+      muted: readFlag(planTrack.muted, 'muted', context),
+      volume_db: readVolume(planTrack.volume, context),
+      segments: [] as MultiTrackSegment[],
+    }
+    const placed: { segment: MultiTrackSegment; number: number }[] = []
+    planTrack.clips.forEach((rawClip: unknown, clipIndex) => {
+      const clipContext: ImportContext = { ...context, at: { track: trackIndex + 1, clip: clipIndex + 1 } }
+      const clip = rawClip as H3PlanClip
+      if (!rawClip || typeof rawClip !== 'object' || Array.isArray(rawClip)) {
+        issue(clipContext, 'error', 'invalid_clip')
+        return
+      }
+      if (clip.id !== undefined && (typeof clip.id !== 'string' || !clip.id)) {
+        issue(clipContext, 'error', 'invalid_id')
+        return
+      }
+      if (clip.id && clipIds.has(clip.id)) {
+        issue(clipContext, 'error', 'duplicate_clip_id', { id: clip.id })
+        return
+      }
+      if (clip.id) clipIds.add(clip.id)
+      const segment = buildClip(clip, track, oldClips, anchor, fps, clipContext)
+      if (segment) placed.push({ segment, number: clipIndex + 1 })
+    })
+    placed.sort((a, b) => a.segment.start_frame - b.segment.start_frame)
+    placed.forEach((entry, index) => {
+      const next = placed[index + 1]
+      if (next && next.segment.start_frame < entry.segment.end_frame) {
+        issue(context, 'error', 'clip_overlap', { first: Math.min(entry.number, next.number), second: Math.max(entry.number, next.number) })
+      }
+    })
+    const shared = placed.filter((entry) => entry.segment.content.shared_reference === true).length
+    if (shared > 1) issue(context, 'error', 'shared_clips', { count: shared })
+    tracks.push({ ...track, segments: placed.map((entry) => entry.segment) })
+  })
+  for (const type of ['video', 'audio'] as const) {
+    const ofType = tracks.filter((track) => track.type === type)
+    if (ofType.length > MULTITRACK_MEDIA_TRACK_LIMIT) {
+      issues.push({ level: 'error', code: 'too_many_tracks', params: { type, count: ofType.length, limit: MULTITRACK_MEDIA_TRACK_LIMIT } })
+    }
+    const locked = ofType.filter((track) => track.audio_locked).length
+    if (locked > 1) issues.push({ level: 'error', code: 'locked_tracks', params: { type, count: locked } })
+  }
+  // The Editor never deletes its first video track, so a plan without one empties it instead.
+  const firstVideo = oldTracks.find((track) => track.type === 'video')
+  if (firstVideo && !tracks.some((track) => track.type === 'video')) {
+    tracks.unshift({ ...firstVideo, audio_locked: false, muted: false, volume_db: MULTITRACK_DEFAULT_VOLUME_DB, segments: [] })
+  }
+  return tracks
+}
+
+/** Put `media` where the timeline's video and audio tracks were, keeping every other track. */
+function withMediaTracks(tracks: MultiTrack[], media: MultiTrack[] | null): MultiTrack[] {
+  if (!media) return tracks
+  const others = tracks.filter((track) => !isMediaTrack(track))
+  const firstMedia = tracks.findIndex(isMediaTrack)
+  const at = firstMedia < 0
+    ? others.findIndex((track) => track.type === 'task') + 1
+    : tracks.slice(0, firstMedia).filter((track) => !isMediaTrack(track)).length
+  return [...others.slice(0, at), ...media, ...others.slice(at)]
+}
+
+function clipSummary(segment: MultiTrackSegment, fps: number): H3PlanClipSummary {
+  const content = segment.content
+  return {
+    name: content.file_name ?? basename(content.file_path ?? content.local_path ?? content.url ?? content.slot_name ?? segment.id),
+    start: round3(segment.start_frame / fps),
+    end: round3(segment.end_frame / fps),
+  }
+}
+
+function trackSignature(track: MultiTrack): string {
+  return JSON.stringify([track.audio_locked === true, track.muted, track.volume_db,
+    [...track.segments].sort((a, b) => a.start_frame - b.start_frame)
+      .map((segment) => [segment.id, segment.start_frame, segment.end_frame, segment.origin_start_frame ?? null, segment.content])])
+}
+
+function trackRows(before: TrackData, after: TrackData): H3PlanTrackRow[] {
+  const fps = after.frame_rate
+  const oldTracks = before.tracks.filter(isMediaTrack)
+  const newTracks = after.tracks.filter(isMediaTrack)
+  const row = (track: MultiTrack & { type: 'video' | 'audio' }, index: number, change: H3PlanChange): H3PlanTrackRow => ({
+    id: track.id, index, type: track.type, change, audioLocked: track.audio_locked === true, muted: track.muted,
+    clips: [...track.segments].sort((a, b) => a.start_frame - b.start_frame).map((segment) => clipSummary(segment, fps)),
+  })
+  return [
+    ...newTracks.map((track, index) => {
+      const old = oldTracks.find((candidate) => candidate.id === track.id)
+      return row(track, index + 1, !old ? 'added' : trackSignature(old) === trackSignature(track) ? 'unchanged' : 'modified')
+    }),
+    ...oldTracks.flatMap((track, index) => newTracks.some((candidate) => candidate.id === track.id) ? [] : [row(track, index + 1, 'removed')]),
+  ]
+}
+
 /**
  * Build the timeline a plan describes. `prepare` applies the Editor's own normalization and
  * native timing, exactly as a manual edit would; it may throw to reject the result.
@@ -513,7 +1038,7 @@ export function buildH3PlanImport(
 ): H3PlanImport {
   const issues: H3PlanIssue[] = []
   const taskTrack = taskTrackOf(current)
-  if (!taskTrack) return { data: null, rows: [], issues: [{ level: 'error', code: 'no_task_track' }] }
+  if (!taskTrack) return { data: null, rows: [], trackRows: [], issues: [{ level: 'error', code: 'no_task_track' }] }
   if (plan.frame_rate !== undefined && plan.frame_rate !== current.frame_rate) {
     issues.push({ level: 'warning', code: 'frame_rate', params: { file: plan.frame_rate, timeline: current.frame_rate } })
   }
@@ -529,13 +1054,18 @@ export function buildH3PlanImport(
   const foreign = before.length > 0 && planIds.length > 0 && planIds.every((id) => !existing.has(id))
   if (foreign) issues.push({ level: 'warning', code: 'foreign_ids', params: { count: planIds.length } })
   const reportNewIds = before.length > 0 && !foreign
+  // Task references check placeholders against the tracks the plan lists. Clips placed with
+  // `at` need the tasks' final timing, so this first pass places them anywhere and its
+  // problems are reported by the final pass below.
+  const draftTracks = withMediaTracks(current.tracks, buildMediaTracks(current, plan, media, () => 0, []))
   const seen = new Set<string>()
   const requested = new Map<string, { start: number; end: number }>()
+  const positions: (string | undefined)[] = []
   const color = before[0]?.color ?? taskTrack.color
   let cursor = 0
   const segments: MultiTrackSegment[] = []
   plan.tasks.forEach((task, index) => {
-    const context: ImportContext = { taskNumber: index + 1, tracks: current.tracks, media, issues }
+    const context: ImportContext = { at: { task: index + 1 }, tracks: draftTracks, media, issues }
     if (!task || typeof task !== 'object' || Array.isArray(task)) {
       issue(context, 'error', 'invalid_task')
       return
@@ -569,6 +1099,7 @@ export function buildH3PlanImport(
     cursor = start + frames
     const id = task.id ?? uuid()
     requested.set(id, { start, end: cursor })
+    positions[index] = id
     segments.push({ id, start_frame: start, end_frame: cursor, color: old?.color ?? color, content: buildContent(old?.content, task, context) })
   })
   if (segments[0] && segments[0].content.continuity_mode !== 'shot' && segments[0].content.task_mode !== 'passthrough') {
@@ -580,12 +1111,23 @@ export function buildH3PlanImport(
     issues.push({ level: 'error', task: 1, code: 'previous_frame_first' })
   }
 
+  const fileContext: ImportContext = { at: {}, tracks: current.tracks, media, issues }
+  const master = {
+    ...(plan.volume !== undefined ? { volume_db: readVolume(plan.volume, fileContext) } : {}),
+    ...(plan.muted !== undefined ? { muted: readFlag(plan.muted, 'muted', fileContext) } : {}),
+  }
   let data: TrackData | null = null
   try {
-    data = prepare({
+    // Native timing settles the tasks first; then clips placed at a task's start can be placed.
+    const timed = prepare({
       ...current,
-      tracks: current.tracks.map((track) => (track === taskTrack ? { ...track, segments } : track)),
+      ...master,
+      tracks: draftTracks.map((track) => (track.id === taskTrack.id ? { ...track, segments } : track)),
     })
+    const starts = new Map(orderedTasks(timed).map((segment) => [segment.id, segment.start_frame]))
+    const anchor: ClipAnchor = (at) => starts.get((typeof at === 'number' ? positions[at - 1] : at) ?? '')
+    const mediaTracks = buildMediaTracks(current, plan, media, anchor, issues)
+    data = mediaTracks ? prepare({ ...timed, tracks: withMediaTracks(timed.tracks, mediaTracks) }) : timed
   } catch (cause: unknown) {
     issues.push({ level: 'error', code: 'native', params: { message: cause instanceof Error ? cause.message : String(cause) } })
   }
@@ -594,7 +1136,7 @@ export function buildH3PlanImport(
   if (data) {
     const after = orderedTasks(data)
     after.forEach((segment, index) => {
-      const context: ImportContext = { taskNumber: index + 1, tracks: data!.tracks, media, issues }
+      const context: ImportContext = { at: { task: index + 1 }, tracks: data!.tracks, media, issues }
       const wanted = requested.get(segment.id)
       if (wanted && (wanted.start !== segment.start_frame || wanted.end !== segment.end_frame)) {
         issue(context, 'warning', 'timing_adjusted', {
@@ -631,23 +1173,28 @@ export function buildH3PlanImport(
     })
   })
   const blocked = issues.some((item) => item.level === 'error')
-  return { data: blocked ? null : data, rows, issues }
+  return { data: blocked ? null : data, rows, trackRows: data && plan.tracks !== undefined ? trackRows(current, data) : [], issues }
 }
 
 export interface H3PlanIssueGroup {
   level: H3PlanIssue['level']
   code: string
   params?: H3PlanIssue['params']
-  /** 1-based task numbers in ascending order; empty for the whole file. */
+  /** 1-based task numbers in ascending order; empty for the whole file or a track. */
   tasks: number[]
+  track?: number
+  clip?: number
 }
 
 /** Merge issues that say the same thing about several tasks, in the order each first appears. */
 export function groupH3PlanIssues(issues: readonly H3PlanIssue[]): H3PlanIssueGroup[] {
   const groups = new Map<string, H3PlanIssueGroup>()
   for (const item of issues) {
-    const key = JSON.stringify([item.level, item.code, item.params ?? null])
-    const group = groups.get(key) ?? { level: item.level, code: item.code, ...(item.params ? { params: item.params } : {}), tasks: [] }
+    const key = JSON.stringify([item.level, item.code, item.params ?? null, item.track ?? null, item.clip ?? null])
+    const group = groups.get(key) ?? {
+      level: item.level, code: item.code, ...(item.params ? { params: item.params } : {}), tasks: [],
+      ...(item.track !== undefined ? { track: item.track } : {}), ...(item.clip !== undefined ? { clip: item.clip } : {}),
+    }
     groups.set(key, group)
     if (item.task !== undefined && !group.tasks.includes(item.task)) group.tasks.push(item.task)
   }

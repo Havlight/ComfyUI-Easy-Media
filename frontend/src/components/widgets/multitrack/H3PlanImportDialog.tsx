@@ -93,7 +93,7 @@ export function H3PlanImportDialog({
     let cancelled = false
     setPreview({ state: 'loading' })
     const fail = (issues: H3PlanIssue[]) => {
-      if (!cancelled) setPreview({ state: 'ready', result: { data: null, rows: [], issues }, invalidated: new Set() })
+      if (!cancelled) setPreview({ state: 'ready', result: { data: null, rows: [], trackRows: [], issues }, invalidated: new Set() })
     }
     const parsed = parseH3Plan(request.text)
     if (!parsed.plan) {
@@ -136,9 +136,11 @@ export function H3PlanImportDialog({
   const warnings = groups.filter((item) => item.level === 'warning')
   const counts = (change: H3PlanChange) => result?.rows.filter((row) => row.change === change).length ?? 0
   const issueText = (item: H3PlanIssueGroup) => {
-    const prefix = item.tasks.length === 0 ? ''
-      : item.tasks.length === 1 ? t('h3Plan.taskPrefix', { n: item.tasks[0] })
-        : t('h3Plan.tasksPrefix', { list: formatH3PlanTaskNumbers(item.tasks) })
+    const prefix = item.track !== undefined
+      ? item.clip !== undefined ? t('h3Plan.clipPrefix', { track: item.track, clip: item.clip }) : t('h3Plan.trackPrefix', { track: item.track })
+      : item.tasks.length === 0 ? ''
+        : item.tasks.length === 1 ? t('h3Plan.taskPrefix', { n: item.tasks[0] })
+          : t('h3Plan.tasksPrefix', { list: formatH3PlanTaskNumbers(item.tasks) })
     return `${prefix}${t(`h3Plan.issue_${item.code}`, item.params)}`
   }
 
@@ -206,6 +208,38 @@ export function H3PlanImportDialog({
                             {t('h3Plan.savedInvalidated')}
                           </div>
                         )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {result && result.trackRows.length > 0 && (
+              <table className="w-full table-fixed border-collapse" data-testid="h3-plan-track-rows">
+                <thead className="text-left text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="w-8 py-1">#</th>
+                    <th className="w-16 py-1">{t('h3Plan.columnChange')}</th>
+                    <th className="w-24 py-1">{t('h3Plan.columnTrack')}</th>
+                    <th className="w-24 py-1">{t('h3Plan.columnSettings')}</th>
+                    <th className="py-1">{t('h3Plan.columnClips')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.trackRows.map((row) => (
+                    <tr key={`${row.change}:${row.id}`} data-testid={`h3-plan-track-${row.id}`} className="border-b border-border/50 align-top">
+                      <td className="py-1 tabular-nums">{row.change === 'removed' ? '–' : row.index}</td>
+                      <td className={cn('py-1', CHANGE_CLASSES[row.change])}>{t(`h3Plan.change_${row.change}`)}</td>
+                      <td className="py-1">{t(`h3Plan.trackType_${row.type}`)}</td>
+                      <td className="py-1">
+                        {[row.audioLocked && t('h3Plan.trackLocked'), row.muted && t('h3Plan.trackMuted')].filter(Boolean).join(' · ')}
+                      </td>
+                      <td className="py-1">
+                        {row.clips.length === 0 ? <span className="text-muted-foreground">{t('h3Plan.noClips')}</span> : row.clips.map((clip, index) => (
+                          <div key={index} className="truncate" title={clip.name}>
+                            {t('h3Plan.clipRange', { name: clip.name, start: clip.start, end: clip.end })}
+                          </div>
+                        ))}
                       </td>
                     </tr>
                   ))}

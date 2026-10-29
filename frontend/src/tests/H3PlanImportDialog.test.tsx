@@ -68,6 +68,31 @@ describe('H3PlanImportDialog', () => {
     expect(screen.getByTestId('h3-plan-blocked').textContent).toBe('Fix the 1 error(s) listed above before applying.')
   })
 
+  it('previews the timeline tracks a plan lists and names a clip that cannot be placed', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ results: [
+      { source_type: 'input', file_path: 'song.wav', file_name: 'song.wav' },
+    ] })))))
+    const onApply = renderDialog(JSON.stringify({ version: 1, tasks: [{ id: 't1' }], tracks: [
+      { type: 'audio', audio_locked: true, clips: [{ input: 'song.wav', start: 0, end: 5 }] },
+    ] }))
+
+    await waitFor(() => expect(screen.getByTestId('h3-plan-track-rows').textContent).toContain('NewAudioLockedsong.wav · 0s–5s'))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    const [applied] = onApply.mock.calls[0] as [TrackData]
+    expect(applied.tracks.map((track) => [track.type, track.audio_locked ?? false, track.segments.length])).toEqual([
+      ['task', false, 1], ['audio', true, 1],
+    ])
+  })
+
+  it('says which clip has a problem', async () => {
+    renderDialog(JSON.stringify({ version: 1, tasks: [{ id: 't1' }], tracks: [
+      { type: 'video', clips: [{ url: 'https://example.com/a.mp4', at: 1 }] },
+    ] }))
+
+    await waitFor(() => expect(screen.getByTestId('h3-plan-errors').textContent)
+      .toBe('Track 1, clip 1: The length of https://example.com/a.mp4 is unknown; write end.'))
+  })
+
   it('names the tasks once when several share a warning', async () => {
     renderDialog(JSON.stringify({ version: 1, tasks: [
       { id: 't1', audios: [{ track: 'gone' }] },

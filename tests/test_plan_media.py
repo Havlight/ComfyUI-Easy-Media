@@ -78,6 +78,24 @@ def test_unusable_references_explain_why(plan_media, tmp_path, item, message):
         plan_media.resolve_plan_media(item)
 
 
+def test_timeline_clips_learn_the_length_of_their_file(plan_media, tmp_path, monkeypatch):
+    (tmp_path / "input/song.wav").write_bytes(b"wav")
+    (tmp_path / "output/clip.mp4").write_bytes(b"mp4")
+    probed = []
+
+    def probe(path):
+        probed.append(Path(path).name)
+        return {"duration": 92.3, "has_audio": False} if path.name == "clip.mp4" else {"duration": 61.0, "has_audio": True}
+
+    monkeypatch.setattr(plan_media, "_probe", probe)
+
+    assert plan_media.resolve_plan_media({"media_type": "audio", "input": "song.wav", "probe": True})["duration"] == 61.0
+    assert plan_media.resolve_plan_media({"media_type": "video", "output": "clip.mp4", "probe": True}) == {
+        "source_type": "output", "file_path": "clip.mp4", "file_name": "clip.mp4", "duration": 92.3, "has_audio": False}
+    assert "duration" not in plan_media.resolve_plan_media({"media_type": "audio", "input": "song.wav"})
+    assert probed == ["song.wav", "clip.mp4"]
+
+
 def test_urls_are_downloaded_and_named_by_content(plan_media, tmp_path, monkeypatch):
     class _Response(io.BytesIO):
         headers = {"Content-Type": "audio/mpeg"}
