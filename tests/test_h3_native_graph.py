@@ -252,6 +252,22 @@ def test_native_locked_video_requests_raw_source_window_and_never_stretches(monk
         module.EasyMultiTrackProject.execute(**inputs)
 
 
+def test_native_locked_video_takes_the_first_reference_and_keeps_the_others(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs()
+    for task in inputs['tracks_info'][0]['tracks'][0]['segments']:
+        task['content']['task_mode'] = 'ref'
+    inputs['tracks_info'][0]['tracks'].append({'id': 'video', 'type': 'video', 'audio_locked': True,
+        'segments': [{'start_frame': 0, 'end_frame': 481, 'content': {'media_type': 'video'}}]})
+    nodes = module.EasyMultiTrackProject.execute(**inputs).expand
+    conditioning = [node for node in nodes.values() if node['class_type'] == 'easy minimaxH3ToVideo']
+    for node in conditioning:
+        assert nodes[node['inputs']['locked_video'][0]]['class_type'] == 'easy multiTrackTaskOutput'
+        # The task's own videos and soundtrack flags still reach the sampler.
+        assert node['inputs']['videos'][0].rsplit('.', 1)[-1].startswith('task_')
+        assert node['inputs']['video_soundtracks'][0].rsplit('.', 1)[-1].startswith('task_')
+
+
 def test_native_lock_video_rejects_task_modes_that_ignore_video(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     inputs = native_inputs()

@@ -422,7 +422,7 @@ def validate_track_data(
                     item_where = f"{where}.content.{field}[{item_index}]"
                     if not isinstance(item, dict):
                         raise WorkflowError(f"{item_where} must be an object")
-                    for flag in ("shared_reference", "muted", "fit", "soundtrack"):
+                    for flag in ("shared_reference", "muted", "fit", "soundtrack", "has_audio"):
                         if flag in item and not isinstance(item[flag], bool):
                             raise WorkflowError(f"{item_where}.{flag} must be a boolean")
                     if item.get("source_type") == "track":

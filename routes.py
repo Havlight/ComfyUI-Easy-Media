@@ -604,6 +604,37 @@ async def handle_video_source_fps(request: web.Request) -> web.Response:
                 print(f"[Easy Media] Failed to remove frame rate probe temporary video: {error}")
 
 
+MAX_AUDIO_PROBE_ITEMS = 64
+
+
+def _video_has_audio(item: object) -> bool | None:
+    """Whether a video source carries an audio stream; None when it cannot be read."""
+    if not isinstance(item, dict):
+        return None
+    try:
+        info = ffprobe_info(str(resolve_segment_video_path(item)))
+    except (ValueError, FileNotFoundError, OSError, RuntimeError):
+        return None
+    return bool(info.get("has_audio")) if info else None
+
+
+@PromptServer.instance.routes.post("/easy-media/video/has-audio")
+async def handle_video_has_audio(request: web.Request) -> web.Response:
+    """Probe local video sources so the H3 reference plan can skip silent soundtracks."""
+    try:
+        data = await request.json()
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) > MAX_AUDIO_PROBE_ITEMS:
+            raise ValueError(f"items must be a list of at most {MAX_AUDIO_PROBE_ITEMS} video sources")
+        results = await asyncio.to_thread(lambda: [_video_has_audio(item) for item in items])
+        return web.json_response({"has_audio": results})
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except Exception as error:
+        traceback.print_exc()
+        return web.json_response({"error": f"Video audio probe failed: {error}"}, status=500)
+
+
 @PromptServer.instance.routes.post("/easy-media/video/preview-frame")
 async def handle_video_preview_frame(request: web.Request) -> web.Response:
     """Serve a paused timeline frame with the same sampling as task output."""

@@ -11,18 +11,24 @@ Videos and audios come from the timeline and, in ref and edit tasks, from the ta
 own ``videos`` / ``audios`` lists. Timeline references are shared clips (deduplicated
 by source, in track order) and then one window per overlapping track in track order.
 A window runs from the task start to the next task's start, or to the task end for the
-last task. Muted audio tracks and audio-locked audio tracks give no reference.
+last task. Muted audio tracks and audio-locked audio tracks give no reference unless
+the task includes them.
 
 A task list holds uploads and timeline placeholders (``source_type: "track"`` with a
-``track_id``, plus ``segment_id`` for a shared clip). A placeholder places, mutes or
-adjusts a timeline reference; timeline references without one come first, in timeline
-order, then the list in its order. At most three videos and three audios are used.
+``track_id``, plus ``segment_id`` for a shared clip). A placeholder places or adjusts a
+timeline reference, and its ``muted`` overrides the default: true excludes the
+reference, false includes a track that gives none by default. Timeline references
+without a placeholder come first, in timeline order, then the list in its order. At
+most three videos and three audios are used.
 
 Audio fitting cuts a reference to the task window (timeline, the default) or to the
 task length (shared clips and uploads); without it the reference takes up to 15 s of
-its source. Videos always fit. A task on an audio-locked video track references only
-that track's window. Core labels each video soundtrack ``<Audio N>`` before the
-standalone audio, so audio labels count soundtracks first.
+its source. Videos always fit. An audio-locked video track that reaches the task comes
+first as its window, which drives the video timing; other videos follow. A video has a
+soundtrack when its track is not muted and its source is not known to be silent
+(``has_audio: false``), unless the task says otherwise. Core labels each video
+soundtrack ``<Audio N>`` before the standalone audio, so audio labels count
+soundtracks first.
 """
 from __future__ import annotations
 
@@ -54,12 +60,14 @@ class MediaReference:
     fit: bool = True
     # An upload's source fields, as (field, value) pairs.
     source: tuple[tuple[str, str], ...] = ()
+    # A video whose source is known to have no audio.
+    silent: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {"key": self.key, "media_type": self.media_type, "kind": self.kind,
                 "track_id": self.track_id, "segment_id": self.segment_id,
                 "start_frame": self.start_frame, "frames": self.frames, "soundtrack": self.soundtrack,
-                "fit": self.fit, "source": dict(self.source)}
+                "fit": self.fit, "source": dict(self.source), "silent": self.silent}
 
 
 @dataclass(frozen=True)
@@ -158,11 +166,24 @@ def shared_reference_clip(track: dict[str, Any]) -> dict[str, Any] | None:
                  if segment["content"].get("shared_reference") is True), None)
 
 
-def _window_end(track: dict[str, Any], start: int, end: int, skip: dict[str, Any] | None) -> int | None:
-    ends = [min(_frame(segment.get("end_frame"), -1), end) for segment in _media_segments(track)
+def _window_clips(track: dict[str, Any], start: int, end: int, skip: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return [segment for segment in _media_segments(track)
             if segment is not skip and _frame(segment.get("end_frame"), -1) > start
             and _frame(segment.get("start_frame")) < end]
+
+
+def _window_end(track: dict[str, Any], start: int, end: int, skip: dict[str, Any] | None) -> int | None:
+    ends = [min(_frame(segment.get("end_frame"), -1), end) for segment in _window_clips(track, start, end, skip)]
     return max(ends) if ends else None
+
+
+def has_audio(content: dict[str, Any]) -> bool:
+    """Whether a source may carry audio; only ``has_audio: false`` marks it silent."""
+    return content.get("has_audio") is not False
+
+
+def _window_has_audio(track: dict[str, Any], start: int, end: int, skip: dict[str, Any] | None) -> bool:
+    return any(has_audio(segment["content"]) for segment in _window_clips(track, start, end, skip))
 
 
 def locked_video_track(tracks: list[Any], start: int, end: int) -> dict[str, Any] | None:
@@ -207,6 +228,9 @@ def plan_task_references(
     def fits(media_type: str, key: str) -> bool:
         return media_type == "video" or placed[media_type].get(key, {}).get("fit") is not False
 
+    def included(media_type: str, key: str) -> bool:
+        return placed[media_type].get(key, {}).get("muted") is False
+
     shared: dict[str, list[MediaReference]] = {"video": [], "audio": []}
     windows: dict[str, list[MediaReference]] = {"video": [], "audio": []}
     seen: dict[str, set[tuple[str, str]]] = {"video": set(), "audio": set()}
@@ -216,29 +240,36 @@ def plan_task_references(
         media_type = str(track["type"])
         track_id = str(track.get("id", ""))
         muted = track.get("muted") is True
-        if media_type == "audio" and (muted or track.get("audio_locked") is True):
-            continue
+        # Muted and audio-locked audio tracks reference only when the task includes them.
+        excluded = media_type == "audio" and (muted or track.get("audio_locked") is True)
         clip = shared_reference_clip(track)
         identity = media_identity(clip["content"]) if clip is not None else None
-        if clip is not None and (identity is None or identity not in seen[media_type]):
+        key = f"shared:{clip.get('id', track_id)}" if clip is not None else ""
+        if (clip is not None and (not excluded or included(media_type, key))
+                and (identity is None or identity not in seen[media_type])):
             if identity is not None:
                 seen[media_type].add(identity)
-            key = f"shared:{clip.get('id', track_id)}"
             fit = fits(media_type, key)
+            silent = media_type == "video" and not has_audio(clip["content"])
             shared[media_type].append(MediaReference(
                 key, media_type, "shared", track_id, str(clip.get("id", "")), 0,
-                task_frames if fit else cap, media_type == "video" and not muted, fit))
+                task_frames if fit else cap, media_type == "video" and not muted and not silent, fit,
+                silent=silent))
         key = f"track:{track_id}"
+        if excluded and not included(media_type, key):
+            continue
         fit = fits(media_type, key)
-        media_end = _window_end(track, start, window if fit else max(window, start + cap), clip)
+        limit = window if fit else max(window, start + cap)
+        media_end = _window_end(track, start, limit, clip)
         if media_end is None or media_end <= start:
             continue
+        silent = media_type == "video" and not _window_has_audio(track, start, limit, clip)
         windows[media_type].append(MediaReference(
             key, media_type, "track", track_id, "", start, media_end - start,
-            media_type == "video" and not muted, fit))
+            media_type == "video" and not muted and not silent, fit, silent=silent))
 
-    def ordered(media_type: str) -> list[MediaReference]:
-        timeline = shared[media_type] + windows[media_type]
+    def ordered(media_type: str, skip: str = "", limit: int = MEDIA_REFERENCE_LIMIT) -> list[MediaReference]:
+        timeline = [ref for ref in shared[media_type] + windows[media_type] if ref.key != skip]
         by_key = {ref.key: ref for ref in timeline}
         result = [ref for ref in timeline if ref.key not in placed[media_type]]
         used: set[str] = set()
@@ -259,16 +290,22 @@ def plan_task_references(
             if item.get("muted") is True or not has_upload_source(item):
                 continue
             fit = media_type == "video" or item.get("fit") is True
+            silent = media_type == "video" and not has_audio(item)
+            soundtrack = item["soundtrack"] if isinstance(item.get("soundtrack"), bool) else not silent
             result.append(MediaReference(
                 f"upload:{item.get('id', '')}", media_type, "upload", "", "", 0,
-                task_frames if fit else cap, media_type == "video" and item.get("soundtrack") is not False,
-                fit, _upload_source(item)))
-        return result[:MEDIA_REFERENCE_LIMIT]
+                task_frames if fit else cap, media_type == "video" and soundtrack,
+                fit, _upload_source(item), silent))
+        return result[:limit]
 
-    videos = ordered("video")
     locked = None if audio_only else locked_video_track(tracks, start, task_end)
-    if locked is not None:
+    if locked is None:
+        videos = ordered("video")
+    else:
+        # The locked window drives the video timing as <Video 1>; other videos follow.
         locked_id = str(locked.get("id", ""))
+        silent = not _window_has_audio(locked, start, task_end, None)
         videos = [MediaReference(f"locked:{locked_id}", "video", "locked", locked_id, "", start,
-                                 task_frames, locked.get("muted") is not True)]
+                                 task_frames, locked.get("muted") is not True and not silent, silent=silent),
+                  *ordered("video", f"track:{locked_id}", MEDIA_REFERENCE_LIMIT - 1)]
     return TaskReferencePlan(images, tuple(videos), tuple(ordered("audio")))

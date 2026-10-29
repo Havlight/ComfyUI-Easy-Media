@@ -3810,6 +3810,31 @@ def test_minimax_task_output_loads_task_uploads_in_plan_order():
         module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
 
 
+def test_minimax_task_output_includes_muted_and_locked_tracks_when_the_task_asks():
+    module = _load_basic_module()
+    sources = {name: {"waveform": torch.full((1, 1, 8), float(index + 1)), "sample_rate": 1}
+               for index, name in enumerate(["quiet.wav", "song.wav"])}
+    module._resolve_multitrack_audio = lambda content, _audio: sources.get(content.get("file_path"))
+    clip = lambda name: [{"id": f"{name}-1", "start_frame": 0, "end_frame": 8,
+                          "content": {"media_type": "audio", "file_path": f"{name}.wav"}}]
+    tracks_info = {
+        "media_loading": "deferred", "format": "MiniMax", "width": 2, "height": 2, "frame_rate": 1, "muted": True,
+        "tracks": [
+            {"id": "tasks", "type": "task", "segments": [{"id": "t1", "start_frame": 0, "end_frame": 4, "content": {
+                "task_mode": "ref", "audios": [
+                    {"id": "p-quiet", "source_type": "track", "track_id": "quiet", "muted": False},
+                    {"id": "p-song", "source_type": "track", "track_id": "song", "muted": False}]}}]},
+            {"id": "quiet", "type": "audio", "muted": True, "segments": clip("quiet")},
+            {"id": "song", "type": "audio", "audio_locked": True, "segments": clip("song")},
+        ],
+    }
+
+    result = module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
+
+    # Output muting does not silence a reference the task asked for.
+    assert [audio["waveform"].flatten().tolist() for audio in result.values[5]] == [[1.0] * 4, [2.0] * 4]
+
+
 def test_multitrack_task_output_minus_one_does_not_stop_at_the_next_minimax_task():
     module = _load_basic_module()
     source_audio = {
@@ -3907,6 +3932,34 @@ def test_prepare_multitrack_project_media_extracts_shared_and_locked_audio(monke
     # Each task plans its references from the shared clip, which stays on its track.
     assert [segment["id"] for segment in task_info["tracks"][1]["segments"]] == ["shared-clip"]
     assert task_info["tracks"][2]["segments"] == []
+
+
+def test_project_media_keeps_included_locked_audio_and_unmutes_shared_references(monkeypatch):
+    _load_basic_module()
+    project_module = sys.modules["easy_media.utils.h3_project"]
+    source_audio = {"waveform": torch.ones(1, 1, 8), "sample_rate": 2}
+    monkeypatch.setattr(project_module, "_resolve_multitrack_audio", lambda *_args: source_audio)
+    clip = lambda sid, **content: [{"id": sid, "start_frame": 0, "end_frame": 8,
+                                    "content": {"media_type": "audio", "file_path": f"{sid}.wav", **content}}]
+
+    def prepare(include):
+        audios = [{"id": "p", "source_type": "track", "track_id": "song", "muted": False}] if include else []
+        return project_module.prepare_multitrack_project_media({
+            "media_loading": "deferred", "frame_rate": 2, "timeline_total_length": 8, "width": 2, "height": 2,
+            "tracks": [
+                {"id": "tasks", "type": "task", "segments": [
+                    {"id": "t1", "start_frame": 0, "end_frame": 8, "content": {"task_mode": "ref", "audios": audios}}]},
+                {"id": "song", "type": "audio", "audio_locked": True, "segments": clip("song-1")},
+                {"id": "quiet", "type": "audio", "muted": True, "segments": clip("voice", shared_reference=True)},
+            ],
+        })
+
+    task_info, _images, audios, _videos, locked = prepare(include=False)
+    assert task_info["tracks"][1]["segments"] == [] and locked is not None
+    # A shared clip is a reference, so its track's output mute does not silence it.
+    assert audios["shared:voice"]["waveform"].abs().sum() > 0
+    task_info, *_rest = prepare(include=True)
+    assert [segment["id"] for segment in task_info["tracks"][1]["segments"]] == ["song-1"]
 
 
 def test_project_shared_image_respects_each_task_image_mute(monkeypatch):

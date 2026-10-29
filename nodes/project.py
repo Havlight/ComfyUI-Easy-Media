@@ -1514,8 +1514,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                                                 track_id=locked_video_track["id"])
                     raw_video = graph.node("easy multiTrackTaskOutput", id=f"native_video_output_{task_index}",
                                            tracks_info=raw_video_info.out(0), task_index=0, prompt_format="default")
-                    conditioning_inputs["videos"] = raw_video.out(6)
-                    conditioning_inputs["video_soundtracks"] = raw_video.out(9)
+                    # The plan keeps the first reference video for the locked one.
+                    conditioning_inputs["locked_video"] = raw_video.out(6)
                     conditioning_inputs["locked_video_timing_frames"] = task_length
                     conditioning_inputs["native_locked_video"] = True
             encoded_conditioning = graph.node(

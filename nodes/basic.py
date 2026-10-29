@@ -3389,12 +3389,13 @@ class MultiTrackTaskOutput(io.ComfyNode):
                                 track_muted,
                             ))
                         elif planned is not None and resolved_audio_segments:
+                            # A reference is not output: muting only decides whether it is planned.
                             window_audio[track_id] = _merge_audio_track(
                                 resolved_audio_segments,
                                 local_duration,
                                 frame_rate,
                                 track_volume_db,
-                                track_muted,
+                                False,
                             )
                         if (
                             locked_audio_track
@@ -3432,7 +3433,7 @@ class MultiTrackTaskOutput(io.ComfyNode):
                             int(info.get("width", 544)),
                             int(info.get("height", 960)),
                             track_volume_db,
-                            track_muted,
+                            track_muted and reference_plan is None,
                             resize_method=str(info.get("resize_method", "stretch")),
                         )
                         if reference_plan is not None:

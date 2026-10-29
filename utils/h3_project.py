@@ -1473,6 +1473,18 @@ def _project_shared_video(
     return _resolve_multitrack_video(content, video_items)
 
 
+def _h3_task_includes_track(info: dict[str, Any], track_id: str) -> bool:
+    """Whether a task includes a track that gives no reference by default."""
+    return any(
+        isinstance(item, dict) and item.get("source_type") == "track"
+        and item.get("track_id") == track_id and item.get("muted") is False
+        for track in info.get("tracks", []) if isinstance(track, dict) and track.get("type") == "task"
+        for segment in track.get("segments", []) if isinstance(segment, dict)
+        for content in [segment.get("content")] if isinstance(content, dict)
+        for item in content.get("audios", []) if isinstance(content.get("audios"), list)
+    )
+
+
 def prepare_multitrack_project_media(
     tracks_info: list | dict | str,
 ) -> tuple[dict, list[torch.Tensor], dict[str, dict], dict[str, object], dict | None]:
@@ -1599,9 +1611,9 @@ def prepare_multitrack_project_media(
                     not audible,
                 )
                 locked_audio_priority = lock_priority
-            if track_type == "audio":
-                # The project-level locked audio replaces this track for every
-                # task, so retaining it would add the same audio a second time.
+            if track_type == "audio" and not _h3_task_includes_track(info, str(track.get("id", ""))):
+                # The project-level locked audio replaces this track; only a task
+                # that also references it needs its clips.
                 track["segments"] = []
                 track.pop("media_index", None)
             continue
@@ -1621,11 +1633,8 @@ def prepare_multitrack_project_media(
                 source_audio = source_audio_cache[identity]
             waveform = source_audio.get("waveform") if isinstance(source_audio, dict) else None
             if isinstance(waveform, torch.Tensor):
-                gain = (
-                    audio_db_to_gain(track_volume_db)
-                    if audible and not audio_is_muted(content)
-                    else 0.0
-                )
+                # Shared clips are references, so output muting does not silence them.
+                gain = audio_db_to_gain(track_volume_db) if not audio_is_muted(content) else 0.0
                 shared_audio[key] = {
                     "waveform": waveform * gain,
                     "sample_rate": int(source_audio.get("sample_rate", 44100)),

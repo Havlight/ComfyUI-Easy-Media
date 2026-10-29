@@ -1194,6 +1194,7 @@ def test_schema_exposes_list_media_inputs_without_image_position(monkeypatch):
         "locked_video_timing_frames",
         "ref_image_size",
         "video_soundtracks",
+        "locked_video",
     ]
     assert inputs["audio_vae"].kwargs["optional"] is True
     assert inputs["mode"].kwargs["options"] == [
@@ -4216,6 +4217,43 @@ def test_locked_video_timing_is_forwarded_to_reference_bridge(monkeypatch):
 
     conditioning = _graph_node(output, module.REFERENCE_BRIDGE_NODE_ID)
     assert conditioning["inputs"]["locked_video_timing_frames"] == 56
+
+
+def test_locked_video_replaces_the_first_reference_video(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    locked, window, other = object(), object(), object()
+
+    output = module.EasyMiniMaxH3ToVideo.execute(**_base_inputs(
+        mode=["reference"], videos=[window, other], locked_video=[locked],
+        locked_video_timing_frames=[56], native_locked_video=[True]))
+
+    sources = [node["inputs"]["video"] for node in output.expand.values() if node["class_type"] == "GetVideoComponents"]
+    assert sources == [locked, other]
+
+
+def test_bridge_holds_only_the_locked_video_to_the_raw_window(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    calls = []
+
+    class _NativeReferenceNode:
+        @classmethod
+        def execute(cls, **kwargs):
+            calls.append(kwargs)
+            return _NodeOutput("conditioning", "latent")
+
+    module.comfy_nodes.NODE_CLASS_MAPPINGS["MiniMaxH3ReferenceToVideo"] = _NativeReferenceNode
+    inputs = dict(clip=_Clip(), vae=_Vae(), prompt="prompt", width=32, height=32, length=22,
+                  locked_video_timing_frames=22, native_locked_video=True)
+
+    module.EasyMiniMaxH3ReferenceToVideoBridge.execute(
+        **inputs, ref_video_0=_image_values(*range(22)), ref_video_1=_image_values(*range(9)))
+
+    # Other videos keep their own frames, aligned to H3's grid like any reference.
+    assert calls[0]["ref_videos"]["ref_video_0"].shape[0] == 22
+    assert calls[0]["ref_videos"]["ref_video_1"].shape[0] == 22
+    with pytest.raises(ValueError, match="LOCK_VIDEO_RANGE"):
+        module.EasyMiniMaxH3ReferenceToVideoBridge.execute(
+            **inputs, ref_video_0=_image_values(*range(9)), ref_video_1=_image_values(*range(22)))
 
 
 def test_easy_node_reports_progress_for_each_media_input(monkeypatch):

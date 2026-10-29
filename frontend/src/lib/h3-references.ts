@@ -15,15 +15,18 @@ import type {
  * `videos` / `audios` lists. Timeline references are shared clips (once per source, in track
  * order) and then one window per overlapping track. A window runs from the task start to the
  * next task's start, or to the task end for the last task. Muted and audio-locked audio tracks
- * give no reference.
+ * give no reference unless the task includes them.
  *
  * A task list holds uploads and placeholders ({source_type: 'track', track_id}, plus segment_id
- * for a shared clip) that place, mute or adjust a timeline reference. Timeline references without
- * a placeholder come first, then the list in its order; at most three videos and three audios
- * are used. Fitted audio covers the task window (timeline) or the task length (shared clips and
- * uploads); unfitted audio takes up to 15 s of its source. A task on an audio-locked video track
- * references only that track. Each video soundtrack takes an <Audio N> label before the
- * standalone audio.
+ * for a shared clip) that place or adjust a timeline reference; a placeholder's `muted` overrides
+ * the default (true excludes, false includes a track that gives none by default). Timeline
+ * references without a placeholder come first, then the list in its order; at most three videos
+ * and three audios are used. Fitted audio covers the task window (timeline) or the task length
+ * (shared clips and uploads); unfitted audio takes up to 15 s of its source. An audio-locked
+ * video track that reaches the task comes first and drives the video timing; other videos
+ * follow. A video has a soundtrack when its track is not muted and its source is not known to be
+ * silent (`has_audio: false`), unless the task says otherwise. Each video soundtrack takes an
+ * <Audio N> label before the standalone audio.
  */
 export type H3ReferenceKind = 'shared' | 'track' | 'locked' | 'upload'
 
@@ -42,6 +45,8 @@ export interface H3MediaReference {
   fit: boolean
   /** An upload's source fields. */
   source: Partial<Record<(typeof SOURCE_FIELDS)[number], string>>
+  /** A video whose source is known to have no audio. */
+  silent: boolean
 }
 
 export interface H3ReferenceLabels {
@@ -59,10 +64,12 @@ export interface H3TaskReferencePlan {
 
 /**
  * Why a slot is or is not sent: muted by the task, its track no longer reaches the task,
- * its track gives no reference (muted or audio-locked audio, or a repeated shared source),
- * past the three-item limit, or unused because a locked video drives the task.
+ * excluded by default (see H3ExclusionReason), or past the three-item limit.
  */
-export type H3ReferenceSlotStatus = 'active' | 'muted' | 'uncovered' | 'excluded' | 'over_limit' | 'locked'
+export type H3ReferenceSlotStatus = 'active' | 'muted' | 'uncovered' | 'excluded' | 'over_limit'
+
+/** A muted or audio-locked audio track, which the task can include; a repeated shared source cannot be. */
+export type H3ExclusionReason = 'track_muted' | 'audio_locked' | 'duplicate'
 
 export interface H3ReferenceSlot {
   key: string
@@ -71,6 +78,8 @@ export interface H3ReferenceSlot {
   track_id: string
   segment_id: string
   status: H3ReferenceSlotStatus
+  /** Why the reference is excluded by default; kept when the task includes it anyway. */
+  reason?: H3ExclusionReason
   /** The stored upload or placeholder; timeline references without a placeholder have none. */
   item?: MultiTrackTaskMedia
   reference?: H3MediaReference
@@ -136,11 +145,28 @@ export function h3SharedReferenceClip(track: MultiTrack): MultiTrackSegment | un
   return mediaSegments(track).find((segment) => segment.content.shared_reference === true)
 }
 
+function windowClips(track: MultiTrack, start: number, end: number, skip?: MultiTrackSegment): MultiTrackSegment[] {
+  return mediaSegments(track).filter((segment) => segment !== skip && segment.end_frame > start && segment.start_frame < end)
+}
+
 function windowEnd(track: MultiTrack, start: number, end: number, skip?: MultiTrackSegment): number | null {
-  const ends = mediaSegments(track)
-    .filter((segment) => segment !== skip && segment.end_frame > start && segment.start_frame < end)
-    .map((segment) => Math.min(segment.end_frame, end))
+  const ends = windowClips(track, start, end, skip).map((segment) => Math.min(segment.end_frame, end))
   return ends.length > 0 ? Math.max(...ends) : null
+}
+
+/** Whether a source may carry audio; only `has_audio: false` marks it silent. */
+export function h3HasAudio(content: { has_audio?: boolean }): boolean {
+  return content.has_audio !== false
+}
+
+function windowHasAudio(track: MultiTrack, start: number, end: number, skip?: MultiTrackSegment): boolean {
+  return windowClips(track, start, end, skip).some((segment) => h3HasAudio(segment.content))
+}
+
+function exclusionReason(track: MultiTrack): H3ExclusionReason | undefined {
+  if (track.type !== 'audio') return undefined
+  if (track.audio_locked === true) return 'audio_locked'
+  return track.muted === true ? 'track_muted' : undefined
 }
 
 export function h3LockedVideoTrack(tracks: readonly MultiTrack[], start: number, end: number): MultiTrack | undefined {
@@ -162,15 +188,26 @@ function slotFor(reference: H3MediaReference, status: H3ReferenceSlotStatus, ite
   }
 }
 
-/** Status of a placeholder whose timeline reference is gone; null drops it. */
-function unresolvedStatus(tracks: readonly MultiTrack[], item: MultiTrackTaskMedia, mediaType: H3ReferenceMediaType): H3ReferenceSlotStatus | null {
+/** Status of a placeholder whose timeline reference is not sent; null drops it. */
+function unresolvedSlot(
+  tracks: readonly MultiTrack[],
+  item: MultiTrackTaskMedia,
+  key: string,
+  mediaType: H3ReferenceMediaType,
+): H3ReferenceSlot | null {
   const track = tracks.find((candidate) => candidate.id === item.track_id && candidate.type === mediaType)
   if (!track) return null
-  if (item.segment_id) {
-    const clip = mediaSegments(track).find((segment) => segment.id === item.segment_id)
-    return clip?.content.shared_reference === true ? 'excluded' : null
+  const reason = exclusionReason(track)
+  const slot = {
+    key, media_type: mediaType, kind: item.segment_id ? 'shared' as const : 'track' as const, track_id: track.id,
+    segment_id: item.segment_id ?? '', item,
   }
-  return mediaType === 'audio' && (track.muted === true || track.audio_locked === true) ? 'excluded' : 'uncovered'
+  if (item.segment_id) {
+    const clip = h3SharedReferenceClip(track)
+    if (clip?.id !== item.segment_id) return null
+    return { ...slot, status: 'excluded', reason: reason && item.muted !== false ? reason : 'duplicate' }
+  }
+  return reason && item.muted !== false ? { ...slot, status: 'excluded', reason } : { ...slot, status: 'uncovered' }
 }
 
 /** Every reference slot the Editor shows for a task, in plan order, with why it is or is not sent. */
@@ -199,38 +236,66 @@ export function h3TaskReferenceSlots(
     }
   }
   const fits = (mediaType: H3ReferenceMediaType, key: string) => mediaType === 'video' || placed[mediaType].get(key)?.fit !== false
+  const included = (mediaType: H3ReferenceMediaType, key: string) => placed[mediaType].get(key)?.muted === false
 
   const shared: Record<H3ReferenceMediaType, H3MediaReference[]> = { video: [], audio: [] }
   const windows: Record<H3ReferenceMediaType, H3MediaReference[]> = { video: [], audio: [] }
   const seen: Record<H3ReferenceMediaType, Set<string>> = { video: new Set(), audio: new Set() }
+  // Display only: why a reference is excluded by default, and the excluded ones without a placeholder.
+  const reasons = new Map<string, H3ExclusionReason>()
+  const dormant: Record<H3ReferenceMediaType, H3ReferenceSlot[]> = { video: [], audio: [] }
+  const rest = (mediaType: H3ReferenceMediaType, key: string, kind: 'shared' | 'track', track: MultiTrack,
+    segmentId: string, reason: H3ExclusionReason) => {
+    if (!placed[mediaType].has(key)) {
+      dormant[mediaType].push({
+        key, media_type: mediaType, kind, track_id: track.id, segment_id: segmentId, status: 'excluded', reason,
+      })
+    }
+  }
   for (const track of tracks) {
     if (track.type !== 'video' && track.type !== 'audio') continue
     const mediaType = track.type
     const muted = track.muted === true
-    if (mediaType === 'audio' && (muted || track.audio_locked === true)) continue
+    // Muted and audio-locked audio tracks reference only when the task includes them.
+    const reason = exclusionReason(track)
     const clip = h3SharedReferenceClip(track)
-    const identity = clip ? h3MediaIdentity(clip.content) : null
-    if (clip && (identity === null || !seen[mediaType].has(identity))) {
-      if (identity !== null) seen[mediaType].add(identity)
+    if (clip) {
+      const identity = h3MediaIdentity(clip.content)
       const key = `shared:${clip.id || track.id}`
-      const fit = fits(mediaType, key)
-      shared[mediaType].push({
-        key, media_type: mediaType, kind: 'shared', track_id: track.id, segment_id: clip.id, start_frame: 0,
-        frames: fit ? taskFrames : cap, soundtrack: mediaType === 'video' && !muted, fit, source: {},
-      })
+      if (reason && !included(mediaType, key)) {
+        rest(mediaType, key, 'shared', track, clip.id, reason)
+      } else if (identity !== null && seen[mediaType].has(identity)) {
+        rest(mediaType, key, 'shared', track, clip.id, 'duplicate')
+      } else {
+        if (identity !== null) seen[mediaType].add(identity)
+        if (reason) reasons.set(key, reason)
+        const fit = fits(mediaType, key)
+        const silent = mediaType === 'video' && !h3HasAudio(clip.content)
+        shared[mediaType].push({
+          key, media_type: mediaType, kind: 'shared', track_id: track.id, segment_id: clip.id, start_frame: 0,
+          frames: fit ? taskFrames : cap, soundtrack: mediaType === 'video' && !muted && !silent, fit, source: {}, silent,
+        })
+      }
     }
     const key = `track:${track.id}`
     const fit = fits(mediaType, key)
-    const mediaEnd = windowEnd(track, start, fit ? window : Math.max(window, start + cap), clip)
+    const limit = fit ? window : Math.max(window, start + cap)
+    const mediaEnd = windowEnd(track, start, limit, clip)
     if (mediaEnd === null || mediaEnd <= start) continue
+    if (reason && !included(mediaType, key)) {
+      rest(mediaType, key, 'track', track, '', reason)
+      continue
+    }
+    if (reason) reasons.set(key, reason)
+    const silent = mediaType === 'video' && !windowHasAudio(track, start, limit, clip)
     windows[mediaType].push({
       key, media_type: mediaType, kind: 'track', track_id: track.id, segment_id: '', start_frame: start,
-      frames: mediaEnd - start, soundtrack: mediaType === 'video' && !muted, fit, source: {},
+      frames: mediaEnd - start, soundtrack: mediaType === 'video' && !muted && !silent, fit, source: {}, silent,
     })
   }
 
-  const ordered = (mediaType: H3ReferenceMediaType): H3ReferenceSlot[] => {
-    const timeline = [...shared[mediaType], ...windows[mediaType]]
+  const ordered = (mediaType: H3ReferenceMediaType, skip = '', limit = H3_MEDIA_REFERENCE_LIMIT): H3ReferenceSlot[] => {
+    const timeline = [...shared[mediaType], ...windows[mediaType]].filter((reference) => reference.key !== skip)
     const byKey = new Map(timeline.map((reference) => [reference.key, reference]))
     const slots = timeline.filter((reference) => !placed[mediaType].has(reference.key))
       .map((reference) => slotFor(reference, 'active'))
@@ -241,15 +306,11 @@ export function h3TaskReferenceSlots(
         const key = h3PlaceholderKey(item)
         if (key === null || used.has(key)) continue
         used.add(key)
+        if (key === skip) continue
         const timelineReference = byKey.get(key)
         if (!timelineReference) {
-          const status = unresolvedStatus(tracks, item, mediaType)
-          if (status) {
-            slots.push({
-              key, media_type: mediaType, kind: item.segment_id ? 'shared' : 'track', track_id: item.track_id ?? '',
-              segment_id: item.segment_id ?? '', status, item,
-            })
-          }
+          const slot = unresolvedSlot(tracks, item, key, mediaType)
+          if (slot) slots.push(slot)
           continue
         }
         const reference = mediaType === 'video' && typeof item.soundtrack === 'boolean'
@@ -260,31 +321,36 @@ export function h3TaskReferenceSlots(
       }
       if (!h3HasUploadSource(item)) continue
       const fit = mediaType === 'video' || item.fit === true
+      const silent = mediaType === 'video' && !h3HasAudio(item)
+      const soundtrack = typeof item.soundtrack === 'boolean' ? item.soundtrack : !silent
       slots.push(slotFor({
         key: `upload:${item.id}`, media_type: mediaType, kind: 'upload', track_id: '', segment_id: '', start_frame: 0,
-        frames: fit ? taskFrames : cap, soundtrack: mediaType === 'video' && item.soundtrack !== false, fit,
-        source: uploadSource(item),
+        frames: fit ? taskFrames : cap, soundtrack: mediaType === 'video' && soundtrack, fit,
+        source: uploadSource(item), silent,
       }, item.muted === true ? 'muted' : 'active', item))
     }
+    slots.push(...dormant[mediaType].filter((slot) => slot.key !== skip))
     let active = 0
-    for (const slot of slots) {
-      if (slot.status === 'active' && ++active > H3_MEDIA_REFERENCE_LIMIT) slot.status = 'over_limit'
-    }
-    return slots
+    return slots.map((slot) => {
+      const reason = slot.reason ?? reasons.get(slot.key)
+      const status = slot.status === 'active' && ++active > limit ? 'over_limit' : slot.status
+      return { ...slot, status, ...(reason ? { reason } : {}) }
+    })
   }
 
-  let videos = ordered('video')
   const locked = audioOnly ? undefined : h3LockedVideoTrack(tracks, start, taskEnd)
-  if (locked) {
-    const reference: H3MediaReference = {
-      key: `locked:${locked.id}`, media_type: 'video', kind: 'locked', track_id: locked.id, segment_id: '',
-      start_frame: start, frames: taskFrames, soundtrack: locked.muted !== true, fit: true, source: {},
-    }
-    videos = [slotFor(reference, 'active'), ...videos
-      .filter((slot) => slot.key !== `track:${locked.id}`)
-      .map((slot) => (slot.status === 'active' || slot.status === 'over_limit' ? { ...slot, status: 'locked' as const } : slot))]
+  if (!locked) return { customizable, video: ordered('video'), audio: ordered('audio') }
+  // The locked window drives the video timing as <Video 1>; other videos follow.
+  const silent = !windowHasAudio(locked, start, taskEnd)
+  const lockedReference: H3MediaReference = {
+    key: `locked:${locked.id}`, media_type: 'video', kind: 'locked', track_id: locked.id, segment_id: '',
+    start_frame: start, frames: taskFrames, soundtrack: locked.muted !== true && !silent, fit: true, source: {}, silent,
   }
-  return { customizable, video: videos, audio: ordered('audio') }
+  return {
+    customizable,
+    video: [slotFor(lockedReference, 'active'), ...ordered('video', `track:${locked.id}`, H3_MEDIA_REFERENCE_LIMIT - 1)],
+    audio: ordered('audio'),
+  }
 }
 
 /** The plan behind a task's slots: its unmuted images and its active slots. */

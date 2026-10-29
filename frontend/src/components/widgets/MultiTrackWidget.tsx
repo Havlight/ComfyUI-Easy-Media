@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCanvasScale } from '@/hooks/use-canvas-scale'
 import { useElementWidth } from '@/hooks/use-element-width'
 import { useMultiTrackHistory } from '@/hooks/use-multitrack-history'
+import { useVideoAudioProbe } from '@/hooks/use-video-audio-probe'
 import { useH3NativeEditing } from '@/hooks/use-h3-native-editing'
 import { useMultiTrackResolutionInput } from '@/hooks/use-multitrack-resolution-input'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
@@ -253,9 +254,11 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
     canUndo,
     canRedo,
     commitChange: commitTrackChange,
+    amendChange: amendTrackChange,
     undo: undoTrackChange,
     redo: redoTrackChange,
   } = useMultiTrackHistory(committedData, handleTrackDataChange)
+  useVideoAudioProbe(committedData, amendTrackChange)
   const locale = app?.ui?.settings?.settingsValues?.['Comfy.Locale']
   const t = (path: string, params?: Record<string, string | number>) => translate(locale, path, params)
   const missingModelDirectoryName = missingModel?.directory.split(/[\\/]/).filter(Boolean).at(-1) ?? ''

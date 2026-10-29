@@ -51,7 +51,11 @@ export interface MultiTrackTaskMedia {
   url?: string
   slot_name?: string
   file_name?: string
-  /** Placeholders: the timeline track, plus the shared clip when the placeholder stands for one. */
+  /**
+   * Placeholders: the timeline track, plus the shared clip when the placeholder stands for one.
+   * A placeholder's `muted` overrides the default: true excludes, false includes a muted or
+   * audio-locked audio track.
+   */
   track_id?: string
   segment_id?: string
   shared_reference?: boolean
@@ -61,6 +65,8 @@ export interface MultiTrackTaskMedia {
   fit?: boolean
   /** Video: give the video an <Audio N> soundtrack. */
   soundtrack?: boolean
+  /** Video: whether the file has an audio stream; probed once, false makes the soundtrack default off. */
+  has_audio?: boolean
 }
 
 export interface MultiTrackSegmentContent {
@@ -89,6 +95,8 @@ export interface MultiTrackSegmentContent {
   /** Ref and edit tasks: reference videos and audios beside the timeline's. */
   videos?: MultiTrackTaskMedia[]
   audios?: MultiTrackTaskMedia[]
+  /** Video clips: whether the file has an audio stream; probed once, false means silent. */
+  has_audio?: boolean
   duration?: number
   volume_db?: number
   muted?: boolean

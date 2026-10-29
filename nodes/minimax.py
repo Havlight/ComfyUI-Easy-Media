@@ -724,14 +724,15 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
 
         target_frame_count = _align_frame_count(max(5, int(length)))
         locked_timing_frames = int(locked_video_timing_frames)
+        # The locked video is always the first reference video; others are ordinary references.
         if native_locked_video:
-            for frames in grouped_inputs["ref_videos"].values():
-                if frames.shape[0] != locked_timing_frames or locked_timing_frames % 17 != 5:
-                    raise ValueError("H3 LOCK_VIDEO_RANGE: external video must cover the exact native raw window; it cannot be stretched or padded.")
+            frames = grouped_inputs["ref_videos"].get("ref_video_0")
+            if frames is None or frames.shape[0] != locked_timing_frames or locked_timing_frames % 17 != 5:
+                raise ValueError("H3 LOCK_VIDEO_RANGE: external video must cover the exact native raw window; it cannot be stretched or padded.")
         grouped_inputs["ref_videos"] = {
             name: (
                 _fit_reference_video_frames(frames, locked_timing_frames)
-                if locked_timing_frames > 0
+                if locked_timing_frames > 0 and name == "ref_video_0"
                 else _align_reference_video_frames(frames, target_frame_count)
             )
             for name, frames in grouped_inputs["ref_videos"].items()
@@ -2658,6 +2659,14 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
                         "it. Empty keeps whatever soundtrack each video has."
                     ),
                 ),
+                io.Video.Input(
+                    "locked_video",
+                    optional=True,
+                    tooltip=(
+                        "Internal: the locked driving video over the exact raw window. "
+                        "It replaces the first reference video, which the plan keeps for it."
+                    ),
+                ),
             ],
             outputs=[
                 io.Conditioning.Output("positive"),
@@ -2683,6 +2692,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
         native_locked_video: list[bool] | bool = False,
         ref_image_size: list[str] | str = "match",
         video_soundtracks: list[str] | str = "",
+        locked_video: list[Any] | Any | None = None,
     ) -> io.NodeOutput:
         selected_mode = str(_first_input(mode, "reference"))
         frame_modes = {"multi_frames", "last_frame"}
@@ -2701,6 +2711,9 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
         locked_timing_frames = int(_first_input(locked_video_timing_frames, 0))
         expanded_images = expand_image_inputs(images)
         video_inputs = flatten_media_inputs(videos)
+        locked_inputs = flatten_media_inputs(locked_video)
+        if locked_inputs:
+            video_inputs = [locked_inputs[0], *video_inputs[1:]]
         standalone_audios = _audio_inputs(audios)
         graph = GraphBuilder()
         try:

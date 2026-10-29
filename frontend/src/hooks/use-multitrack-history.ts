@@ -70,6 +70,21 @@ export function useMultiTrackHistory(data: TrackData, onChange: (value: TrackDat
     onChange(nextData)
   }, [onChange])
 
+  /** Apply metadata that is not an edit, such as probed media facts: no undo step, history kept. */
+  const amendChange = useCallback((update: (current: TrackData) => TrackData | null) => {
+    const nextData = update(dataRef.current)
+    if (!nextData) return
+    const currentSerialized = serializeTrackData(dataRef.current)
+    const nextSerialized = serializeTrackData(nextData)
+    if (nextSerialized === currentSerialized) return
+
+    expectedSerializedRef.current = nextSerialized
+    pendingLocalSerializedRef.current.add(nextSerialized)
+    staleLocalSerializedRef.current.add(currentSerialized)
+    dataRef.current = nextData
+    onChange(nextData)
+  }, [onChange])
+
   const undo = useCallback(() => {
     setHistory((current) => {
       const previous = current.past.at(-1)
@@ -116,6 +131,7 @@ export function useMultiTrackHistory(data: TrackData, onChange: (value: TrackDat
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
     commitChange,
+    amendChange,
     undo,
     redo,
   }

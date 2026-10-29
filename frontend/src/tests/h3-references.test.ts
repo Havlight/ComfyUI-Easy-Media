@@ -84,13 +84,37 @@ describe('H3 reference slots', () => {
     ])
   })
 
-  it('leaves other videos unused while a locked video drives the task', () => {
+  it('puts a locked video first and lets other videos follow up to three', () => {
     const tracks = [
       track('lv', 'video', [clip('lv-1', 0, 100, 'video')], { audio_locked: true }),
       track('cam', 'video', [clip('cam-1', 0, 100, 'video')]),
     ]
-    const slots = h3TaskReferenceSlots(tracks, task({ videos: [{ id: 'v', source_type: 'input', file_path: 'clip.mp4' }] }), null)
-    expect(statuses(slots.video)).toEqual([['locked:lv', 'active'], ['track:cam', 'locked'], ['upload:v', 'locked']])
+    const slots = h3TaskReferenceSlots(tracks, task({ videos: [
+      { id: 'v', source_type: 'input', file_path: 'clip.mp4' },
+      { id: 'w', source_type: 'input', file_path: 'more.mp4' },
+    ] }), null)
+    expect(statuses(slots.video)).toEqual([
+      ['locked:lv', 'active'], ['track:cam', 'active'], ['upload:v', 'active'], ['upload:w', 'over_limit'],
+    ])
+  })
+
+  it('lists excluded timeline audio last with its reason and keeps the reason once included', () => {
+    const tracks = [
+      track('song', 'audio', [clip('song-1', 0, 100, 'audio')], { audio_locked: true }),
+      track('quiet', 'audio', [clip('quiet-1', 0, 100, 'audio')], { muted: true }),
+      track('bed', 'audio', [clip('bed-1', 0, 100, 'audio')]),
+    ]
+    const rows = (slots: ReturnType<typeof h3TaskReferenceSlots>['audio']) => slots.map((slot) => [slot.key, slot.status, slot.reason])
+
+    expect(rows(h3TaskReferenceSlots(tracks, task({}), null).audio)).toEqual([
+      ['track:bed', 'active', undefined], ['track:song', 'excluded', 'audio_locked'], ['track:quiet', 'excluded', 'track_muted'],
+    ])
+    const included = h3TaskReferenceSlots(tracks, task({
+      audios: [{ id: 'p', source_type: 'track', track_id: 'song', muted: false }],
+    }), null)
+    expect(rows(included.audio)).toEqual([
+      ['track:bed', 'active', undefined], ['track:song', 'active', 'audio_locked'], ['track:quiet', 'excluded', 'track_muted'],
+    ])
   })
 
   it('reads the task lists only in ref and edit tasks', () => {

@@ -16,8 +16,8 @@ def _content_fields(value: Any) -> Any:
         return [_content_fields(item) for item in value]
     if isinstance(value, dict):
         return {key: _content_fields(item) for key, item in value.items()
-                if key not in {'id', 'name', 'color', 'thumbnail', 'selected', 'locked',
-                               'media_index', 'shared_media_index', 'shared_reference_copy', 'volume'}}
+                if key not in {'id', 'name', 'color', 'thumbnail', 'selected', 'locked', 'media_index',
+                               'shared_media_index', 'shared_reference_copy', 'volume', 'has_audio'}}
     return value
 
 

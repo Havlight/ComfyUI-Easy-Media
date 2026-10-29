@@ -1126,7 +1126,9 @@ describe('TaskSegmentEditor', () => {
     expect(screen.getByTestId('task-media-index-upload:clip').textContent).toBe('Video 2')
     activateTab('Audio 2/3')
     // Both video soundtracks come first, then the voice track and the uploaded line.
-    expect(screen.getByTestId('task-media-soundtracks').textContent).toContain('Audio 2 ← Video 2 soundtrack · clip.mp4')
+    expect(screen.getByTestId('task-media-index-soundtrack:track:video-track').textContent).toBe('Audio 1')
+    expect(screen.getByTestId('task-media-soundtrack:upload:clip').textContent).toContain('Video 2 · clip.mp4')
+    expect(screen.getByTestId('task-media-index-soundtrack:upload:clip').textContent).toBe('Audio 2')
     expect(screen.getByTestId('task-media-index-track:audio-track').textContent).toBe('Audio 3')
     expect(screen.getByTestId('task-media-index-upload:line').textContent).toBe('Audio 4')
     expect(screen.getByTestId('task-media-upload:line').textContent).toContain('Whole clip, up to 15s')
@@ -1160,6 +1162,74 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
       line, { id: expect.any(String), source_type: 'track', track_id: 'audio-track' },
     ] })
+  })
+
+  it('lists excluded timeline audio with its reason and includes it for this task only', () => {
+    const onContentChange = vi.fn()
+    const audio = (id: string) => ({ ...videoSegment(0, 3), id, content: { media_type: 'audio' as const, file_path: `${id}.wav` } })
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[
+          mediaTrack('audio', [audio('bed')]),
+          { ...mediaTrack('audio', [audio('song')]), id: 'song-track', name: 'Song', audio_locked: true },
+        ]}
+        onContentChange={onContentChange}
+      />,
+    )
+    activateTab('Audio 1/3')
+
+    const song = screen.getByTestId('task-media-track:song-track')
+    expect(song.dataset.status).toBe('excluded')
+    expect(song.textContent).toContain('Locked: generation audio')
+    fireEvent.click(screen.getByTestId('task-media-muted-track:song-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
+      { id: expect.any(String), source_type: 'track', track_id: 'audio-track' },
+      { id: expect.any(String), source_type: 'track', track_id: 'song-track', muted: false },
+    ] })
+  })
+
+  it('turns a video soundtrack off from the audio tab and shows silent videos without one', () => {
+    const onContentChange = vi.fn()
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      videos: [{ id: 'quiet', source_type: 'input' as const, file_path: 'quiet.mp4', file_name: 'quiet.mp4', has_audio: false }] } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[mediaTrack('video', [videoSegment(0, 3)])]}
+        onContentChange={onContentChange}
+      />,
+    )
+    activateTab('Audio 0/3')
+
+    expect(screen.getByTestId('task-media-index-soundtrack:track:video-track').textContent).toBe('Audio 1')
+    expect(screen.getByTestId('task-media-soundtrack:upload:quiet').textContent).toContain('No audio track')
+    fireEvent.click(screen.getByTestId('task-media-soundtrack-soundtrack:track:video-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ videos: [
+      { id: expect.any(String), source_type: 'track', track_id: 'video-track', soundtrack: false },
+      segment.content.videos[0],
+    ] })
+  })
+
+  it('keeps adding videos after a locked video, which stays first', () => {
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      videos: [{ id: 'clip', source_type: 'input' as const, file_path: 'clip.mp4' }] } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[{ ...mediaTrack('video', [videoSegment(0, 3)]), audio_locked: true }]}
+        onContentChange={vi.fn()}
+      />,
+    )
+    activateTab('Videos 2/3')
+
+    expect(screen.getByTestId('task-media-index-locked:video-track').textContent).toBe('Video 1')
+    expect(screen.getByTestId('task-media-index-upload:clip').textContent).toBe('Video 2')
+    expect(screen.getByRole('button', { name: 'Add video' })).not.toBeNull()
   })
 
   it('shares and deletes an uploaded reference across tasks', () => {

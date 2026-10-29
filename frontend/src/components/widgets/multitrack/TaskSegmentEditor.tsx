@@ -84,7 +84,7 @@ import {
   uploadTaskImageFile,
 } from '@/lib/task-image-utils'
 import {
-  canEnableSharedTaskMedia,
+  canShareTaskMedia,
   sharedTaskMediaUpdates,
   taskMediaField,
   taskMediaFromContent,
@@ -719,7 +719,7 @@ export function TaskSegmentEditor({
 
   function handleSharedMediaChange(mediaType: H3ReferenceMediaType, item: MultiTrackTaskMedia, enabled: boolean) {
     const field = taskMediaField(mediaType)
-    if (enabled && !canEnableSharedTaskMedia(editableSegments, field, item)) return
+    if (enabled && !canShareTaskMedia(item)) return
     const updates = sharedTaskMediaUpdates(editableSegments, field, item, enabled)
     if (onTrackSegmentsContentChange) {
       onTrackSegmentsContentChange(updates.map((update) => ({
@@ -923,11 +923,10 @@ export function TaskSegmentEditor({
                 key={referenceTab}
                 mediaType={referenceTab}
                 slots={referenceSlots}
-                items={taskMediaFromContent(segment.content[taskMediaField(referenceTab)])}
+                items={{ video: taskMediaFromContent(segment.content.videos), audio: taskMediaFromContent(segment.content.audios) }}
                 mediaTracks={mediaTracks}
                 frameRate={frameRate}
-                canShare={(item) => canEnableSharedTaskMedia(editableSegments, taskMediaField(referenceTab), item)}
-                onItemsChange={(items) => handleTaskMediaChange(referenceTab, items)}
+                onItemsChange={handleTaskMediaChange}
                 onSharedChange={(item, enabled) => handleSharedMediaChange(referenceTab, item, enabled)}
                 onDeleteItem={(item) => handleDeleteMedia(referenceTab, item)}
               />
