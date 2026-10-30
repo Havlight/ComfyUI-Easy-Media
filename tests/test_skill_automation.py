@@ -1,8 +1,10 @@
-"""The skill's automation scripts against a fake ComfyUI: plan conversion, probing, waiting, review."""
+"""The skill's automation scripts against a fake ComfyUI and page: tabs, plans, runs, probing, review."""
 
 import asyncio
+import hashlib
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from aiohttp.test_utils import TestClient, TestServer
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/easy-media-multitrack-workflow/scripts"
 TEMPLATE = ROOT / "skills/easy-media-multitrack-workflow/assets/templates/v1.3.0-blank-workflow.json"
+TAB = "workflows/mv.json"
 
 
 def _load(name: str, path: Path):
@@ -23,6 +26,7 @@ def _load(name: str, path: Path):
 
 
 submissions = _load("workflow_submission_for_skill", ROOT / "utils/workflow_submission.py")
+records = _load("agent_records_for_skill", ROOT / "utils/agent_records.py")
 
 
 def converted_track_data() -> dict:
@@ -39,6 +43,70 @@ def converted_track_data() -> dict:
     return data
 
 
+CONVERSION = {"track_data": converted_track_data(), "errors": [], "warnings": ["Task 2: Timing adjusted."], "tasks": [
+    {"index": 1, "id": "s01", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 1, "videos": 0, "audios": 0,
+     "labels": {"<Picture 1>": "first frame: alice.png"}},
+    {"index": 2, "id": "s02", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 0, "videos": 0, "audios": 0},
+], "tracks": []}
+
+
+class FakePage:
+    """A ComfyUI page with one open tab, doing what the frontend bridge does with each job."""
+
+    def __init__(self, workflow: dict):
+        self.workflow = workflow
+        self.jobs: list[dict] = []
+
+    def _node(self, node_type: str) -> dict:
+        return next(node for node in self.workflow["nodes"] if node["type"] == node_type)
+
+    def plan(self) -> dict:
+        """The plan the tab's Editor exports (reduced to ids and prompts)."""
+        data = json.loads(self._node("easy multiTrackEditor")["widgets_values"][4])
+        return {"format": "easy-media-h3-plan", "version": 1, "tasks": [
+            {"id": segment["id"], "prompt": segment["content"].get("user_prompt", "")} for segment in data["tracks"][0]["segments"]]}
+
+    def fingerprint(self) -> str:
+        project = self._node("easy multitrackProject")["widgets_values"]
+        parts = [self._node("easy multiTrackEditor")["widgets_values"][4], project[0], project[2], project[3]]
+        return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
+
+    def answer(self, job: dict) -> dict:
+        kind = job.get("kind", "workflow")
+        if kind == "workflow":
+            self.workflow = job["workflow"]
+            return {"status": "loaded", "tab": TAB}
+        if kind == "tabs":
+            tabs = [{"key": TAB, "name": "mv", "active": True, "modified": False, "temporary": False}]
+            if not job.get("tab"):
+                return {"status": "read", "tabs": tabs}
+            return {"status": "read", "tabs": tabs, "tab": {"key": TAB, "name": "mv", "workflow": json.loads(json.dumps(self.workflow)),
+                                                            "fingerprint": self.fingerprint(), "plans": {"14": self.plan()}}}
+        if kind == "plan":
+            return {"status": "converted", "conversion": CONVERSION}
+        if job["expected"] and job["expected"] != self.fingerprint():
+            return {"status": "failed", "error": "The tab changed after it was read; read it again"}
+        result: dict = {"status": "applied"}
+        if job.get("changes"):
+            changes = job["changes"]
+            self._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(changes["track_data"])
+            project = self._node("easy multitrackProject")["widgets_values"]
+            for name, index in (("project_name", 0), ("segment_start_number", 2), ("segment_count", 3)):
+                project[index] = changes["project"][name]
+            result["tab_plan"] = self.plan()
+        return {"status": "queued", "prompt_id": "p1"} if job["queue"] else result
+
+    async def serve(self, client: TestClient, jobs: int) -> None:
+        body = {"client_id": "page-1", "session_id": "socket-1"}
+        while len(self.jobs) < jobs:
+            job = (await (await client.post("/easy-media/workflow/poll", json=body)).json())["job"]
+            if job:
+                self.jobs.append(job)
+                await client.post(f'/easy-media/workflow/submissions/{job["request_id"]}/result',
+                                  json={"claim_token": job["claim_token"], **self.answer(job)})
+            await asyncio.sleep(0.01)
+
+
 class FakeComfy:
     """The routes the scripts call, recording what they receive."""
 
@@ -46,13 +114,13 @@ class FakeComfy:
         self.server_files = {"C:/mv/alice.png"}
         self.uploads: list[tuple[str, str, bytes]] = []
         self.status_requests: list[dict] = []
-        self.converted_plans: list[dict] = []
-        self.history: dict = {}
+        self.records = tmp_path / "records"
         self.tmp_path = tmp_path
 
     def routes(self) -> web.RouteTableDef:
         routes = web.RouteTableDef()
         submissions.register_workflow_routes(routes, lambda _: True)
+        records.register_record_routes(routes, lambda: self.records, lambda name: re.sub(r"[^A-Za-z0-9_-]", "_", str(name)))
 
         @routes.post("/easy-media/plan/resolve-media")
         async def resolve(request):
@@ -93,6 +161,11 @@ class FakeComfy:
                 {"id": "s02", "index": 1, "file_path": "easy_media/projects/mv/s02.mp4"},
             ]})
 
+        @routes.get("/history/p1")
+        async def history(_request):
+            return web.json_response({"p1": {"status": {"status_str": "success", "completed": True}, "outputs": {
+                "17": {"gifs": [{"filename": "mv.mp4", "subfolder": "easy_media/projects/mv", "type": "output"}]}}}})
+
         @routes.post("/easy-media/review/contact-sheet")
         async def contact_sheet(request):
             items = (await request.json())["items"]
@@ -105,17 +178,8 @@ class FakeComfy:
 
         return routes
 
-    async def browser(self, client: TestClient, conversion: dict) -> None:
-        """A ComfyUI page that converts the first plan it is given."""
-        body = {"client_id": "page-1", "session_id": "socket-1"}
-        while True:
-            job = (await (await client.post("/easy-media/workflow/poll", json=body)).json())["job"]
-            if job:
-                self.converted_plans.append(job["plan"])
-                await client.post(f'/easy-media/workflow/submissions/{job["request_id"]}/result',
-                                  json={"claim_token": job["claim_token"], "status": "converted", "conversion": conversion})
-                return
-            await asyncio.sleep(0.01)
+    def record(self, project: str, path: str) -> object:
+        return json.loads((self.records / project / path).read_text(encoding="utf-8"))
 
 
 async def run_script(*args: str) -> tuple[int, str, str]:
@@ -125,36 +189,47 @@ async def run_script(*args: str) -> tuple[int, str, str]:
     return process.returncode, stdout.decode("utf-8"), stderr.decode("utf-8")
 
 
-def test_convert_places_files_converts_on_the_page_and_starts_after_saved_tasks(tmp_path):
-    fake = FakeComfy(tmp_path)
-    song = tmp_path / "song.wav"
-    song.write_bytes(b"wav-bytes")
-    plan = {"format": "easy-media-h3-plan", "version": 1, "tasks": [
-        {"id": "s01", "seconds": 5, "images": ["C:/mv/alice.png"]},
-        {"id": "s02", "seconds": 5},
-    ], "tracks": [{"type": "audio", "audio_locked": True, "clips": [{"file": str(song), "at": 1}]}]}
-    plan_path = tmp_path / "plan.json"
-    plan_path.write_text(json.dumps(plan), encoding="utf-8")
-    conversion = {"track_data": converted_track_data(), "errors": [], "warnings": ["Task 2: Timing adjusted."], "tasks": [
-        {"index": 1, "id": "s01", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 1, "videos": 0, "audios": 0,
-         "labels": {"<Picture 1>": "first frame: alice.png"}},
-        {"index": 2, "id": "s02", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 0, "videos": 0, "audios": 0},
-    ], "tracks": []}
-
+def with_comfy(fake: FakeComfy, page: FakePage, jobs: int, *script: str) -> tuple[int, str, str]:
+    """Run a script while the page answers the given number of jobs."""
     async def scenario():
         app = web.Application()
         app.add_routes(fake.routes())
         async with TestClient(TestServer(app)) as client:
             await client.post("/easy-media/workflow/poll", json={"client_id": "page-1", "session_id": "socket-1"})
-            script = run_script(str(SCRIPTS / "plan_workflow.py"), "convert", str(TEMPLATE), str(plan_path),
-                                "--project-name", "mv-alice", "--url", str(client.make_url("")))
-            return (await asyncio.wait_for(asyncio.gather(script, fake.browser(client, conversion)), timeout=30))[0]
+            run = run_script(*script, "--url", str(client.make_url("")))
+            if not jobs:
+                return await asyncio.wait_for(run, timeout=30)
+            return (await asyncio.wait_for(asyncio.gather(run, page.serve(client, jobs)), timeout=30))[0]
+    return asyncio.run(scenario())
 
-    code, stdout, stderr = asyncio.run(scenario())
+
+def template_page() -> FakePage:
+    return FakePage(json.loads(TEMPLATE.read_text(encoding="utf-8")))
+
+
+def write_plan(tmp_path: Path, plan: dict) -> Path:
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    return path
+
+
+def test_apply_converts_on_the_page_and_sets_the_tab_from_the_first_task_to_run(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    song = tmp_path / "song.wav"
+    song.write_bytes(b"wav-bytes")
+    plan_path = write_plan(tmp_path, {"format": "easy-media-h3-plan", "version": 1, "tasks": [
+        {"id": "s01", "seconds": 5, "images": ["C:/mv/alice.png"]},
+        {"id": "s02", "seconds": 5},
+    ], "tracks": [{"type": "audio", "audio_locked": True, "clips": [{"file": str(song), "at": 1}]}]})
+
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv-alice")
     assert code == 0, stderr
     report = json.loads(stdout)
+    read, convert, apply = page.jobs
+    assert read["kind"] == "tabs" and read["tab"] == TAB
     # The server could read alice.png itself; song.wav only exists where the agent runs.
-    sent = fake.converted_plans[0]
+    sent = convert["plan"]
     assert sent["tasks"][0]["images"] == [{"input": "easy_media/imports/feed/alice.png"}]
     [(subfolder, name, data)] = fake.uploads
     assert subfolder.startswith("easy_media/imports/") and name == "song.wav" and data == b"wav-bytes"
@@ -166,30 +241,74 @@ def test_convert_places_files_converts_on_the_page_and_starts_after_saved_tasks(
     assert [task["labels"] for task in report["tasks"]] == [{"<Picture 1>": "first frame: alice.png"}, {}]
     assert fake.status_requests[0]["project_name"] == "mv-alice"
     assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single", "first_pass_only": False}
-    workflow = json.loads((tmp_path / "plan.workflow.json").read_text(encoding="utf-8"))
-    project = next(node for node in workflow["nodes"] if node["type"] == "easy multitrackProject")
-    editor = next(node for node in workflow["nodes"] if node["type"] == "easy multiTrackEditor")
-    assert project["widgets_values"][:4] == ["mv-alice", "override", 2, -1]
-    assert [task["id"] for task in json.loads(editor["widgets_values"][4])["tracks"][0]["segments"]] == ["s01", "s02"]
+    # The tab changed only where the agent writes, after checking nobody edited it meanwhile.
+    assert apply["kind"] == "apply" and apply["queue"] is False and apply["expected"] == template_page().fingerprint()
+    assert apply["changes"]["project"] == {"project_name": "mv-alice", "segment_start_number": 2, "segment_count": -1}
+    assert [task["id"] for task in apply["changes"]["track_data"]["tracks"][0]["segments"]] == ["s01", "s02"]
+    assert fake.record("mv-alice", "tab-plan.json") == page.plan()
+    assert not list(tmp_path.glob("*.workflow.json"))
 
 
-def test_convert_reports_plan_errors_without_writing_a_workflow(tmp_path):
-    fake = FakeComfy(tmp_path)
-    plan_path = tmp_path / "plan.json"
-    plan_path.write_text(json.dumps({"version": 1, "tasks": [{"seconds": 5, "images": ["D:/nowhere.png"]}]}), encoding="utf-8")
+def test_apply_stops_when_a_person_edited_the_tab_since_the_last_apply(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    editor = page._node("easy multiTrackEditor")
+    editor["widgets_values"][4] = json.dumps(converted_track_data())
+    baseline = page.plan()
+    (fake.records / "mv-alice").mkdir(parents=True)
+    (fake.records / "mv-alice/tab-plan.json").write_text(json.dumps(baseline), encoding="utf-8")
+    data = converted_track_data()
+    data["tracks"][0]["segments"][1]["content"]["user_prompt"] = "Two, as the person rewrote it"
+    editor["widgets_values"][4] = json.dumps(data)
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}, {"id": "s02", "seconds": 5}]})
 
-    async def scenario():
-        app = web.Application()
-        app.add_routes(fake.routes())
-        async with TestClient(TestServer(app)) as client:
-            await client.post("/easy-media/workflow/poll", json={"client_id": "page-1", "session_id": "socket-1"})
-            return await run_script(str(SCRIPTS / "plan_workflow.py"), "convert", str(TEMPLATE), str(plan_path),
-                                    "--project-name", "mv", "--url", str(client.make_url("")))
+    code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv-alice")
+    assert code == 2, stderr
+    assert json.loads(stdout)["tab_edits"] == ["s02: prompt"]
+    assert [job["kind"] for job in page.jobs] == ["tabs"]
 
-    code, stdout, stderr = asyncio.run(scenario())
+
+def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    page._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(converted_track_data())
+    out = tmp_path / "current.json"
+    code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "read", "--tab", TAB, "-o", str(out))
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    assert report["project"]["project_name"] == "" and report["editor"]["format"] == "MiniMax"
+    assert [task["id"] for task in report["tasks"]] == ["s01", "s02"]
+    # No baseline yet: the agent has not applied a plan to this project.
+    assert report["tab_edits"] is None
+    assert json.loads(out.read_text(encoding="utf-8")) == page.plan()
+
+
+def test_apply_reports_plan_errors_without_touching_the_tab(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"seconds": 5, "images": ["D:/nowhere.png"]}]})
+    code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv")
     assert code == 2, stderr
     assert json.loads(stdout) == {"errors": ["task 1 images: D:/nowhere.png: D:/nowhere.png was not found"]}
-    assert not (tmp_path / "plan.workflow.json").exists()
+    assert [job["kind"] for job in page.jobs] == ["tabs"]
+
+
+def test_running_a_tab_records_the_run_and_how_it_ended(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    page._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(converted_track_data())
+    page._node("easy multitrackProject")["widgets_values"][:4] = ["mv-alice", "override", 2, -1]
+    code, stdout, stderr = with_comfy(fake, page, 2, str(SCRIPTS / "submit_workflow.py"), "--tab", TAB, "--until-done")
+    assert code == 0, stderr
+    result = json.loads(stdout)
+    assert result["status"] == "queued" and result["generation"]["state"] == "success"
+    assert result["record"] == {"project_name": "mv-alice", "run": 1}
+    read, run = page.jobs
+    assert run["kind"] == "apply" and run["queue"] is True and run["changes"] is None
+    [entry] = fake.record("mv-alice", "history.json")
+    assert entry["run"] == 1 and entry["prompt_id"] == "p1" and entry["state"] == "success"
+    assert (entry["start"], entry["count"], entry["plan"]) == (2, -1, "plans/run-001.json")
+    assert entry["videos"] == {"s01": "easy_media/projects/mv/s01.mp4", "s02": "easy_media/projects/mv/s02.mp4"}
+    assert entry["resolution"]["resolution"] == "width x height (megapixels)"
+    assert fake.record("mv-alice", "plans/run-001.json") == page.plan()
 
 
 def test_probe_reads_lengths_and_uploads_what_the_server_cannot_see(tmp_path):
@@ -222,14 +341,19 @@ def test_review_is_off_unless_configured_or_asked_for(tmp_path):
             off = await run_script(str(SCRIPTS / "review_frames.py"), "--project", "mv", "--config", str(config), "--url", url)
             asked = await run_script(str(SCRIPTS / "review_frames.py"), "--project", "mv", "--tasks", "s02", "--user-asked",
                                      "--out", str(tmp_path / "sheets"), "--config", str(config), "--url", url)
-            return off, asked
+            kept = await run_script(str(SCRIPTS / "review_frames.py"), "--project", "mv", "--tasks", "s01", "--user-asked",
+                                    "--config", str(config), "--url", url)
+            return off, asked, kept
 
-    (off_code, _, off_err), (code, stdout, stderr) = asyncio.run(scenario())
+    (off_code, _, off_err), (code, stdout, stderr), (kept_code, kept_out, kept_err) = asyncio.run(scenario())
     assert off_code == 2 and "Frame review is off" in off_err
     assert code == 0, stderr
     [sheet] = json.loads(stdout)
     assert sheet["task"] == "s02" and sheet["number"] == 2
     assert Path(sheet["image"]).read_bytes() == b"jpeg:s02.jpg"
+    # Without --out, sheets go to the project's agent records when this machine can reach them.
+    assert kept_code == 0, kept_err
+    assert Path(json.loads(kept_out)[0]["image"]) == fake.records / "mv/review/01-s01.jpg"
 
 
 @pytest.fixture

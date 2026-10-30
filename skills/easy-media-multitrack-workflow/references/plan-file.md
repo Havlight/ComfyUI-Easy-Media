@@ -46,7 +46,7 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
 - `mode`：`default`、`ref`、`edit`、`l2v`、`passthrough`。
 - `continuity`：`shot`、`context`、`context_drift`；第一段只能是 `shot`。接着上一段时用 `context_drift`，`context` 只在用户要求时用。
 - `seam`（只用于 `context_drift`）：接缝的处理。新的 `context_drift` 任务不写时用 `"soft"`；用户要求接缝贴紧上一段时写 `"clean"`。导出文件里若是其他写法，保持原样。
-- `prompt`：写入目前选用的提示词，按 [writing.md](writing.md) 用对应 mode 的 H3 指南写。用 `<Picture N>`、`<Video N>`、`<Audio N>` 引用素材；编号规则与 Editor 相同，转换报告的 `labels` 列出每个标签对应的素材，预览会提醒对不上的标签。
+- `prompt`：写入目前选用的提示词，按 [writing.md](writing.md) 用对应 mode 的 H3 指南写。用 `<Picture N>`、`<Video N>`、`<Audio N>` 引用素材；编号规则与 Editor 相同，`apply` 报告的 `labels` 列出每个标签对应的素材，预览会提醒对不上的标签。
 - 导出文件里的 `ref_image_size` 保持原样。
 
 ## 参考素材
@@ -92,7 +92,7 @@ agent 可以做的只有这些：
 
 ## 建议流程
 
-agent 自动转换、执行与检查的流程见 [automation.md](automation.md)。在 Editor 画面上手动使用时：
+agent 读分页、套用、执行与检查的流程见 [automation.md](automation.md)。在 Editor 画面上手动使用时：
 
 1. 在 Editor 按「导出规划」，以导出的文件为基础修改，保留既有任务与片段的 `id`，已存的生成结果才会沿用。
 2. 按「导入规划」选文件，检查预览：任务的变更、秒数、参考数量，影音轨的片段，以及“已存结果需要重新生成”的提示。

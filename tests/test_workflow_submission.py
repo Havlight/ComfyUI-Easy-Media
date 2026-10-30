@@ -146,10 +146,60 @@ def test_timeout_never_redelivers_and_late_result_can_resolve_unknown(monkeypatc
     assert store.get("second")["status"] == "failed"
 
 
+def apply_payload(**kwargs):
+    return {"request_id": "apply-1", "tab": "workflows/mv.json", "expected": "abc", "queue": False,
+            "changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
+                        "project": {"project_name": "mv", "segment_start_number": 2, "segment_count": -1}}, **kwargs}
+
+
+def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
+    now = module.time.time()
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    store.read_tabs({"request_id": "tabs-1"})
+    job = register(store)
+    assert job["kind"] == "tabs" and job["tab"] is None
+    tab = {"key": "workflows/mv.json", "workflow": {"nodes": []}, "fingerprint": "abc", "plans": {}}
+    with pytest.raises(ValueError):
+        store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read"})
+    result = store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read", "tabs": [], "tab": tab})
+    assert result["tab"] == tab
+    store.apply(apply_payload())
+    job = register(store)
+    assert job["changes"]["project"]["project_name"] == "mv" and "changes" not in store.get("apply-1")
+    result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied", "tab_plan": {"tasks": []}})
+    assert result == {**result, "status": "applied", "tab_plan": {"tasks": []}}
+    # Changing a tab can be retried; running it might already have happened.
+    store.apply(apply_payload(request_id="apply-2"))
+    register(store)
+    now += 121
+    assert store.get("apply-2")["status"] == "failed"
+    store.apply(apply_payload(request_id="apply-3", queue=True, changes=None))
+    register(store)
+    now += 121
+    assert store.get("apply-3")["status"] == "unknown"
+
+
+@pytest.mark.parametrize("change", [
+    {"tab": ""}, {"tab": None}, {"expected": 3}, {"queue": "yes"}, {"changes": None},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": {}}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"seed": 1}, "project_id": 15}},
+    {"changes": {"editor_id": True, "track_data": {"tracks": []}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"project_name": "mv"}}},
+])
+def test_invalid_tab_applies_do_not_create_jobs(change):
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    with pytest.raises(ValueError):
+        store.apply(apply_payload(**change))
+    assert not store.jobs
+
+
 @pytest.mark.parametrize("change", [
     {"workflow": {"1": {"class_type": "Test", "inputs": {}}}},
     {"workflow": {"nodes": [1], "links": []}},
-    {"mode": "api"}, {"auto_queue": "false"}, {"name": "../workflow"},
+    {"auto_queue": "false"}, {"name": "../workflow"},
     {"request_id": "../escape"}, {"client_id": []},
 ])
 def test_invalid_submissions_do_not_create_jobs(change):
@@ -211,20 +261,20 @@ def test_skill_cli_submits_ui_json_and_can_query_without_resubmitting(tmp_path):
                     job = (await response.json())["job"]
                     if job:
                         assert job["workflow"] == payload()["workflow"]
-                        assert job["mode"] == "replace"
                         assert job["auto_queue"] is False
-                        await browser.post(f'/easy-media/workflow/submissions/{job["request_id"]}/result', json={"claim_token": job["claim_token"], "status": "loaded"})
+                        await browser.post(f'/easy-media/workflow/submissions/{job["request_id"]}/result',
+                                           json={"claim_token": job["claim_token"], "status": "loaded", "tab": "workflows/created-cli.json"})
                         return
                     await asyncio.sleep(0.01)
 
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(script), str(workflow_path), "--config", str(config_path),
-                "--no-queue", "--mode", "replace", "--request-id", "cli-request",
+                "--no-queue", "--request-id", "cli-request",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             (stdout, stderr), _ = await asyncio.wait_for(asyncio.gather(process.communicate(), receive()), timeout=10)
             assert process.returncode == 0
-            assert json.loads(stdout)["status"] == "loaded"
+            assert json.loads(stdout)["tab"] == "workflows/created-cli.json"
             assert b"request_id=cli-request" in stderr
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(script), "--url", base_url, "--status", "cli-request",

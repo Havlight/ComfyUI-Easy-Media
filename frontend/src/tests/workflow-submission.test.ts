@@ -28,7 +28,7 @@ function setup() {
     }),
   }
   const job: WorkflowSubmission = {
-    request_id: 'request-1', claim_token: 'token', mode: 'new_tab', name: 'Demo', auto_queue: true,
+    request_id: 'request-1', claim_token: 'token', name: 'Demo', auto_queue: true,
     workflow: { id: 'source', nodes: [], links: [], version: 0.4 },
   }
   return { app, nativeApp: app as unknown as ComfyApp, job, current }
@@ -47,7 +47,7 @@ describe('UI workflow submission', () => {
   it('opens the visible workflow before invoking native Run once and restores the observer', async () => {
     const { app, nativeApp, job } = setup()
     const original = app.api.queuePrompt
-    expect(await runWorkflowSubmission(nativeApp, job)).toEqual({ status: 'queued', prompt_id: 'prompt-1' })
+    expect(await runWorkflowSubmission(nativeApp, job)).toEqual({ status: 'queued', prompt_id: 'prompt-1', tab: 'workflows/original.json' })
     expect(app.loadGraphData).toHaveBeenCalledWith(expect.objectContaining({ nodes: [], links: [] }), true, true, 'Demo-request-1')
     expect(app.loadGraphData.mock.invocationCallOrder[0]).toBeLessThan(app.queuePrompt.mock.invocationCallOrder[0])
     expect(app.queuePrompt).toHaveBeenCalledExactlyOnceWith(0, 1)
@@ -55,10 +55,9 @@ describe('UI workflow submission', () => {
     expect(job.workflow.id).toBe('source')
   })
 
-  it('replaces the current tab without queueing when requested', async () => {
-    const { app, nativeApp, job, current } = setup()
-    expect(await runWorkflowSubmission(nativeApp, { ...job, mode: 'replace', auto_queue: false })).toEqual({ status: 'loaded' })
-    expect(app.loadGraphData).toHaveBeenCalledWith(expect.anything(), true, true, current)
+  it('opens a new tab without queueing when asked and says which tab it is', async () => {
+    const { app, nativeApp, job } = setup()
+    expect(await runWorkflowSubmission(nativeApp, { ...job, auto_queue: false })).toEqual({ status: 'loaded', tab: 'workflows/original.json' })
     expect(app.queuePrompt).not.toHaveBeenCalled()
   })
 
@@ -93,7 +92,7 @@ describe('UI workflow submission', () => {
     const { app, nativeApp, job } = setup()
     const queue = app.queuePrompt.getMockImplementation()!
     app.queuePrompt.mockImplementation(async () => { await queue(); throw new Error('Widget hook failed') })
-    expect(await runWorkflowSubmission(nativeApp, job)).toEqual({ status: 'queued', prompt_id: 'prompt-1' })
+    expect(await runWorkflowSubmission(nativeApp, job)).toMatchObject({ status: 'queued', prompt_id: 'prompt-1' })
   })
 
   it('reports unknown for a lost queue response and never retries execution', async () => {

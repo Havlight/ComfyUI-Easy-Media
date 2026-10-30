@@ -17,7 +17,7 @@ H3 的提示词有固定的写法。两份指南讲怎么写好**一段**；本�
 
 ## 标签与秒数
 
-转换报告的 `tasks[].labels` 列出每段每个标签对应的素材，提示词里的标签照它写：
+`apply` 报告的 `tasks[].labels` 列出每段每个标签对应的素材，提示词里的标签照它写：
 
 ```json
 { "<Picture 1>": "previous task's last frame", "<Picture 2>": "alice.png",

@@ -31,6 +31,16 @@ def review_enabled(config_path: Path | None) -> bool:
     return read_config_value("AGENT_FRAME_REVIEW", config_path) is True
 
 
+def default_folder(base_url: str, project: str) -> Path:
+    """The project's agent records folder when this machine can reach it, else ./review/PROJECT."""
+    try:
+        records = Path(request_json(base_url, f"/easy-media/agent/records?{urlencode({'project': project})}")["directory"])
+    except (RuntimeError, KeyError):
+        return Path("review") / project
+    # The records folder sits in ComfyUI's output/easy_media; another machine cannot write there.
+    return records / "review" if records.parents[1].is_dir() else Path("review") / project
+
+
 def download(base_url: str, item: dict, target: Path) -> None:
     query = urlencode({"filename": item["filename"], "subfolder": item["subfolder"], "type": item["type"]})
     try:
@@ -46,7 +56,8 @@ def main() -> int:
     parser.add_argument("--tasks", help="Comma-separated task ids; default every task with a video")
     parser.add_argument("--frames", type=int, default=4, help="Frames per sheet, 1-9")
     parser.add_argument("--width", type=int, default=1024, help="Sheet width in pixels, 256-2048")
-    parser.add_argument("--out", type=Path, help="Folder for the sheets; default ./review/PROJECT")
+    parser.add_argument("--out", type=Path, help="Folder for the sheets; default the project's agent records "
+                                                 "(output/easy_media/agent/PROJECT/review), or ./review/PROJECT on another machine")
     parser.add_argument("--user-asked", action="store_true", help="The user asked for this review")
     parser.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
     parser.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
@@ -67,7 +78,7 @@ def main() -> int:
         results = request_json(base_url, "/easy-media/review/contact-sheet", {
             "items": [{"file_path": clip["file_path"]} for clip in clips], "frames": args.frames, "width": args.width,
         }, timeout=300)["results"]
-        out = args.out or Path("review") / args.project
+        out = args.out or default_folder(base_url, args.project)
         out.mkdir(parents=True, exist_ok=True)
         sheets = []
         for clip, result in zip(clips, results):

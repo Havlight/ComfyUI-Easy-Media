@@ -11,24 +11,26 @@
 - 请求 `GET /object_info` 检查目标节点；素材必须上传到同一实例，见 [upload-api.md](upload-api.md)。
 - 接口沿用 ComfyUI 的访问权限，不提供独立认证；勿把未鉴权的 ComfyUI 暴露到公网。代理鉴权需使用已有授权凭据；脚本不接管浏览器登录。
 
-## 从 UI 打开并运行
+## 从 UI 运行
 
 在 skill 目录执行：
 
 ```bash
-python3 scripts/submit_workflow.py RESULT.json
+python3 scripts/submit_workflow.py --tab "workflows/MV.json"   # 运行开着的分页
+python3 scripts/submit_workflow.py RESULT.json                  # 把工作流文件开成新分页再运行
 ```
 
-脚本只提交带 `nodes`、`links`、布局和控件值的 **UI workflow JSON**。前端先加载到可见画布，再调用与“运行”按钮相同的原生入队入口，保留自定义控件和种子的提交钩子。不要手写 API prompt，也不要直接请求 `/prompt`。
+运行开着的分页时，页面切到那个分页、调用与“运行”按钮相同的原生入队入口，再切回用户原本看的分页；分页 key 由 `plan_workflow.py tabs` 列出。工作流文件只接受带 `nodes`、`links`、布局和控件值的 **UI workflow JSON**，开成新分页后同样原生入队。两种都保留自定义控件和种子的提交钩子。不要手写 API prompt，也不要直接请求 `/prompt`。
 
-- 默认 `--mode new_tab`，新建工作流 tab；`--mode replace` 替换当前 tab 的画布，不自动保存或覆盖磁盘文件。
-- `--no-queue` 只打开，不运行。默认自动运行，因此只有打开意图时必须带此参数。
+- `--tab` 运行前先读取分页，排队成功后把这次执行写进专案纪录（`history.json`、`plans/run-NNN.json`，见 [automation.md](automation.md)）；读取之后有人改了 Editor 或 Project 时页面拒绝运行。
+- 工作流文件总是开成新分页，不覆盖已开的分页，也不存档；`--no-queue` 只打开，不运行，结果附带新分页的 `tab`。
 - `--name 名称` 指定 tab 名称前缀；新 tab 附加请求 ID，避免与已打开流程重名。
 - `--clients` 列出在线页面；一个页面时可省略 `--client-id`，多个页面必须指定目标，不能选择第一个或广播。
 - `client_id` 是本接口为每个页面生成的 ID；`session_id` 是对应 ComfyUI WebSocket ID。同一个页面里的多个工作流 tab 不计为多个客户端。
 - `--request-id ID` 提供重试标识；脚本在 POST 前把它输出到 stderr。相同 ID 和相同参数只返回已有请求，不重复执行；相同 ID 更换参数会报错。
 - `--status ID` 查询已有请求，不再次提交。`--timeout` 仅控制等待浏览器回执的秒数，不代表生成时限，不取消已经提交的任务。
-- `--wait 秒数` 在入队后（或配合 `--status`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --wait 540` 继续等，不重新提交。
+- `--wait 秒数` 在入队后（或配合 `--status`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --project 名称 --wait 540` 继续等，不重新提交（`--project` 让结束时更新专案纪录）。
+- `--until-done` 不限时间等到结束，给能在背景执行指令、结束时通知的工具用；等待期间不必查询。
 
 提交开始后到返回 `queued` / `loaded` 前，不要在目标页面手动切换工作流或连续点击运行；冲突会停止自动提交并报告错误。
 
@@ -41,7 +43,6 @@ python3 scripts/submit_workflow.py RESULT.json
 ```json
 {
   "workflow": { "nodes": [], "links": [], "version": 0.4 },
-  "mode": "new_tab",
   "auto_queue": true,
   "name": "My workflow",
   "request_id": "unique-request-id",
@@ -49,7 +50,7 @@ python3 scripts/submit_workflow.py RESULT.json
 }
 ```
 
-这里的空图只展示格式，运行时必须替换成完整工作流。`workflow` 必填，其余字段可选；`mode` 默认 `new_tab`、`auto_queue` 默认 `true`。只有一个在线页面时可省略 `client_id`。
+这里的空图只展示格式，运行时必须替换成完整工作流。`workflow` 必填，其余字段可选；`auto_queue` 默认 `true`。工作流总是开成新分页，完成时附带新分页的 `tab`。只有一个在线页面时可省略 `client_id`。
 
 返回 `request_id`、目标 `client_id` 和初始 `status`。用 `GET /easy-media/workflow/submissions/{request_id}` 查询：
 
@@ -58,6 +59,8 @@ python3 scripts/submit_workflow.py RESULT.json
 | `pending` | 等待前端领取，尚未打开 |
 | `loading` | 已领取，正在加载或入队 |
 | `loaded` | 已打开，未要求入队 |
+| `read` | 分页已读取（`tabs` 请求） |
+| `applied` | 分页已修改，未要求入队（`apply` 请求） |
 | `queued` | 原生入队成功，附带 `prompt_id`；不代表生成完成 |
 | `failed` | 加载失败或尚未入队就停止，附带 `error` |
 | `unknown` | 执行结果未确认；可能已入队，先检查 queue/history，不能自动重跑 |
@@ -72,7 +75,37 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 { "track_data": { "tracks": [] }, "format": "MiniMax", "plan": { "version": 1, "tasks": [] }, "request_id": "...", "client_id": "..." }
 ```
 
-状态查询同上；完成时 `status` 为 `converted`，`conversion` 含 `track_data`（有错误时为 null）、`errors`、`warnings`、`tasks`、`tracks`。转换没有副作用，页面 120 秒内没完成时直接 `failed`，可以重试。一般用 `scripts/plan_workflow.py convert`，见 [automation.md](automation.md)。
+状态查询同上；完成时 `status` 为 `converted`，`conversion` 含 `track_data`（有错误时为 null）、`errors`、`warnings`、`tasks`、`tracks`。转换没有副作用，页面 120 秒内没完成时直接 `failed`，可以重试。一般用 `scripts/plan_workflow.py apply`，见 [automation.md](automation.md)。
+
+### 读取与修改分页
+
+`POST /easy-media/workflow/tabs` 读取页面开着的分页：
+
+```json
+{ "tab": "workflows/MV.json", "request_id": "...", "client_id": "..." }
+```
+
+`tab` 可省略，只列分页。完成时 `status` 为 `read`，`tabs` 列出每个分页的 `key`、`name`、`active`、`modified`、`temporary`；指定 `tab` 时另有 `tab`：`workflow`（含未存档的修改）、`fingerprint`、`plans`（每个 Editor 导出的规划，依节点 id）。
+
+`POST /easy-media/workflow/apply` 修改或运行一个分页：
+
+```json
+{
+  "tab": "workflows/MV.json",
+  "expected": "fingerprint-from-the-read",
+  "changes": {
+    "editor_id": 14, "track_data": { "tracks": [] },
+    "project_id": 15, "project": { "project_name": "mv", "segment_start_number": 1, "segment_count": -1 }
+  },
+  "queue": false
+}
+```
+
+页面切到该分页；`expected` 与目前不符时（读取后有人改了 Editor 或 Project）直接 `failed`。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied` 并附 `tab_plan`（修改后 Editor 导出的规划）。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
+
+### 专案纪录
+
+`GET /easy-media/agent/records?project=名称` 列出 `output/easy_media/agent/<名称>/` 的文件；加 `&path=README.md` 读一个文件（不存在时 `text` 为 null）。`POST /easy-media/agent/records`（`{"project", "path", "text"}`）写入一个文件。`path` 只能是 `README.md`、`history.json`、`tab-plan.json` 或 `plans/<名称>.json`，最大 4 MB。
 
 请求状态只保存在当前 ComfyUI 进程内：完成记录保留一小时；未领取请求 60 秒后失败，领取后超过 120 秒无回执变成 `unknown`。`unknown` 会阻止向同一页面再次自动提交；先检查队列和历史，确认后可刷新页面重新注册。重启或记录过期后不能依赖原 ID 去重。
 
@@ -90,4 +123,4 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 - 工作流通过 dry-run、write 后 inspect 和不变量检查。
 - 分辨率与 DynamicCombo 子字段一致；目标 task 范围、`project_save`、sampling 符合用户要求。
 - `audio_locked` 唯一且覆盖目标任务；`shared_reference` 指向预期的公用图片、音频或视频。
-- 媒体路径存在于当前 ComfyUI 实例；覆盖当前 tab 时用户已要求替换。
+- 媒体路径存在于当前 ComfyUI 实例；要修改的分页是用户指定的。

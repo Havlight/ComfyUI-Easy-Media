@@ -66,6 +66,7 @@ from .modules.asr.subtitle_recognition import (
 from .utils.plan_media import PlanMediaError, resolve_plan_media
 from .utils.review_frames import ReviewError, contact_sheet
 from .utils.speech import generate_voxcpm2_speech
+from .utils.agent_records import register_record_routes
 from .utils.workflow_submission import JOB_EVENT as WORKFLOW_JOB_EVENT, register_workflow_routes
 from .utils.video import (
     decode_multitrack_preview_frame,
@@ -88,6 +89,11 @@ register_workflow_routes(
     lambda session_id: session_id in PromptServer.instance.sockets,
     # Wake only the chosen page; a hidden tab's own polling may run once a minute.
     lambda session_id, data: PromptServer.instance.send_sync(WORKFLOW_JOB_EVENT, data, session_id),
+)
+register_record_routes(
+    PromptServer.instance.routes,
+    lambda: Path(folder_paths.get_output_directory()).resolve() / "easy_media" / "agent",
+    safe_h3_project_name,
 )
 
 
