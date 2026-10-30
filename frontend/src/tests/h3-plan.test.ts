@@ -217,6 +217,13 @@ describe('H3 plan files', () => {
     expect(codes(importPlan(current, dancePlan('a', { until: 'b' }, 'default')))).toContain('error:1:locked_video_mode')
   })
 
+  it('records the length of a clip placed with an end, so a restored plan matches its saved results', () => {
+    const plan = exportH3Plan(project())
+    expect(h3PlanMediaRequests(plan)).toContainEqual({ media_type: 'audio', input: 'song.wav', probe: true })
+    const restored = importPlan(otherWorkflow(), plan)
+    expect(restored.data!.tracks.find((track) => track.id === 'song')!.segments[0].content.duration).toBe(10)
+  })
+
   it('keeps a locked video sound as a reference only, and only on video tracks', () => {
     const current = project()
     const plan = dancePlan('a', { until: 'b' })

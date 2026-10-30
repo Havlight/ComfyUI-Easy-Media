@@ -491,10 +491,9 @@ export function h3PlanMediaRequests(plan: H3PlanFile): H3PlanMediaRequest[] {
     if (!reference || (track.type !== 'video' && track.type !== 'audio')) continue
     const request = mediaRequest(reference, track.type)
     if (!request) continue
-    const key = h3PlanMediaKey(request)
-    // Only a clip without an end needs the file's length.
-    const probe = clip.end === undefined || requests.get(key)?.probe === true
-    requests.set(key, probe ? { ...request, probe } : request)
+    // A new clip records its file's length as the Editor does, even with an end, so a plan
+    // restored into another tab matches the saved results generated from it.
+    requests.set(h3PlanMediaKey(request), { ...request, probe: true })
   }
   return [...requests.values()]
 }
