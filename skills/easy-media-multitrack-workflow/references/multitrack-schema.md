@@ -202,7 +202,7 @@ custom 示例：
 
 ## 音频锁定决策
 
-`audio_locked` 是 audio/video 轨道级字段。锁定 audio track 会沿用其音频；锁定 video track 会让生成画面遵循视频轨道时间线，并在没有锁定 audio track 时沿用视频原声。两种锁可以同时存在；此时 audio track 优先作为 `audio_lock` 的音频来源，video track 仍负责画面时间线。它与轨道的 `locked` 不同：`locked` 只禁止时间线编辑，不能代替 `audio_locked`。
+`audio_locked` 是 audio/video 轨道级字段。锁定 audio track 会沿用其音频；锁定 video track 会让生成画面遵循视频轨道时间线，并在没有锁定 audio track 时沿用视频原声。两种锁可以同时存在；此时 audio track 优先作为 `audio_lock` 的音频来源，video track 仍负责画面时间线。它与轨道的 `locked` 不同：`locked` 只禁止时间线编辑，不能代替 `audio_locked`。锁定的 video track 可设轨道级 `soundtrack: "reference"`：画面时间线照旧，原声仍作参考，但不沿用为输出音频（等于没有锁定音频）；不设时原声就是输出音频。
 
 ```json
 {

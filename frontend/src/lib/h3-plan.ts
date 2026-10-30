@@ -131,6 +131,8 @@ export interface H3PlanTrack {
   id?: string
   type: 'video' | 'audio'
   audio_locked?: boolean
+  /** A locked video's sound: "output" (the default) is the task's audio; "reference" is only heard. */
+  soundtrack?: 'output' | 'reference'
   muted?: boolean
   volume?: number
   clips: H3PlanClip[]
@@ -214,6 +216,8 @@ export interface H3PlanTrackRow {
   type: 'video' | 'audio'
   change: H3PlanChange
   audioLocked: boolean
+  /** Present when a locked video's sound is only referenced. */
+  soundtrack?: 'reference'
   muted: boolean
   clips: H3PlanClipSummary[]
 }
@@ -236,7 +240,7 @@ type ParsedReference =
 const SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot', 'track', 'previous_frame'] as const
 const CLIP_SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot'] as const
 const TASK_KEYS = new Set(['id', 'seconds', 'gap_before', 'mode', 'continuity', 'seam', 'ref_image_size', 'prompt', 'images', 'videos', 'audios'])
-const TRACK_KEYS = new Set(['id', 'type', 'audio_locked', 'muted', 'volume', 'clips'])
+const TRACK_KEYS = new Set(['id', 'type', 'audio_locked', 'soundtrack', 'muted', 'volume', 'clips'])
 const CLIP_KEYS = new Set([...CLIP_SOURCE_KEYS, 'id', 'at', 'until', 'start', 'end', 'from', 'volume', 'muted', 'shared'])
 const REFERENCE_FIELDS = [['images', 'image'], ['videos', 'video'], ['audios', 'audio']] as const
 const PROMPT_TAG = /<(Picture|Video|Audio) (\d+)>/g
@@ -346,6 +350,7 @@ function exportTrack(track: MultiTrack, fps: number): H3PlanTrack {
     id: track.id,
     type: track.type as H3PlanTrack['type'],
     ...(track.audio_locked === true ? { audio_locked: true } : {}),
+    ...(track.type === 'video' && track.soundtrack === 'reference' ? { soundtrack: 'reference' as const } : {}),
     ...(track.muted ? { muted: true } : {}),
     ...(track.volume_db ? { volume: track.volume_db } : {}),
     clips: [...track.segments].sort((a, b) => a.start_frame - b.start_frame).map((segment) => exportClip(segment, fps)),
@@ -813,6 +818,19 @@ function readVolume(value: unknown, context: ImportContext): number {
   return MULTITRACK_DEFAULT_VOLUME_DB
 }
 
+/** "reference" on a video track; "output", or nothing, keeps a locked video's sound as the task's audio. */
+function readSoundtrack(track: H3PlanTrack, context: ImportContext): 'reference' | undefined {
+  const value: unknown = track.soundtrack
+  if (value === undefined || value === 'output') return undefined
+  if (value === 'reference' && track.type === 'video') return 'reference'
+  issue(context, 'error', 'invalid_soundtrack')
+  return undefined
+}
+
+function withoutSoundtrack({ soundtrack: _soundtrack, ...track }: MultiTrack): Omit<MultiTrack, 'soundtrack'> {
+  return track
+}
+
 function readSeconds(value: unknown, field: string, context: ImportContext): number | undefined | null {
   if (value === undefined) return undefined
   if (typeof value === 'number' && Number.isFinite(value) && (field === 'from' || value >= 0)) return value
@@ -1021,13 +1039,16 @@ function buildMediaTracks(
       issue(context, 'error', 'invalid_list', { field: 'clips' })
       return
     }
+    const base = old ? withoutSoundtrack(old) : {
+      id: planTrack.id ?? uuid(), name: '', color: MULTITRACK_TRACK_COLORS[planTrack.type], solo: false, locked: false,
+    }
+    const soundtrack = readSoundtrack(planTrack, context)
     const track = {
-      ...(old ?? {
-        id: planTrack.id ?? uuid(), name: '', color: MULTITRACK_TRACK_COLORS[planTrack.type], solo: false, locked: false,
-      }),
+      ...base,
       type: planTrack.type,
       // A track is described in full: unwritten settings take their defaults.
       audio_locked: readFlag(planTrack.audio_locked, 'audio_locked', context),
+      ...(soundtrack ? { soundtrack } : {}),
       muted: readFlag(planTrack.muted, 'muted', context),
       volume_db: readVolume(planTrack.volume, context),
       segments: [] as MultiTrackSegment[],
@@ -1100,7 +1121,7 @@ function clipSummary(segment: MultiTrackSegment, fps: number): H3PlanClipSummary
 }
 
 function trackSignature(track: MultiTrack): string {
-  return JSON.stringify([track.audio_locked === true, track.muted, track.volume_db,
+  return JSON.stringify([track.audio_locked === true, track.soundtrack ?? 'output', track.muted, track.volume_db,
     [...track.segments].sort((a, b) => a.start_frame - b.start_frame)
       .map((segment) => [segment.id, segment.start_frame, segment.end_frame, segment.origin_start_frame ?? null, segment.content])])
 }
@@ -1110,7 +1131,8 @@ function trackRows(before: TrackData, after: TrackData): H3PlanTrackRow[] {
   const oldTracks = before.tracks.filter(isMediaTrack)
   const newTracks = after.tracks.filter(isMediaTrack)
   const row = (track: MultiTrack & { type: 'video' | 'audio' }, index: number, change: H3PlanChange): H3PlanTrackRow => ({
-    id: track.id, index, type: track.type, change, audioLocked: track.audio_locked === true, muted: track.muted,
+    id: track.id, index, type: track.type, change, audioLocked: track.audio_locked === true,
+    ...(track.soundtrack === 'reference' ? { soundtrack: 'reference' as const } : {}), muted: track.muted,
     clips: [...track.segments].sort((a, b) => a.start_frame - b.start_frame).map((segment) => clipSummary(segment, fps)),
   })
   return [

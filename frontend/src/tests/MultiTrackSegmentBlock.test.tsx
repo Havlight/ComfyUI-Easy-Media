@@ -7,6 +7,11 @@ import type { MultiTrackSegment, MultiTrackType } from '@/types/multitrack'
 
 vi.mock('@/components/ui/context-menu', () => ({
   ContextMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
+  ContextMenuCheckboxItem: ({ children, checked, onCheckedChange }: {
+    children: ReactNode; checked?: boolean; onCheckedChange?: (checked: boolean) => void
+  }) => (
+    <button type="button" role="menuitemcheckbox" aria-checked={checked} onClick={() => onCheckedChange?.(!checked)}>{children}</button>
+  ),
   ContextMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   ContextMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ContextMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
@@ -172,6 +177,40 @@ describe('MultiTrackSegmentBlock context menu', () => {
     fireEvent.click(screen.getByTestId('video-segment-audio-lock'))
     expect(onAudioLockToggle).toHaveBeenCalledWith(true)
     expect(screen.getByTestId('video-shared-reference').className).toContain('right-8')
+    // The sound-as-reference choice belongs to a locked video only.
+    expect(screen.queryByRole('menuitemcheckbox')).toBeNull()
+  })
+
+  it('lets a locked video keep its sound as a reference only', () => {
+    const onSoundtrackReferenceToggle = vi.fn()
+    render(
+      <TooltipProvider>
+        <MultiTrackSegmentBlock
+          trackType="video"
+          segmentIndex={0}
+          segment={segment('video')}
+          totalLength={1000}
+          frameRate={24}
+          areaWidth={20}
+          canvasScale={1}
+          selected
+          onSelect={vi.fn()}
+          onDelete={vi.fn()}
+          onResize={vi.fn()}
+          onResizePreview={vi.fn()}
+          onMove={vi.fn()}
+          audioLockEnabled
+          audioLocked
+          onAudioLockToggle={vi.fn()}
+          onSoundtrackReferenceToggle={onSoundtrackReferenceToggle}
+        />
+      </TooltipProvider>,
+    )
+
+    const option = screen.getByRole('menuitemcheckbox', { name: 'Original sound as reference only' })
+    expect(option.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(option)
+    expect(onSoundtrackReferenceToggle).toHaveBeenCalledWith(true)
   })
   it('offers distribute, clone, merge, split, and delete actions for task segments', () => {
     const { onDelete, onDistribute, onClone, onMerge, onSplitTask } = renderBlock('task')

@@ -219,6 +219,22 @@ def test_muted_locked_video_keeps_timing_without_locking_audio():
     assert h3_locked_video_track(second, info) is video_track
 
 
+def test_reference_soundtrack_keeps_video_timing_and_is_heard_but_not_delivered():
+    from utils.h3_references import plan_task_references
+
+    info = _tracks_info()
+    video_track = next(track for track in info["tracks"] if track["type"] == "video")
+    video_track.update(audio_locked=True, soundtrack="reference")
+    video_track["segments"][0]["content"]["media_type"] = "video"
+    _, second = h3_task_entries(info)
+
+    assert h3_locked_audio_track(second, info) is None
+    assert h3_locked_video_track(second, info) is video_track
+    task = {"start_frame": 120, "end_frame": 240, "content": second["task"]["content"]}
+    [locked] = plan_task_references(info["tracks"], task).videos
+    assert locked.kind == "locked" and locked.soundtrack is True
+
+
 def test_locked_audio_track_takes_priority_without_disabling_video_timing():
     info = _tracks_info()
     video_track = next(track for track in info["tracks"] if track["type"] == "video")

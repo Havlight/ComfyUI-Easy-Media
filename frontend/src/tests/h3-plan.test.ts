@@ -217,6 +217,26 @@ describe('H3 plan files', () => {
     expect(codes(importPlan(current, dancePlan('a', { until: 'b' }, 'default')))).toContain('error:1:locked_video_mode')
   })
 
+  it('keeps a locked video sound as a reference only, and only on video tracks', () => {
+    const current = project()
+    const plan = dancePlan('a', { until: 'b' })
+    plan.tracks![0].soundtrack = 'reference'
+    const result = importPlan(current, plan)
+    expect(errors(result)).toEqual([])
+    expect(result.data!.tracks[1]).toMatchObject({ type: 'video', audio_locked: true, soundtrack: 'reference' })
+    expect(result.trackRows[0]).toMatchObject({ type: 'video', change: 'added', soundtrack: 'reference' })
+
+    const exported = exportH3Plan(result.data!)
+    expect(exported.tracks![0]).toMatchObject({ audio_locked: true, soundtrack: 'reference' })
+    const again = importPlan(result.data!, { ...exported, tracks: [{ ...exported.tracks![0], soundtrack: 'output' }] })
+    expect(again.data!.tracks[1].soundtrack).toBeUndefined()
+    expect(again.trackRows.map((row) => row.change)).toEqual(['modified'])
+
+    const onAudio = exportH3Plan(current)
+    onAudio.tracks![0].soundtrack = 'reference'
+    expect(codes(importPlan(current, onAudio))).toContain('error:t1:invalid_soundtrack')
+  })
+
   it('trims an existing clip with until, and never past the end of its source', () => {
     const current = project()
     const plan = exportH3Plan(current)

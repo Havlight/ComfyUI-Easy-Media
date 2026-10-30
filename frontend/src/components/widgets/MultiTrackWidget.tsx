@@ -702,7 +702,7 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
 
   function handleTrackAudioSettingsChange(
     trackId: string,
-    patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked'>>,
+    patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked' | 'soundtrack'>>,
   ) {
     if ('audio_locked' in patch) {
       commitNormalizedTrackChange(

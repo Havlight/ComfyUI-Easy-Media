@@ -70,7 +70,7 @@ def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
             int(segment.get('start_frame', 0)) < window[1] and int(segment.get('end_frame', 0)) > window[0])]
         if str(track.get('id', '')) in referenced or (track.get('audio_locked') is True and clips):
             sources.append(_content_fields({**{k: v for k, v in track.items()
-                                               if k in {'type', 'muted', 'solo', 'audio_locked', 'visible', 'volume_db'}},
+                                               if k in {'type', 'muted', 'solo', 'audio_locked', 'soundtrack', 'visible', 'volume_db'}},
                                             'segments': clips}))
     value = {'content': task_content_signature(task.get('content', {})), 'sources': sources,
              'references': [{key: item for key, item in ref.as_dict().items() if key != 'key'} for ref in references],

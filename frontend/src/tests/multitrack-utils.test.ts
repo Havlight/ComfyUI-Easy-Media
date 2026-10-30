@@ -481,6 +481,15 @@ describe('multitrack utilities', () => {
     expect(normalizeTrackData(data).tracks[0].segments[0].content.task_mode).toBe('passthrough')
   })
 
+  it('keeps a reference-only soundtrack on video tracks only', () => {
+    const data = createDefaultTrackData()
+    const tracks = data.tracks.map((track) => ({ ...track, soundtrack: 'reference' as const }))
+    const normalized = normalizeTrackData({ ...data, tracks })
+    expect(normalized.tracks.map((track) => [track.type, track.soundtrack])).toEqual(
+      data.tracks.map((track) => [track.type, track.type === 'video' ? 'reference' : undefined]),
+    )
+  })
+
   it('normalizes audio settings to volume_db and muted', () => {
     const normalized = normalizeTrackData({
       muted: false,

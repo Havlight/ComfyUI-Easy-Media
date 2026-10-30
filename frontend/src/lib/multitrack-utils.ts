@@ -1727,7 +1727,7 @@ export function createDefaultTrackData(): TrackData {
 
 export function normalizeTrackData(raw: RawTrackData): TrackData {
   const frameRate = Math.max(1, Math.round(raw.frame_rate ?? MULTITRACK_DEFAULT_FRAME_RATE))
-  const tracks = raw.tracks.map((track): MultiTrack => {
+  const tracks = raw.tracks.map(({ soundtrack, ...track }): MultiTrack => {
     const segments = normalizeTrackSegments(track)
     const audioSettings = {
       muted: track.muted === true,
@@ -1749,6 +1749,8 @@ export function normalizeTrackData(raw: RawTrackData): TrackData {
       ...track,
       ...audioSettings,
       audio_locked: track.type === 'audio' || track.type === 'video' ? track.audio_locked === true : undefined,
+      // Only a locked video's sound can be a reference instead of the task's audio.
+      ...(track.type === 'video' && soundtrack === 'reference' ? { soundtrack } : {}),
       visible: track.type === 'subtitle' ? track.visible !== false : track.visible,
       segments,
     }

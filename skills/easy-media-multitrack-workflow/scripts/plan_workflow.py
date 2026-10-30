@@ -395,7 +395,8 @@ def apply(args: argparse.Namespace) -> int:
         "tasks": [{"number": row["index"], "id": row["id"], "seconds": row["seconds"], "mode": row["mode"],
                    "continuity": row["continuity"], "labels": row.get("labels") or {},
                    "status": by_task.get(row["id"], "missing")} for row in tasks],
-        "tracks": [{"number": row["index"], "type": row["type"], "audio_locked": row["audioLocked"], "muted": row["muted"],
+        "tracks": [{"number": row["index"], "type": row["type"], "audio_locked": row["audioLocked"],
+                    **({"soundtrack": row["soundtrack"]} if row.get("soundtrack") else {}), "muted": row["muted"],
                     "clips": row["clips"]} for row in conversion["tracks"] if row["change"] != "removed"],
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))

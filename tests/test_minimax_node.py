@@ -1811,6 +1811,32 @@ def test_muted_locked_video_preserves_timing_without_audio_lock(monkeypatch):
     assert result.expand[audio_link[0]]['class_type'] == 'easy h3NativeMediaView'
 
 
+def test_reference_soundtrack_locked_video_preserves_timing_and_delivers_generated_audio(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = _h3_project_inputs()
+    info = inputs["tracks_info"][0]
+    info["tracks"].append({
+        "type": "video",
+        "audio_locked": True,
+        "soundtrack": "reference",
+        "segments": [{
+            "start_frame": 0,
+            "end_frame": 124,
+            "content": {"media_type": "video"},
+        }],
+    })
+    info['tracks'][0]['segments'][0]['content']['task_mode'] = 'ref'
+    info['tracks'][1]['segments'][0]['end_frame'] = 124
+
+    result = module.EasyMultiTrackProject.execute(**inputs)
+
+    assert not any(node["class_type"] in {"easy h3NativeAudioLock", "easy h3LockedAudioSelect"}
+                   for node in result.expand.values())
+    assert json.loads(_graph_node(result, 'easy h3NativeLockedVideoInfo')['inputs']['plan_json'])['raw_frames'] == 124
+    saved_video = _graph_node(result, 'easy saveVideo')
+    assert result.expand[saved_video['inputs']['input_mode.audio'][0]]['class_type'] == 'easy h3NativeMediaView'
+
+
 def test_locked_audio_select_falls_back_when_video_has_no_audio(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     generated = {"waveform": torch.ones(1, 1, 4), "sample_rate": 24}

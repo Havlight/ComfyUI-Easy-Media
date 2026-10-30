@@ -243,13 +243,16 @@ def multitrack_audio_lock_is_effective(
     """Return whether a locked track has audible media in a timeline window.
 
     Video timing remains independent from this decision. This helper only
-    answers whether the track is allowed to provide lock audio.
+    answers whether the track is allowed to provide lock audio. A locked video
+    whose soundtrack is "reference" still times the picture and is referenced,
+    but its sound is not delivered.
     """
     if (
         not isinstance(info, dict)
         or not isinstance(track, dict)
         or track.get("type") not in {"audio", "video"}
         or track.get("audio_locked") is not True
+        or (track.get("type") == "video" and track.get("soundtrack") == "reference")
         or audio_is_muted(info)
         or audio_is_muted(track)
     ):

@@ -154,6 +154,8 @@ export interface MultiTrack {
   volume_db?: number
   locked: boolean
   audio_locked?: boolean
+  /** A locked video track's sound: delivered as the task's audio (absent), or only referenced. */
+  soundtrack?: 'reference'
   media_index?: number
   segments: MultiTrackSegment[]
 }
