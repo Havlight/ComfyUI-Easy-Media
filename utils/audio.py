@@ -88,6 +88,12 @@ def load_audio_waveform(source_type, file_path, local_path, url, target_sr: int)
     if waveform is not None:
         return waveform
 
+    # PyAV (a ComfyUI dependency) decodes AAC/M4A and the rest of FFmpeg's formats. Recent
+    # torchaudio routes every load through torchcodec, which may not load at all.
+    waveform = _load_with_av(audio_path, target_sr)
+    if waveform is not None:
+        return waveform
+
     # Soundfile doesn't support MP3/AAC/etc.; fall back to torchaudio with
     # explicit backends only (never letting torchaudio auto-select torchcodec).
     try:
@@ -125,6 +131,31 @@ def _load_with_soundfile(audio_path: str, target_sr: int):
                 pass  # skip resample rather than fail entirely
         return waveform.unsqueeze(0)  # [1,C,T]
     except Exception:  # noqa: BLE001
+        return None
+
+
+def _load_with_av(audio_path: str, target_sr: int):
+    """Decode the first audio stream with PyAV, resampled to float planar at target_sr."""
+    try:
+        import av  # type: ignore[import]
+        import numpy as np  # type: ignore[import]
+
+        chunks = []
+        with av.open(audio_path) as container:
+            if not container.streams.audio:
+                return None
+            # The input's channel layout is kept; only the sample format and rate change.
+            resampler = av.AudioResampler(format="fltp", rate=target_sr)
+            for frame in container.decode(container.streams.audio[0]):
+                chunks.extend(out.to_ndarray() for out in resampler.resample(frame))
+            chunks.extend(out.to_ndarray() for out in resampler.resample(None))
+        if not chunks:
+            return None
+        # Planar float frames are [C, T].
+        waveform = torch.from_numpy(np.ascontiguousarray(np.concatenate(chunks, axis=1), dtype=np.float32))
+        return waveform.unsqueeze(0)  # [1,C,T]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[EasyMedia] PyAV could not decode audio '%s': %s", audio_path, exc)
         return None
 
 
