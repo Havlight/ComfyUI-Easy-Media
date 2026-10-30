@@ -17,7 +17,7 @@ python scripts/plan_workflow.py probe "D:/mv/song.wav" "D:/mv/dance.mp4"
 
 ## 2. 写规划文件
 
-格式见 [plan-file.md](plan-file.md)。每段任务写固定的 `id`；歌曲、影片用 `tracks` 放到某段开头。
+格式见 [plan-file.md](plan-file.md)，分段与提示词见 [writing.md](writing.md)。每段任务写固定的 `id`；歌曲、影片用 `tracks` 放到某段开头。
 
 ## 3. 转换成工作流
 
@@ -29,7 +29,7 @@ python scripts/plan_workflow.py convert "D:/templates/H3 720p.json" plan.json --
 - 有错误时返回码 2，输出 `errors`，不写工作流文件：修正规划后重新转换。
 - 成功时写出 `plan.workflow.json`（`-o` 可指定），并输出：
   - `warnings`：例如秒数为对齐帧格被调整、提示词标签找不到素材、任务超过锁定音轨的长度；
-  - `tasks`：每段的秒数、模式、参考数量，`saved` 表示这个项目名称下已有对应的生成结果；
+  - `tasks`：每段对齐后的秒数、模式、`labels`（每个提示词标签对应的素材），`saved` 表示这个项目名称下已有对应的生成结果；
   - `tracks`：每条影音轨的片段与起讫秒数；
   - `run`：`start` 是第一个需要生成的段落，已写进工作流；`nothing_to_run: true` 表示全部都有结果，不需要执行。
 - `--start N` 从指定段落开始，`--count N` 只跑 N 段（默认 `-1` 跑完剩下的）。Project 不会跳过已有结果的段落：从开始段之后的每一段都会重新生成。

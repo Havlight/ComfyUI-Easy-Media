@@ -21,6 +21,8 @@ import {
   h3ReferenceLabels,
   h3SharedReferenceClip,
   planH3TaskReferences,
+  type H3MediaReference,
+  type H3TaskReferencePlan,
 } from '@/lib/h3-references'
 import {
   getSelectedTaskUserPrompt,
@@ -191,6 +193,8 @@ export interface H3PlanRow {
   videos: number
   audios: number
   prompt: string
+  /** What each prompt label stands for, in label order; absent on removed tasks. */
+  labels?: Record<string, string>
 }
 
 export interface H3PlanClipSummary {
@@ -710,9 +714,63 @@ function buildContent(
   return content
 }
 
-function referenceCounts(data: TrackData, segment: MultiTrackSegment): { images: number; videos: number; audios: number; labels: ReturnType<typeof h3ReferenceLabels> } {
+function referenceCounts(data: TrackData, segment: MultiTrackSegment): { images: number; videos: number; audios: number; labels: ReturnType<typeof h3ReferenceLabels>; sources: Record<string, string> } {
   const plan = planH3TaskReferences(data.tracks, segment, h3NextTaskStart(orderedTasks(data), segment), { frameRate: data.frame_rate })
-  return { images: plan.images.length, videos: plan.videos.length, audios: plan.audios.length, labels: h3ReferenceLabels(plan) }
+  const labels = h3ReferenceLabels(plan)
+  return {
+    images: plan.images.length, videos: plan.videos.length, audios: plan.audios.length, labels,
+    sources: labelSources(data, segment.content.task_mode ?? 'default', plan, labels),
+  }
+}
+
+function imageSource(image: MultiTrackTaskImage): string {
+  if (image.source_type === 'previous_frame') return "previous task's last frame"
+  const name = image.file_name || image.file_path || image.local_path || image.url || image.slot_name || ''
+  return image.shared_reference === true ? `${name} (shared)` : name
+}
+
+function mediaSource(data: TrackData, reference: H3MediaReference): string {
+  if (reference.kind === 'upload') {
+    const { file_name, file_path, local_path, url } = reference.source
+    return file_name || file_path || local_path || url || ''
+  }
+  const end = reference.start_frame + reference.frames
+  const clips = (data.tracks.find((track) => track.id === reference.track_id)?.segments ?? []).filter((clip) => (
+    reference.kind === 'shared' ? clip.id === reference.segment_id : clip.end_frame > reference.start_frame && clip.start_frame < end
+  ))
+  const names = clips.map((clip) => clip.content.file_name || clip.content.file_path || '').filter(Boolean).join(', ')
+  const role = reference.kind === 'shared' ? 'shared clip' : reference.kind === 'locked' ? 'locked track' : 'track window'
+  return `${names} (${reference.media_type} track ${reference.track_id}, ${role})`
+}
+
+/**
+ * What each prompt label stands for, for agents writing prompts. Default and L2V tasks take
+ * only frames: the first and last image (L2V: the last), so other images and media get none.
+ */
+function labelSources(
+  data: TrackData,
+  mode: MultiTrackTaskMode,
+  plan: H3TaskReferencePlan,
+  labels: ReturnType<typeof h3ReferenceLabels>,
+): Record<string, string> {
+  if (mode === 'passthrough') return {}
+  const images = plan.images.map(imageSource)
+  if (mode !== 'ref' && mode !== 'edit') {
+    const last = images.length - 1
+    return Object.fromEntries(images.map((name, index) => {
+      const role = index === last && (index > 0 || mode === 'l2v') ? 'last frame'
+        : index === 0 && mode !== 'l2v' ? 'first frame' : `unused in ${mode}`
+      return [`<${labels.images[index]}>`, `${role}: ${name}`]
+    }))
+  }
+  const sources: Record<string, string> = {}
+  images.forEach((name, index) => { sources[`<${labels.images[index]}>`] = name })
+  plan.videos.forEach((video, index) => { sources[`<${labels.videos[index]}>`] = mediaSource(data, video) })
+  labels.video_soundtracks.forEach((label, index) => {
+    if (label) sources[`<${label}>`] = `soundtrack of <${labels.videos[index]}>`
+  })
+  plan.audios.forEach((audio, index) => { sources[`<${labels.audios[index]}>`] = mediaSource(data, audio) })
+  return sources
 }
 
 function promptTagIssues(prompt: string, labels: ReturnType<typeof h3ReferenceLabels>, context: ImportContext) {
@@ -1169,6 +1227,7 @@ export function buildH3PlanImport(
         videos: counts.videos,
         audios: counts.audios,
         prompt: getSelectedTaskUserPrompt(segment.content),
+        labels: counts.sources,
       })
     })
   }

@@ -305,7 +305,7 @@ def convert(args: argparse.Namespace) -> int:
         "run": {"start": first, "count": args.count} if first else {"nothing_to_run": True},
         **report,
         "tasks": [{"number": row["index"], "id": row["id"], "seconds": row["seconds"], "mode": row["mode"],
-                   "continuity": row["continuity"], "references": f"img {row['images']} · vid {row['videos']} · aud {row['audios']}",
+                   "continuity": row["continuity"], "labels": row.get("labels") or {},
                    "saved": row["id"] in saved} for row in tasks],
         "tracks": [{"number": row["index"], "type": row["type"], "audio_locked": row["audioLocked"], "muted": row["muted"],
                     "clips": row["clips"]} for row in conversion["tracks"] if row["change"] != "removed"],

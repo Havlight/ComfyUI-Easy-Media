@@ -45,6 +45,43 @@ describe('H3 plan conversion for the skill', () => {
     expect(audio.segments.map((segment) => [segment.start_frame, segment.end_frame])).toEqual([[0, 216]])
   })
 
+  it('says what each prompt label of a task stands for', async () => {
+    // The server finds every input file; probed videos are 10 s long with sound.
+    const fetcher = vi.fn(async (_path: string, init: RequestInit) => {
+      const { items } = JSON.parse(String(init.body)) as { items: Array<{ input: string; probe?: boolean }> }
+      return new Response(JSON.stringify({
+        results: items.map((item) => ({
+          source_type: 'input', file_path: item.input, file_name: item.input.split('/').at(-1),
+          ...(item.probe ? { duration: 10, has_audio: true } : {}),
+        })),
+      }))
+    })
+    const conversion = await convertH3Plan(template(), {
+      version: 1,
+      tasks: [
+        { id: 's01', seconds: 5, images: [{ input: 'refs/a.png' }, { input: 'refs/b.png' }, { input: 'refs/c.png' }] },
+        {
+          id: 's02', seconds: 5, mode: 'ref', continuity: 'context_drift',
+          images: ['previous_frame', { input: 'refs/alice.png' }], audios: [{ input: 'voice/line.wav' }],
+        },
+      ],
+      tracks: [{ id: 'v1', type: 'video', clips: [{ input: 'clips/dance.mp4', at: 's02' }] }],
+    }, 'MiniMax', t, fetcher)
+
+    expect(conversion.errors).toEqual([])
+    // Default tasks take only the first and last image as frames.
+    expect(conversion.tasks.map((row) => row.labels)).toEqual([
+      { '<Picture 1>': 'first frame: a.png', '<Picture 2>': 'unused in default: b.png', '<Picture 3>': 'last frame: c.png' },
+      {
+        '<Picture 1>': "previous task's last frame",
+        '<Picture 2>': 'alice.png',
+        '<Video 1>': 'dance.mp4 (video track v1, track window)',
+        '<Audio 1>': 'soundtrack of <Video 1>',
+        '<Audio 2>': 'line.wav',
+      },
+    ])
+  })
+
   it('returns readable errors and no track data when the plan cannot be used', async () => {
     const conversion = await convertH3Plan(template(), { version: 1, tasks: [{ seconds: 5, mode: 'r2v' }] }, 'MiniMax', t, server([]))
 

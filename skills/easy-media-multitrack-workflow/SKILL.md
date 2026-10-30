@@ -19,7 +19,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 选路线
 
-1. **规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片。写规划文件（[references/plan-file.md](references/plan-file.md)），按 [references/automation.md](references/automation.md) 转换、执行、等待与检查。
+1. **规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片。写规划文件（[references/plan-file.md](references/plan-file.md)），分段与提示词写法见 [references/writing.md](references/writing.md)，按 [references/automation.md](references/automation.md) 转换、执行、等待与检查。
 2. **直接改工作流**：分辨率、Project 采样设置、片段 LoRA、字幕、loader／attention 替换，或用户要求修改某个工作流文件。按下方「直接改工作流」。
 
 用户没有给模板时，两条路线都以 `assets/templates/v1.3.0-blank-workflow.json` 为基线；给了工作流或模板时，以它为唯一基线，不用内置模板覆盖。
@@ -27,8 +27,8 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 ## 自动循环
 
 1. `plan_workflow.py probe` 读出歌曲、影片长度，据此分段。
-2. 写规划文件。
-3. `plan_workflow.py convert 模板 规划 --project-name 名称`：有错误就修正规划再转换；确认警告、已有结果的段落与开始段。
+2. 写规划文件；分段与提示词按 [references/writing.md](references/writing.md)，提示词用对应 mode 的 H3 指南写。
+3. `plan_workflow.py convert 模板 规划 --project-name 名称`：有错误就修正规划再转换；确认警告、每段的标签对应（`labels`）、已有结果的段落与开始段。
 4. 用户授权执行后：`submit_workflow.py 输出.workflow.json --wait 540`。
 5. （可选）`review_frames.py --project 名称 --tasks 重跑的段落`。
 6. 需要修改时改规划，回到第 3 步；没改到的段落沿用已存结果，从第一个需要重跑的段落开始。
@@ -37,7 +37,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 - **主体或局部替换**：用户提供视频作为主体或局部替换参考时，全部目标任务用 `continuity: context_drift`，该视频轨设 `audio_locked: true` 保留画面时间线。未另锁音频时沿用视频原声；另有锁定音频轨时优先用它的音频。用户没给片段长度时按连续 10 秒拆分，末段用剩余时长。
 - **主音频／影片原声**：需要原样沿用并驱动节奏（MV、歌词视频、旁白）时，在那条音频或视频轨设 `audio_locked: true`。同类型最多锁一条；音频与视频可各锁一条，并存时音频优先，视频继续约束画面。主音频不只一个候选时先问用户。
-- **接缝**：`context_drift` 任务默认 `seam: "soft"`，用户要求接缝贴紧上一段时用 `"clean"`。
+- **接续**：换场景用 `shot`，接着上一段用 `context_drift`；`context` 只在用户要求时用。`context_drift` 默认 `seam: "soft"`，用户要求接缝贴紧上一段时用 `"clean"`。
 - **公用媒体**：多段要用同一张图、同一段音频或影片时设 `shared: true`。公用图片排在各段自己的图片之前，每段合计最多 9 张；每条音频或视频轨最多一个公用片段。
 - **分辨率**：用户没提就保留模板的设置；要改时走直接改工作流，规则见 [references/multitrack-schema.md](references/multitrack-schema.md)。
 

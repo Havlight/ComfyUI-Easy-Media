@@ -136,7 +136,8 @@ def test_convert_places_files_converts_on_the_page_and_starts_after_saved_tasks(
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
     conversion = {"track_data": converted_track_data(), "errors": [], "warnings": ["Task 2: Timing adjusted."], "tasks": [
-        {"index": 1, "id": "s01", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 1, "videos": 0, "audios": 0},
+        {"index": 1, "id": "s01", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 1, "videos": 0, "audios": 0,
+         "labels": {"<Picture 1>": "first frame: alice.png"}},
         {"index": 2, "id": "s02", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 0, "videos": 0, "audios": 0},
     ], "tracks": []}
 
@@ -162,6 +163,7 @@ def test_convert_places_files_converts_on_the_page_and_starts_after_saved_tasks(
     # s01 already has its saved result, so the run starts at task 2 and runs the rest.
     assert report["run"] == {"start": 2, "count": -1}
     assert [task["saved"] for task in report["tasks"]] == [True, False]
+    assert [task["labels"] for task in report["tasks"]] == [{"<Picture 1>": "first frame: alice.png"}, {}]
     assert fake.status_requests[0]["project_name"] == "mv-alice"
     assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single", "first_pass_only": False}
     workflow = json.loads((tmp_path / "plan.workflow.json").read_text(encoding="utf-8"))

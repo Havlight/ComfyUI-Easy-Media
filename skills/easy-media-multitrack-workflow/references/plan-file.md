@@ -13,10 +13,11 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
   "frame_rate": 24,
   "tasks": [
     {
+      "id": "s01",
       "seconds": 6,
       "mode": "ref",
       "continuity": "shot",
-      "prompt": "<Picture 1> 站在 <Picture 2> 前，用 <Audio 1> 的声音说话",
+      "prompt": "subject_definitions:\n<Subject 1> is the young woman in <Picture 1> ...\n\nsummary:\n[reference generation + audio reference] ...",
       "images": ["C:/素材/alice.png", "C:/素材/castle.jpg"],
       "audios": [{ "file": "D:/voice/line01.wav", "fit": false }]
     },
@@ -25,7 +26,7 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
       "seconds": 5,
       "continuity": "context_drift",
       "images": ["previous_frame", "C:/素材/alice.png"],
-      "prompt": "……"
+      "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] ..."
     }
   ],
   "tracks": [
@@ -43,9 +44,9 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
 - `seconds`：新任务必填。会依 H3 的帧格对齐，例如 5 秒的独立镜头会变成 124 帧（约 5.17 秒），预览会列出调整。
 - `gap_before`：与前一段之间的空白秒数，默认 0；接续段（`context`、`context_drift`）一定紧接前一段。
 - `mode`：`default`、`ref`、`edit`、`l2v`、`passthrough`。
-- `continuity`：`shot`、`context`、`context_drift`；第一段只能是 `shot`。
+- `continuity`：`shot`、`context`、`context_drift`；第一段只能是 `shot`。接着上一段时用 `context_drift`，`context` 只在用户要求时用。
 - `seam`（只用于 `context_drift`）：接缝的处理。新的 `context_drift` 任务不写时用 `"soft"`；用户要求接缝贴紧上一段时写 `"clean"`。导出文件里若是其他写法，保持原样。
-- `prompt`：写入目前选用的提示词。用官方标签 `<Picture N>`、`<Video N>`、`<Audio N>` 引用素材；编号规则与 Editor 相同，预览会提醒对不上的标签。
+- `prompt`：写入目前选用的提示词，按 [writing.md](writing.md) 用对应 mode 的 H3 指南写。用 `<Picture N>`、`<Video N>`、`<Audio N>` 引用素材；编号规则与 Editor 相同，转换报告的 `labels` 列出每个标签对应的素材，预览会提醒对不上的标签。
 - 导出文件里的 `ref_image_size` 保持原样。
 
 ## 参考素材
