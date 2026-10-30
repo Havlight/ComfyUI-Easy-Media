@@ -13,6 +13,7 @@ import {
   normalizeDriftTaperSteps,
   type DriftTaperContent,
 } from '@/lib/h3-drift-taper'
+import { H3_NATIVE_CONTEXT_FRAMES, isH3Continuation } from '@/lib/h3-native-timing'
 import {
   H3_MEDIA_REFERENCE_LIMIT,
   H3_TRACK_SOURCE,
@@ -69,6 +70,8 @@ import type {
  * are removed. A clip with a source is described in full, so its unwritten settings are the
  * defaults. A clip with only an `id` is an existing clip, which `at` or `start` can move.
  * `at` places a clip at a task's start: a task id, or the task's 1-based position in the file.
+ * `until` ends a clip, new or existing, at a task's end the same way, trimming the rest of
+ * its source; a locked video can then end exactly where its last task does.
  */
 export const H3_PLAN_FORMAT = 'easy-media-h3-plan'
 export const H3_PLAN_VERSION = 1
@@ -115,6 +118,7 @@ export interface H3PlanTask {
 export interface H3PlanClip extends Pick<H3PlanReferenceObject, 'file' | 'local' | 'url' | 'input' | 'output' | 'slot'> {
   id?: string
   at?: string | number
+  until?: string | number
   start?: number
   end?: number
   from?: number
@@ -233,7 +237,7 @@ const SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot', 'track',
 const CLIP_SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot'] as const
 const TASK_KEYS = new Set(['id', 'seconds', 'gap_before', 'mode', 'continuity', 'seam', 'ref_image_size', 'prompt', 'images', 'videos', 'audios'])
 const TRACK_KEYS = new Set(['id', 'type', 'audio_locked', 'muted', 'volume', 'clips'])
-const CLIP_KEYS = new Set([...CLIP_SOURCE_KEYS, 'id', 'at', 'start', 'end', 'from', 'volume', 'muted', 'shared'])
+const CLIP_KEYS = new Set([...CLIP_SOURCE_KEYS, 'id', 'at', 'until', 'start', 'end', 'from', 'volume', 'muted', 'shared'])
 const REFERENCE_FIELDS = [['images', 'image'], ['videos', 'video'], ['audios', 'audio']] as const
 const PROMPT_TAG = /<(Picture|Video|Audio) (\d+)>/g
 
@@ -793,8 +797,8 @@ function sameSegment(left: MultiTrackSegment, right: MultiTrackSegment): boolean
 // Timeline tracks
 // ---------------------------------------------------------------------------
 
-/** Resolve `at` to a frame: a task id, or a task's 1-based position in the file. */
-type ClipAnchor = (at: string | number) => number | undefined
+/** Resolve `at` (a task's start) or `until` (its end) to a frame: a task id, or a task's 1-based position in the file. */
+type ClipAnchor = (at: string | number, edge?: 'end') => number | undefined
 
 function readFlag(value: unknown, flag: string, context: ImportContext): boolean {
   if (value === undefined || typeof value === 'boolean') return value === true
@@ -820,15 +824,34 @@ function sourceIdentity(content: MultiTrackSegmentContent | Partial<MultiTrackTa
   return taskMediaIdentity({ id: '', ...content } as MultiTrackTaskMedia)
 }
 
+function anchorFrame(value: string | number, anchor: ClipAnchor, context: ImportContext, edge?: 'end'): number | null {
+  const valid = (typeof value === 'string' && value) || (typeof value === 'number' && Number.isInteger(value) && value > 0)
+  const frame = valid ? anchor(value, edge) : undefined
+  if (frame === undefined) issue(context, 'error', 'unknown_anchor', { at: String(value) })
+  return frame ?? null
+}
+
 function clipStart(clip: H3PlanClip, anchor: ClipAnchor, fps: number, context: ImportContext): number | undefined | null {
-  if (clip.at !== undefined) {
-    const valid = (typeof clip.at === 'string' && clip.at) || (typeof clip.at === 'number' && Number.isInteger(clip.at) && clip.at > 0)
-    const frame = valid ? anchor(clip.at) : undefined
-    if (frame === undefined) issue(context, 'error', 'unknown_anchor', { at: String(clip.at) })
-    return frame ?? null
-  }
+  if (clip.at !== undefined) return anchorFrame(clip.at, anchor, context)
   const start = readSeconds(clip.start, 'start', context)
   return typeof start === 'number' ? Math.round(start * fps) : start
+}
+
+/** The end `until` sets, after checking that the clip's source reaches it. */
+function clipUntil(
+  clip: H3PlanClip, start: number, sourceEnd: number | undefined, anchor: ClipAnchor, fps: number, context: ImportContext,
+): number | null {
+  const end = anchorFrame(clip.until!, anchor, context, 'end')
+  if (end === null) return null
+  if (end <= start) {
+    issue(context, 'error', 'clip_end')
+    return null
+  }
+  if (sourceEnd !== undefined && end > sourceEnd) {
+    issue(context, 'error', 'clip_until_short', { at: String(clip.until), end: round3(sourceEnd / fps) })
+    return null
+  }
+  return end
 }
 
 /** One clip of `tracks`, or null after reporting why it cannot be placed. */
@@ -847,7 +870,8 @@ function buildClip(
     issue(context, 'error', 'invalid_clip')
     return null
   }
-  if (clip.at !== undefined && (clip.start !== undefined || clip.end !== undefined)) {
+  if ((clip.at !== undefined && (clip.start !== undefined || clip.end !== undefined))
+    || (clip.until !== undefined && clip.end !== undefined)) {
     issue(context, 'error', 'clip_timing')
     return null
   }
@@ -867,11 +891,20 @@ function buildClip(
     }
     const startFrame = start ?? old.start_frame
     const shift = startFrame - old.start_frame
+    const origin = old.origin_start_frame === undefined ? undefined : old.origin_start_frame + shift
+    let endFrame = old.end_frame + shift
+    if (clip.until !== undefined) {
+      const duration = old.content.duration
+      const sourceEnd = typeof duration === 'number' && duration > 0 ? (origin ?? startFrame) + Math.round(duration * fps) : undefined
+      const until = clipUntil(clip, startFrame, sourceEnd, anchor, fps, context)
+      if (until === null) return null
+      endFrame = until
+    }
     return {
       ...old,
       start_frame: startFrame,
-      end_frame: old.end_frame + shift,
-      ...(old.origin_start_frame === undefined ? {} : { origin_start_frame: old.origin_start_frame + shift }),
+      end_frame: endFrame,
+      ...(origin === undefined ? {} : { origin_start_frame: origin }),
       content: {
         ...old.content,
         ...(clip.muted !== undefined ? { muted: readFlag(clip.muted, 'muted', context) } : {}),
@@ -898,7 +931,12 @@ function buildClip(
   if (from === null || end === null) return null
   const fromFrames = Math.round((from ?? 0) * fps)
   let endFrame: number
-  if (end !== undefined) {
+  if (clip.until !== undefined) {
+    const sourceEnd = typeof duration === 'number' && duration > 0 ? start + Math.round(duration * fps) - fromFrames : undefined
+    const until = clipUntil(clip, start, sourceEnd, anchor, fps, context)
+    if (until === null) return null
+    endFrame = until
+  } else if (end !== undefined) {
     endFrame = Math.round(end * fps)
   } else if (typeof duration === 'number' && duration > 0) {
     // Placed without an end, a clip takes the rest of its file.
@@ -1084,6 +1122,36 @@ function trackRows(before: TrackData, after: TrackData): H3PlanTrackRow[] {
   ]
 }
 
+const LOCKED_VIDEO_MODES = new Set(['ref', 'edit', 'passthrough'])
+
+/**
+ * The Project's checks on a locked video, made before anything runs: a task the video overlaps
+ * must use a reference mode, and the video must cover the task's whole generation window,
+ * including the context frames a continuation regenerates before it.
+ */
+function lockedVideoIssues(data: TrackData, tasks: readonly MultiTrackSegment[], fps: number, issues: H3PlanIssue[]): void {
+  const locked = data.tracks.filter((track) => track.type === 'video' && track.audio_locked === true)
+  tasks.forEach((task, index) => {
+    const track = locked.find((item) => item.segments.some((segment) => segment.content.media_type === 'video'
+      && segment.start_frame < task.end_frame && segment.end_frame > task.start_frame))
+    if (!track) return
+    if (!LOCKED_VIDEO_MODES.has(task.content.task_mode ?? 'default')) {
+      issues.push({ level: 'error', task: index + 1, code: 'locked_video_mode' })
+      return
+    }
+    const start = index > 0 && isH3Continuation(task) ? task.start_frame - H3_NATIVE_CONTEXT_FRAMES : task.start_frame
+    let covered = start
+    for (const segment of [...track.segments].sort((a, b) => a.start_frame - b.start_frame)) {
+      if (segment.start_frame <= covered) covered = Math.max(covered, segment.end_frame)
+    }
+    if (covered < task.end_frame) {
+      issues.push({ level: 'error', task: index + 1, code: 'locked_video_range', params: {
+        start: round3(start / fps), end: round3(task.end_frame / fps),
+      } })
+    }
+  })
+}
+
 /**
  * Build the timeline a plan describes. `prepare` applies the Editor's own normalization and
  * native timing, exactly as a manual edit would; it may throw to reject the result.
@@ -1115,7 +1183,7 @@ export function buildH3PlanImport(
   // Task references check placeholders against the tracks the plan lists. Clips placed with
   // `at` need the tasks' final timing, so this first pass places them anywhere and its
   // problems are reported by the final pass below.
-  const draftTracks = withMediaTracks(current.tracks, buildMediaTracks(current, plan, media, () => 0, []))
+  const draftTracks = withMediaTracks(current.tracks, buildMediaTracks(current, plan, media, (_at, edge) => (edge === 'end' ? 1 : 0), []))
   const seen = new Set<string>()
   const requested = new Map<string, { start: number; end: number }>()
   const positions: (string | undefined)[] = []
@@ -1182,8 +1250,11 @@ export function buildH3PlanImport(
       ...master,
       tracks: draftTracks.map((track) => (track.id === taskTrack.id ? { ...track, segments } : track)),
     })
-    const starts = new Map(orderedTasks(timed).map((segment) => [segment.id, segment.start_frame]))
-    const anchor: ClipAnchor = (at) => starts.get((typeof at === 'number' ? positions[at - 1] : at) ?? '')
+    const timedTasks = new Map(orderedTasks(timed).map((segment) => [segment.id, segment]))
+    const anchor: ClipAnchor = (at, edge) => {
+      const segment = timedTasks.get((typeof at === 'number' ? positions[at - 1] : at) ?? '')
+      return edge === 'end' ? segment?.end_frame : segment?.start_frame
+    }
     const mediaTracks = buildMediaTracks(current, plan, media, anchor, issues)
     data = mediaTracks ? prepare({ ...timed, tracks: withMediaTracks(timed.tracks, mediaTracks) }) : timed
   } catch (cause: unknown) {
@@ -1192,16 +1263,16 @@ export function buildH3PlanImport(
 
   const rows: H3PlanRow[] = []
   if (data) {
-    // Tasks past a locked track's end have no locked audio or picture to follow there.
-    const tasksEnd = orderedTasks(data).at(-1)?.end_frame ?? 0
-    for (const type of ['audio', 'video'] as const) {
-      const locked = data.tracks.find((track) => track.type === type && track.audio_locked === true && track.segments.length > 0)
-      const lockedEnd = locked ? Math.max(...locked.segments.map((segment) => segment.end_frame)) : Infinity
-      if (tasksEnd > lockedEnd) {
-        issues.push({ level: 'warning', code: `past_locked_${type}`, params: { tasks: round3(tasksEnd / fps), end: round3(lockedEnd / fps) } })
-      }
-    }
+    // Tasks past the locked audio's end have no locked sound to follow there. A locked video
+    // that ends early is intended when it ends on a task boundary; otherwise the check below fails.
     const after = orderedTasks(data)
+    const tasksEnd = after.at(-1)?.end_frame ?? 0
+    const lockedAudio = data.tracks.find((track) => track.type === 'audio' && track.audio_locked === true && track.segments.length > 0)
+    const lockedAudioEnd = lockedAudio ? Math.max(...lockedAudio.segments.map((segment) => segment.end_frame)) : Infinity
+    if (tasksEnd > lockedAudioEnd) {
+      issues.push({ level: 'warning', code: 'past_locked_audio', params: { tasks: round3(tasksEnd / fps), end: round3(lockedAudioEnd / fps) } })
+    }
+    lockedVideoIssues(data, after, fps, issues)
     after.forEach((segment, index) => {
       const context: ImportContext = { at: { task: index + 1 }, tracks: data!.tracks, media, issues }
       const wanted = requested.get(segment.id)

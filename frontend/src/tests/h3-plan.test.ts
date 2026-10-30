@@ -185,6 +185,50 @@ describe('H3 plan files', () => {
     ]))
   })
 
+  /** Tasks a (a shot, 0–90), b and c (Drift, 90–192 and 192–294) under a locked 10 s (240-frame) dance. */
+  function dancePlan(at: string, clip: Record<string, unknown> = {}, firstMode = 'ref'): H3PlanFile {
+    return { version: 1, tasks: [
+      { id: 'a', seconds: 4, mode: firstMode, prompt: 'Walk in' },
+      { id: 'b', seconds: 4, mode: 'ref', continuity: 'context_drift', prompt: 'Dance' },
+      { id: 'c', seconds: 4, mode: 'ref', continuity: 'context_drift', prompt: 'Bow' },
+    ], tracks: [{ type: 'video', audio_locked: true, clips: [{ file: 'C:/clips/dance.mp4', at, ...clip }] }] } as H3PlanFile
+  }
+  const errors = (result: ReturnType<typeof buildH3PlanImport>) => result.issues.filter((item) => item.level === 'error')
+
+  it('ends a locked video at a task with until, so the next task can continue unlocked', () => {
+    const current = project()
+    const trimmed = importPlan(current, dancePlan('a', { until: 'b' }))
+    expect(errors(trimmed)).toEqual([])
+    expect(codes(trimmed).filter((code) => code.includes('locked'))).toEqual([])
+    expect(layout(trimmed.data!)[1].segments).toMatchObject([{ start_frame: 0, end_frame: 192 }])
+
+    // Left whole, the dance runs into task 3, which then cannot follow it to its end.
+    const whole = importPlan(current, dancePlan('a'))
+    expect(whole.data).toBeNull()
+    expect(errors(whole)).toEqual([{ level: 'error', task: 3, code: 'locked_video_range', params: { start: 6.375, end: 12.25 } }])
+  })
+
+  it('reports locked videos the Project would refuse before anything runs', () => {
+    const current = project()
+    // Starting with a continuation, the dance cannot cover the context that task regenerates.
+    const late = importPlan(current, dancePlan('b', { until: 'c' }))
+    expect(errors(late)).toEqual([{ level: 'error', task: 2, code: 'locked_video_range', params: { start: 2.125, end: 8 } }])
+    // A locked video drives a reference generation; a first-frame task cannot follow it.
+    expect(codes(importPlan(current, dancePlan('a', { until: 'b' }, 'default')))).toContain('error:1:locked_video_mode')
+  })
+
+  it('trims an existing clip with until, and never past the end of its source', () => {
+    const current = project()
+    const plan = exportH3Plan(current)
+    plan.tracks = [{ id: 'song', type: 'audio', audio_locked: true, clips: [{ id: 'song-1', until: 't1' }] }]
+    const trimmed = importPlan(current, plan)
+    expect(layout(trimmed.data!)[1].segments).toMatchObject([{ id: 'song-1', start_frame: 0, end_frame: 124 }])
+    expect(codes(trimmed)).toEqual(['warning:-:past_locked_audio'])
+
+    const short = importPlan(current, dancePlan('a', { until: 'c' }))
+    expect(errors(short)).toEqual([{ level: 'error', track: 1, clip: 1, code: 'clip_until_short', params: { at: 'c', end: 10 } }])
+  })
+
   it('adds tasks from local files, snaps their timing and copies the files once', () => {
     const current = project()
     const result = importPlan(current, { version: 1, tasks: [
