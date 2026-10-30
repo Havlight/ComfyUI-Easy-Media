@@ -3115,16 +3115,17 @@ def test_multitrack_reference_dual_reuses_conditioning_for_second_pass(monkeypat
     assert all(node["inputs"]["conditioning"] == [cache_id, 0] for node in guiders)
 
 
-def test_multitrack_h3_project_forwards_override_save_mode(monkeypatch):
+@pytest.mark.parametrize("project_save", ["new", "override"])
+def test_multitrack_h3_project_forwards_save_mode(monkeypatch, project_save):
     module = _load_minimax_node(monkeypatch)
     assert module is not None
 
     result = module.EasyMultiTrackProject.execute(
-        **_h3_project_inputs(project_save=["override"])
+        **_h3_project_inputs(project_save=[project_save])
     )
 
     artifact = _graph_node(result, "easy h3NativeArtifact")
-    assert "project_save" not in artifact["inputs"] # Both modes retain immutable versions.
+    assert artifact["inputs"]["project_save"] == project_save
 
 
 

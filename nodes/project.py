@@ -60,7 +60,7 @@ H3_CONTEXT_SOURCE_FRAMES = 39
 def _h3_native_output(
     graph: GraphBuilder, task_index: int, project_name: str, info: dict[str, Any],
     final_latent: Any, low_latent: Any, state: Any, vae: Any, audio_vae: Any,
-    locked_audio: Any, audio_only: bool, previous: Any, run_state: Any,
+    locked_audio: Any, audio_only: bool, previous: Any, run_state: Any, project_save: str,
 ) -> Any:
     """Decode a delivered view while publishing the untouched raw sampler source."""
     result = graph.node("easy h3NativeResult", id=f"native_result_{task_index}",
@@ -89,6 +89,7 @@ def _h3_native_output(
         media["locked_audio"] = locked_audio
     return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
                       segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio, run_state=run_state,
+                      project_save=project_save,
                       **({"low_latent": result.out(1)} if low_latent is not None else {}),
                       **({"previous": previous} if previous is not None else {}), **media).out(0)
 
@@ -882,6 +883,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                     "project_save",
                     options=["new", "override"],
                     default="override",
+                    tooltip="new keeps every version of a task; override replaces the task's current version.",
                 ),
                 io.Int.Input(
                     "segment_start_number",
@@ -1455,7 +1457,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 previous_artifact = last_project_output = graph.node(
                     "easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=safe_project_name,
                     segment_index=task_index, tracks_info=output_info, latent=seeded.out(0), low_latent=seeded.out(1),
-                    video_path=passthrough.out(0), raw_audio=seeded.out(2), run_state=run_state,
+                    video_path=passthrough.out(0), raw_audio=seeded.out(2), run_state=run_state, project_save=project_save,
                     last_frame=graph.node("easy h3LastFrame", id=f"tail_frame_{task_index}", images=passthrough.out(1)).out(0),
                     **({"previous": previous_artifact} if previous_artifact is not None else {})).out(0)
                 previous_hires_context_latent = previous_low_context_latent = None
@@ -1923,7 +1925,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 graph, task_index, safe_project_name, output_info, final_latent,
                 low_stage_context_latent if has_second_pass or is_selflift else None,
                 native_state, vae, audio_vae, task_locked_audio if has_task_locked_audio else None,
-                audio_only, previous_artifact, run_state)
+                audio_only, previous_artifact, run_state, project_save)
             previous_hires_context_latent = previous_low_context_latent = None
             segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
             report_segment_step(1.0)

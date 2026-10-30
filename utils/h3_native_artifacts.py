@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -155,15 +156,35 @@ def refresh_native_dependencies(manifest: dict[str, Any]) -> None:
         generation["native_stale"] = True
 
 
+GENERATION_FILE_FIELDS = ("context_latent", "context_latent_low", "video", "audio", "raw_audio", "last_frame", "locked_audio")
+
+
+def _delete_unreferenced_files(directory: Path, manifest: dict[str, Any], generation: dict[str, Any]) -> None:
+    """Delete a dropped version's files that no remaining version uses."""
+    kept = {name for segment in [*manifest.get("segments", {}).values(), *manifest.get("detached_segments", {}).values()]
+            for other in segment.get("generations", {}).values() for field in GENERATION_FILE_FIELDS
+            if (name := other.get(field))}
+    for field in GENERATION_FILE_FIELDS:
+        name = generation.get(field)
+        if not name or name in kept:
+            continue
+        try:
+            native_child_path(directory, name).unlink(missing_ok=True)
+        except (OSError, NativePlanError) as error:
+            # The manifest no longer lists the file, so a leftover only costs disk space.
+            logging.warning("Replaced H3 version saved; could not remove %s: %s", name, error)
+
+
 def commit_native_generation(
     directory: Path, segment_index: int, project_fields: dict[str, Any],
     record: dict[str, Any], latents: dict[str, dict[str, Any]],
-    media: dict[str, Path],
+    media: dict[str, Path], replace: bool = False,
 ) -> dict[str, Any]:
-    """Publish new files, then switch one manifest atomically. Never evict an old version.
+    """Publish new files, then switch one manifest atomically.
 
-    Override is intentionally a new recoverable generation for native projects.
-    Source staging media remain available if any write fails.
+    Other versions are kept unless ``replace`` (project_save override): then the task's
+    previously active version is dropped, and its files are deleted once the new manifest
+    is in place. Source staging media remain available if any write fails.
     """
     if set(latents) - {"high", "low"} or "high" not in latents:
         raise NativePlanError("STAGE", "A generation needs a high stage and at most one low stage.")
@@ -209,7 +230,9 @@ def commit_native_generation(
                 name = f"{field}_{segment_index}_{generation}{source.suffix}"
                 shutil.copyfile(source, staging / name)
                 saved[field] = name
-            target.setdefault("generations", {})[str(generation)] = saved
+            generations = target.setdefault("generations", {})
+            replaced = generations.pop(str(target.get("active_generation")), None) if replace else None
+            generations[str(generation)] = saved
             target.update({"active_generation": generation, "updated_at": saved["updated_at"],
                            "continuity_mode": record.get("continuity_mode", "shot")})
             manifest.update({**project_fields, "version": 3, "segments": segments, "updated_at": time.time()})
@@ -229,6 +252,8 @@ def commit_native_generation(
                 os.fsync(output.fileno())
             temporary.replace(directory / "project.json")
             committed = True
+            if isinstance(replaced, dict):
+                _delete_unreferenced_files(directory, manifest, replaced)
             return saved
         finally:
             if not committed:

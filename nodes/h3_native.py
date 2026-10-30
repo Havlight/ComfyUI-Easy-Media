@@ -438,7 +438,8 @@ class EasyH3NativeArtifact(io.ComfyNode):
                                  io.Latent.Input("low_latent", optional=True), io.Audio.Input("raw_audio"),
                                  io.Audio.Input("audio", optional=True), io.Audio.Input("locked_audio", optional=True), io.String.Input("video_path", default="", optional=True),
                                  io.Image.Input("last_frame", optional=True), io.AnyType.Input("previous", optional=True),
-                                 io.AnyType.Input("run_state", optional=True)],
+                                 io.AnyType.Input("run_state", optional=True),
+                                 io.Combo.Input("project_save", options=["new", "override"], default="new", optional=True)],
                          outputs=[io.String.Output("project_name")])
 
     @classmethod
@@ -446,8 +447,10 @@ class EasyH3NativeArtifact(io.ComfyNode):
                 raw_audio: dict[str, Any], low_latent: dict[str, Any] | None = None,
                 audio: dict[str, Any] | None = None, video_path: str = "", last_frame: torch.Tensor | None = None,
                 previous: Any = None, locked_audio: dict[str, Any] | None = None,
-                run_state: dict[str, Any] | None = None) -> io.NodeOutput:
+                run_state: dict[str, Any] | None = None, project_save: str = "new") -> io.NodeOutput:
         del previous
+        if project_save not in {"new", "override"}:
+            raise ValueError("project_save must be 'new' or 'override'")
         name = safe_h3_project_name(project_name)
         plans = compile_native_plan(tracks_info)
         meta = validate_native_latent(latent)
@@ -484,7 +487,8 @@ class EasyH3NativeArtifact(io.ComfyNode):
             if last_frame is not None:
                 media["last_frame"] = Path(work) / "last.png"
                 save_tail_image(last_frame, media["last_frame"])
-            saved = commit_native_generation(directory, segment_index, fields, record, latents, media)
+            saved = commit_native_generation(directory, segment_index, fields, record, latents, media,
+                                             replace=project_save == "override")
             if run_state is not None:
                 published = read_native_manifest(directory)
                 segment = next(item for item in published['segments'].values() if item.get('segment_id') == meta['segment_id'])
