@@ -42,7 +42,9 @@ def converted_track_data() -> dict:
     return data
 
 
-CONVERSION = {"track_data": converted_track_data(), "errors": [], "warnings": ["Task 2: Timing adjusted."], "tasks": [
+CONVERSION = {"track_data": converted_track_data(), "errors": [], "warnings": [
+    "Task 1: Timing adjusted to 0s–5.167s (5.167s) to fit H3's frame grid.", "Task 2: <Picture 3> has no matching image.",
+    "Task 2: Timing adjusted to 5.167s–10.333s (5.167s) to fit H3's frame grid."], "tasks": [
     {"index": 1, "id": "s01", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 1, "videos": 0, "audios": 0,
      "labels": {"<Picture 1>": "first frame: alice.png"}},
     {"index": 2, "id": "s02", "change": "added", "seconds": 5.167, "mode": "default", "continuity": "shot", "images": 0, "videos": 0, "audios": 0},
@@ -230,7 +232,9 @@ def test_apply_converts_on_the_page_and_sets_the_tab_from_the_first_task_to_run(
     # s01's saved result matches it, so the run starts at task 2 and runs the rest.
     assert report["run"] == {"start": 2, "count": -1}
     assert [task["status"] for task in report["tasks"]] == ["saved", "missing"]
-    assert report["warnings"] == ["Task 2: Timing adjusted."]
+    # Frame-grid alignment folds into one line so other warnings stand out.
+    assert report["warnings"] == ["Tasks 1, 2 were aligned to H3's frame grid; tasks[].seconds are the aligned lengths.",
+                                  "Task 2: <Picture 3> has no matching image."]
     assert [task["labels"] for task in report["tasks"]] == [{"<Picture 1>": "first frame: alice.png"}, {}]
     assert fake.status_requests[0]["project_name"] == "mv-alice"
     assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single", "first_pass_only": False}

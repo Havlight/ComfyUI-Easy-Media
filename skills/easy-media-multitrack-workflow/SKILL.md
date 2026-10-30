@@ -9,7 +9,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 必守规则
 
-- **用哪个分页要问**：用户没说用哪个分页或工作流时，用 `plan_workflow.py tabs` 列出分页后问用户，不要自己挑。用户说「用默认」才用 `assets/templates/v1.3.0-blank-workflow.json`（`apply --file` 开新分页），并提醒用户它的模型文件名可能跟本机不同。
+- **用哪个分页要问**：用户没说用哪个分页或工作流时，用 `plan_workflow.py tabs` 列出分页后问用户，不要自己挑。用户说的名称跟分页对不上，或有几个名称相近的分页时，也先问。用户说「用默认」才用 `assets/templates/v1.3.0-blank-workflow.json`（`apply --file` 开新分页），并提醒用户它的模型文件名可能跟本机不同。
 - **执行要明确授权**：只有用户说「执行、生成、出片、排队」时才排入队列；「规划、写进去」只改分页。
 - **任务 id 固定**：规划里每段任务都写自己的 `id`（如 `s01`、`s02`），修改时保留。已存结果依 id 对应。
 - **以分页为准**：每次修改都先 `read --tab 分页 -o current.json`，在读出来的规划上改再 `apply`，用户在分页里改过的地方（提示词、秒数等）才会留着。不要拿自己之前的规划文件直接套。
@@ -66,4 +66,4 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 交付
 
-说明用了哪个分页、专案名称、任务与时间轴摘要、锁定轨与公用媒体、要跑的范围，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态、输出文件与专案纪录的位置；不以「已排队」冒充「已生成」。
+说明用了哪个分页、专案名称、任务与时间轴摘要、锁定轨与公用媒体、要跑的范围，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态、输出文件与专案纪录的位置；不以「已排队」冒充「已生成」。输出文件的 `type` 是 `temp` 时，提醒用户那是预览档，ComfyUI 重开会被清掉；要保留就把输出节点（如 Save Video）改成存档，或另存一份。各段影片固定存在 `output/easy_media/projects/<专案>/`。

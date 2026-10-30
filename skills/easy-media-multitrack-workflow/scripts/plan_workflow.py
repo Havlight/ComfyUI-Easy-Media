@@ -18,6 +18,7 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -276,6 +277,18 @@ def first_task_to_run(statuses: list[dict], reusable: set[str]) -> int | None:
     return min(pending) + 1 if pending else None
 
 
+TIMING_WARNING = re.compile(r"Task (\d+): Timing adjusted\b")
+
+
+def fold_timing_warnings(warnings: list[str]) -> list[str]:
+    """One line for every task aligned to the frame grid; tasks[].seconds already shows the result."""
+    aligned = [match.group(1) for match in map(TIMING_WARNING.match, warnings) if match]
+    rest = [warning for warning in warnings if not TIMING_WARNING.match(warning)]
+    if not aligned:
+        return rest
+    return [f"Tasks {', '.join(aligned)} were aligned to H3's frame grid; tasks[].seconds are the aligned lengths.", *rest]
+
+
 def status_by_task(statuses: list[dict], reusable: set[str]) -> dict[str, str]:
     """Each task's status; a task split by markers takes the first part that needs a run."""
     by_task: dict[str, str] = {}
@@ -347,7 +360,7 @@ def apply(args: argparse.Namespace) -> int:
     editor_format = editor["widgets_values"][track_index - 1]
     resolved, uploaded = resolve_plan_files(base_url, plan)
     conversion = convert_on_page(base_url, track_data, editor_format, resolved, args.client_id, args.timeout)
-    report: dict[str, Any] = {"tab": key, "errors": conversion["errors"], "warnings": conversion["warnings"]}
+    report: dict[str, Any] = {"tab": key, "errors": conversion["errors"], "warnings": fold_timing_warnings(conversion["warnings"])}
     if uploaded:
         report["uploaded"] = uploaded
     if conversion["errors"] or conversion["track_data"] is None:

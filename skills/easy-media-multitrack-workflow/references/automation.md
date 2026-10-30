@@ -6,7 +6,7 @@
 
 - 用户在 ComfyUI 开好要用的工作流分页：分辨率、Project 的采样设置、模型都设好，时间轴可以是空的。没存档也可以，agent 读得到分页里没存的修改。
 - 用户没说用哪个分页时先问。用户说「用默认」时用 `assets/templates/v1.3.0-blank-workflow.json`：`apply --file` 会把它开成新分页。
-- agent 只改分页的 Editor 时间轴与 Project 的专案名称、开始段、段数，算一步，用户按 Ctrl+Z 可以还原；不存档、不改其他节点。
+- agent 只改分页的 Editor 时间轴与 Project 的专案名称、开始段、段数，算一步，用户按 Ctrl+Z 可以还原（重新整理页面会清掉还原纪录）；不存档、不改其他节点。
 - 分页里已有的影音轨若要保留，规划的 `tracks` 要列出它们的 `id`；没有 `id` 的轨道是新轨道，分页原有、规划没列出的轨道会被删除。
 
 ## 1. 找分页
@@ -48,7 +48,7 @@ python scripts/plan_workflow.py apply plan.json --tab "workflows/mmh3/MV.json" -
 - 规划里的本机文件先复制进 ComfyUI 的 `input/easy_media/imports/<哈希>/<原文件名>`；ComfyUI 读不到的文件会上传到同一位置（`uploaded` 列出上传了哪些）。
 - 有错误时返回码 2，输出 `errors`，分页不变：修正规划后重新套用。
 - 成功时分页已改好（未存档），并输出：
-  - `warnings`：例如秒数为对齐帧格被调整、提示词标签找不到素材、任务超过锁定音轨的长度、执行范围外还有要跑的段落；
+  - `warnings`：例如秒数为对齐帧格被调整（合成一句，实际秒数看 `tasks`）、提示词标签找不到素材、任务超过锁定音轨的长度、执行范围外还有要跑的段落；
   - `tasks`：每段对齐后的秒数、模式、`labels`（每个提示词标签对应的素材）、`status`；
   - `tracks`：每条影音轨的片段与起讫秒数；
   - `run`：`start` 是第一个要跑的段落（`status` 不是 `saved`），已写进 Project；`nothing_to_run: true` 表示每段的结果都相符，不需要执行。
