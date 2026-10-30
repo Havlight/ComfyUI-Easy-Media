@@ -160,12 +160,27 @@ export function installWorkflowSubmission(app: ComfyApp): () => void {
     else schedule(0)
   }
 
+  // A reloaded page keeps its tab's socket ID, so say this page is gone instead of letting the
+  // server list it beside its replacement until the heartbeat expires. A page restored from the
+  // back-forward cache registers again on its next poll.
+  function leave() {
+    if (!app.api.clientId) return
+    void app.api.fetchApi('/easy-media/workflow/leave', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, session_id: app.api.clientId }),
+      keepalive: true,
+    }).catch(() => {})
+  }
+
   app.api.addCustomEventListener?.(WORKFLOW_JOB_EVENT, wake)
+  window.addEventListener('pagehide', leave)
   // Defer until extension setup and the initial workflow restore have completed.
   timer = setTimeout(() => { void poll() }, 1000)
   return () => {
     stopped = true
     if (timer) clearTimeout(timer)
+    window.removeEventListener('pagehide', leave)
     app.api.removeCustomEventListener?.(WORKFLOW_JOB_EVENT, wake)
   }
 }

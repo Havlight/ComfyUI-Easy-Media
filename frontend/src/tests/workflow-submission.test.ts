@@ -157,4 +157,19 @@ describe('UI workflow submission', () => {
     expect(app.api.fetchApi.mock.calls.filter(([path]) => path.endsWith('/result')).length).toBeGreaterThan(1)
     expect(app.api.fetchApi.mock.calls.filter(([path]) => path.endsWith('/poll'))).toHaveLength(1)
   })
+
+  it('tells the server the page is gone when it closes or reloads', async () => {
+    const { app, nativeApp } = setup()
+    app.api.fetchApi.mockResolvedValue({ ok: true, json: async () => ({}) })
+    const stop = installWorkflowSubmission(nativeApp)
+    window.dispatchEvent(new Event('pagehide'))
+    const [path, init] = app.api.fetchApi.mock.calls.find(([called]) => called.endsWith('/leave')) as unknown as [string, RequestInit]
+    expect(path).toBe('/easy-media/workflow/leave')
+    expect(init.keepalive).toBe(true)
+    expect(JSON.parse(init.body as string)).toEqual({ client_id: expect.any(String), session_id: app.api.clientId })
+    stop()
+    app.api.fetchApi.mockClear()
+    window.dispatchEvent(new Event('pagehide'))
+    expect(app.api.fetchApi).not.toHaveBeenCalled()
+  })
 })

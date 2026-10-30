@@ -192,6 +192,21 @@ class WorkflowSubmissions:
                 return {**self.summary(job), **payload_fields, "claim_token": job["claim_token"]}
         return None
 
+    def leave(self, payload: dict) -> dict:
+        """A page that closed or reloaded; its waiting jobs fail now instead of after a minute."""
+        client_id = self._identifier(payload.get("client_id"), "client_id")
+        session_id = self._identifier(payload.get("session_id"), "session_id")
+        client = self.clients.get(client_id)
+        if client is None or client["session_id"] != session_id:
+            return {"left": False}
+        del self.clients[client_id]
+        for job in self.jobs.values():
+            if job["client_id"] == client_id and job["status"] == "pending":
+                job.update(status="failed", error="The browser page closed before taking the job")
+                for key in PAYLOAD_KEYS:
+                    job.pop(key, None)
+        return {"left": True}
+
     def get(self, request_id: str) -> dict:
         self._prune()
         if request_id not in self.jobs:
@@ -288,6 +303,10 @@ def register_workflow_routes(
     @routes.post("/easy-media/workflow/poll")
     async def poll(request: web.Request) -> web.Response:
         return await respond(lambda data: {"job": submissions.poll(data)}, await read_payload(request))
+
+    @routes.post("/easy-media/workflow/leave")
+    async def leave(request: web.Request) -> web.Response:
+        return await respond(submissions.leave, await read_payload(request))
 
     @routes.get("/easy-media/workflow/submissions/{request_id}")
     async def status(request: web.Request) -> web.Response:

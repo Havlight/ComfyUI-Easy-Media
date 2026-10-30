@@ -36,7 +36,7 @@ python3 scripts/submit_workflow.py RESULT.json                  # 把工作流�
 
 ## HTTP 接口
 
-`GET /easy-media/workflow/clients` 返回 `{"clients": [{"client_id": "...", "session_id": "...", "title": "...", "last_seen": 0}]}`。
+`GET /easy-media/workflow/clients` 返回 `{"clients": [{"client_id": "...", "session_id": "...", "title": "...", "last_seen": 0}]}`。页面关闭或重新整理时会通知服务器移除自己（`POST /easy-media/workflow/leave`）；没通知到的页面在 WebSocket 断线或 5 分钟没回报后移除。
 
 `POST /easy-media/workflow/submit`，要求 `Content-Type: application/json`：
 

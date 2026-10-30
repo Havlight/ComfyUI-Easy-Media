@@ -40,6 +40,19 @@ def test_only_one_client_is_selected_automatically():
     assert register(store, "page-2") is None
 
 
+def test_a_reloaded_page_leaves_so_its_replacement_is_selected():
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    store.submit(payload())
+    # The reloaded page keeps the tab's socket ID; the old page says it is gone.
+    register(store, "page-2")
+    assert store.leave({"client_id": "page-1", "session_id": "other"}) == {"left": False}
+    assert store.leave({"client_id": "page-1", "session_id": "socket-1"}) == {"left": True}
+    assert [client["client_id"] for client in store.list_clients()] == ["page-2"]
+    assert store.get("request-1")["status"] == "failed"
+    assert store.submit(payload(request_id="request-2"))["client_id"] == "page-2"
+
+
 def test_disconnect_and_expired_heartbeat_are_not_selectable(monkeypatch):
     sockets = {"socket-1"}
     store = module.WorkflowSubmissions(lambda sid: sid in sockets)
