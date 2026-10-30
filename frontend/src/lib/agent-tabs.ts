@@ -6,8 +6,6 @@ import type { TrackData } from '@/types/multitrack'
 
 const EDITOR_TYPE = 'easy multiTrackEditor'
 const PROJECT_TYPE = 'easy multitrackProject'
-// Serialized Project widgets the agent may set: project_name, segment_start_number, segment_count.
-const PROJECT_FIELD_INDEXES = [0, 2, 3]
 const NEXT_TAB = 'Workspace.NextOpenedWorkflow'
 const PREVIOUS_TAB = 'Workspace.PreviousOpenedWorkflow'
 
@@ -47,8 +45,6 @@ export interface AgentTabContent {
   key: string
   name: string
   workflow: Workflow
-  /** Changes when the Editor track data or the Project fields the agent sets change. */
-  fingerprint: string
   /** The H3 plan each Editor exports, by node id. */
   plans: Record<string, H3PlanFile>
 }
@@ -72,7 +68,6 @@ export interface TabApplyJob {
   request_id: string
   claim_token: string
   tab: string
-  expected?: string | null
   queue: boolean
   changes?: TabChanges | null
 }
@@ -80,7 +75,7 @@ export interface TabApplyJob {
 export type TabReadResult =
   | { status: 'read'; tabs: AgentTab[]; tab?: AgentTabContent }
   | { status: 'failed'; error: string }
-export type TabApplyResult = { status: 'applied'; tab_plan?: H3PlanFile } | QueueResult
+export type TabApplyResult = { status: 'applied' } | QueueResult
 
 interface SerializedNode { id: number | string; type?: string; widgets_values?: unknown }
 
@@ -100,27 +95,6 @@ function trackDataValue(node: SerializedNode): string | undefined {
       return false
     }
   })
-}
-
-/** A short hash of the parts the agent writes, so it can tell when someone changed them meanwhile. */
-export function tabFingerprint(workflow: Workflow): string {
-  const parts = [
-    ...nodesOf(workflow, EDITOR_TYPE).map((node) => [String(node.id), trackDataValue(node) ?? null]),
-    ...nodesOf(workflow, PROJECT_TYPE).map((node) => [String(node.id),
-      ...PROJECT_FIELD_INDEXES.map((index) => (Array.isArray(node.widgets_values) ? node.widgets_values[index] : undefined) ?? null)]),
-  ].sort((left, right) => String(left[0]).localeCompare(String(right[0])))
-  const text = JSON.stringify(parts)
-  // cyrb53: enough to notice an edit; this is not a security boundary.
-  let h1 = 0xdeadbeef
-  let h2 = 0x41c6ce57
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index)
-    h1 = Math.imul(h1 ^ code, 2654435761)
-    h2 = Math.imul(h2 ^ code, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16)
 }
 
 function editorPlans(workflow: Workflow): Record<string, H3PlanFile> {
@@ -178,9 +152,7 @@ export async function readAgentTab(app: ComfyApp, job: TabReadJob): Promise<TabR
     if (!job.tab) return { status: 'read', tabs }
     const tab = findTab(app, job.tab)
     const workflow = await tabWorkflow(app, tab)
-    return { status: 'read', tabs, tab: {
-      key: tab.path, name: tab.filename, workflow, fingerprint: tabFingerprint(workflow), plans: editorPlans(workflow),
-    } }
+    return { status: 'read', tabs, tab: { key: tab.path, name: tab.filename, workflow, plans: editorPlans(workflow) } }
   } catch (error) {
     return { status: 'failed', error: errorMessage(error) }
   }
@@ -205,10 +177,6 @@ export async function applyAgentTab(app: ComfyApp, job: TabApplyJob): Promise<Ta
       await activateTab(app, tab)
     }
     const graph = app.rootGraph
-    if (job.expected && tabFingerprint(graph.serialize()) !== job.expected) {
-      throw new Error('The tab changed after it was read; read it again')
-    }
-    let plan: H3PlanFile | undefined
     if (job.changes) {
       const { editor_id: editorId, project_id: projectId, project = {}, track_data: trackData } = job.changes
       const editor = graph.getNodeById(editorId)
@@ -222,15 +190,13 @@ export async function applyAgentTab(app: ComfyApp, job: TabApplyJob): Promise<Ta
       } finally {
         graph.afterChange()
       }
-      // Let the Editor settle on the new data first, so the plan below is what a later read exports.
+      // Let the Editor settle on the new data first, so the recorded edit is what it shows.
       await new Promise((resolve) => setTimeout(resolve, 50))
       // Record the edit like a person's, for undo and the unsaved marker.
       store.activeWorkflow?.changeTracker?.captureCanvasState?.()
       app.canvas.setDirty(true, true)
-      const settled = editor.widgets?.find((widget) => widget.name === 'track_data')?.value
-      plan = exportH3Plan(normalizeTrackData(JSON.parse(typeof settled === 'string' ? settled : JSON.stringify(trackData)) as TrackData))
     }
-    if (!job.queue) return { status: 'applied', ...(plan ? { tab_plan: plan } : {}) }
+    if (!job.queue) return { status: 'applied' }
     return await queueCurrentWorkflow(app, graph.serialize().id)
   } catch (error) {
     return { status: 'failed', error: errorMessage(error) }

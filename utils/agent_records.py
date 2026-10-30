@@ -13,7 +13,7 @@ from pathlib import Path
 from aiohttp import web
 
 # Only the agent's own small text files; nothing executable, nothing outside the project folder.
-RECORD_PATH = re.compile(r"(README\.md|history\.json|tab-plan\.json|plans/[A-Za-z0-9_.-]{1,100}\.json)")
+RECORD_PATH = re.compile(r"(README\.md|history\.json|plans/[A-Za-z0-9_.-]{1,100}\.json)")
 MAX_RECORD_BYTES = 4 * 1024 * 1024
 
 
@@ -29,7 +29,7 @@ class AgentRecords:
 
     def _file(self, project: object, path: object) -> Path:
         if not isinstance(path, str) or not RECORD_PATH.fullmatch(path) or ".." in path:
-            raise ValueError("path must be README.md, history.json, tab-plan.json or plans/<name>.json")
+            raise ValueError("path must be README.md, history.json or plans/<name>.json")
         return self.directory(project) / path
 
     def read(self, project: object, path: object) -> dict:

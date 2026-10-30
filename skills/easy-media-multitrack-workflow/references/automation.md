@@ -23,7 +23,9 @@ python scripts/plan_workflow.py tabs
 python scripts/plan_workflow.py read --tab "workflows/mmh3/MV.json" -o current.json
 ```
 
-输出 Project（专案名称、开始段、段数）、Editor（format、分辨率、帧率）、每段的摘要，`-o` 写出分页目前的规划（可以直接拿来改）。`tab_edits` 列出用户在上次 apply 之后在分页里改过的地方（例如 `s03: prompt`）；`null` 表示这个专案还没 apply 过。
+输出 Project（专案名称、开始段、段数）、Editor（format、分辨率、帧率）、每段的摘要与 `status`，`-o` 写出分页目前的规划。要修改时就在这份规划上改，用户在分页里改过的地方才会留着。
+
+`status` 是 Project 对每段已存结果的检查（与 Editor 显示的一样）：`saved` 已存结果跟目前内容相符；`edited` 内容改过；`parent_changed` 接着的前一段改过或换了版本；`missing` 没有结果；`pending` 读不到片段 LoRA 设置，当作相符；`legacy` 旧格式结果。
 
 ## 3. 读素材长度
 
@@ -35,7 +37,7 @@ python scripts/plan_workflow.py probe "D:/mv/song.wav" "D:/mv/dance.mp4"
 
 ## 4. 写规划文件
 
-格式见 [plan-file.md](plan-file.md)，分段与提示词见 [writing.md](writing.md)。每段任务写固定的 `id`；歌曲、影片用 `tracks` 放到某段开头。规划文件放在 agent 自己的工作目录即可，执行时脚本会把实际跑的规划存进专案纪录。
+从第 2 步写出的规划改起（空白分页就新写）。格式见 [plan-file.md](plan-file.md)，分段与提示词见 [writing.md](writing.md)。每段任务写固定的 `id`；歌曲、影片用 `tracks` 放到某段开头。规划文件放在 agent 自己的工作目录即可，执行时脚本会把实际跑的规划存进专案纪录。
 
 ## 5. 套用到分页
 
@@ -44,16 +46,14 @@ python scripts/plan_workflow.py apply plan.json --tab "workflows/mmh3/MV.json" -
 ```
 
 - 规划里的本机文件先复制进 ComfyUI 的 `input/easy_media/imports/<哈希>/<原文件名>`；ComfyUI 读不到的文件会上传到同一位置（`uploaded` 列出上传了哪些）。
-- 用户在上次 apply 之后改过分页时（`tab_edits`），返回码 2、不套用：先 `read` 看改了什么，把修改带进规划，再加 `--overwrite-tab-edits` 套用。
 - 有错误时返回码 2，输出 `errors`，分页不变：修正规划后重新套用。
-- 读到分页之后用户又改了 Editor 或 Project 时，页面会拒绝套用；重新执行即可。
 - 成功时分页已改好（未存档），并输出：
-  - `warnings`：例如秒数为对齐帧格被调整、提示词标签找不到素材、任务超过锁定音轨的长度、分辨率跟上次执行不同；
-  - `tasks`：每段对齐后的秒数、模式、`labels`（每个提示词标签对应的素材），`saved` 表示这个专案名称下已有对应的生成结果；
+  - `warnings`：例如秒数为对齐帧格被调整、提示词标签找不到素材、任务超过锁定音轨的长度、执行范围外还有要跑的段落；
+  - `tasks`：每段对齐后的秒数、模式、`labels`（每个提示词标签对应的素材）、`status`；
   - `tracks`：每条影音轨的片段与起讫秒数；
-  - `run`：`start` 是第一个需要生成的段落，已写进 Project；`nothing_to_run: true` 表示全部都有结果，不需要执行。
-- `--start N` 从指定段落开始，`--count N` 只跑 N 段（默认 `-1` 跑完剩下的）。Project 会把范围内的每一段都重新生成，只改了一小段时自己设范围；后面接着它的段落（`context`、`context_drift`、`previous_frame`）要包含在范围内。
-- 专案名称决定结果存在哪里。同一支影片沿用原名称，没改到的段落才能沿用；Project 每次生成都另存新版本，不会覆盖旧影片。
+  - `run`：`start` 是第一个要跑的段落（`status` 不是 `saved`），已写进 Project；`nothing_to_run: true` 表示每段的结果都相符，不需要执行。
+- `--start N` 从指定段落开始，`--count N` 只跑 N 段（默认 `-1` 跑完剩下的）。Project 会把范围内的每一段都重新生成，只改了一小段时自己设范围；范围外还有要跑的段落时会警告。
+- 专案名称决定结果存在哪里。同一支影片沿用原名称，没改到的段落才能沿用。重跑的段落是另存新版本还是取代目前版本，看用户设的 `project_save`（`new` / `override`），agent 不改它。
 
 ## 6. 执行并等待
 
@@ -63,16 +63,16 @@ python scripts/plan_workflow.py apply plan.json --tab "workflows/mmh3/MV.json" -
 python scripts/submit_workflow.py --tab "workflows/mmh3/MV.json" --until-done
 ```
 
-- 页面切到那个分页按原生执行，再切回用户原本看的分页；返回 `request_id`、`prompt_id`。读取后有人改了 Editor 或 Project 时不执行，重新执行即可。
+- 页面切到那个分页按原生执行，再切回用户原本看的分页；返回 `request_id`、`prompt_id`。
 - 排队成功后，这次执行写进专案纪录：`history.json` 新增一笔，`plans/run-NNN.json` 存这次跑的规划。
 - `--until-done` 一直等到生成结束，适合放在后台执行：工具能在指令结束时通知（如 Claude Code 的背景指令）就这样做，等待时不要查询、不要另外排程。
 - 工具不能放后台时用 `--wait 540`，最多等 9 分钟，避免超过工具的指令时间上限。返回码 3 时稍后继续等，不要重新提交：
 
   ```bash
-  python scripts/submit_workflow.py --status <request_id> --project mv-alice --wait 540
+  python scripts/submit_workflow.py --status <request_id> --wait 540
   ```
 
-- 返回码：0 成功（`generation.outputs` 列出输出文件），2 失败（`generation.node_type`、`message`），3 还在跑（`generation.state` 为 `running` 或 `pending`）。结束时 `history.json` 记下结果与每段目前用的影片版本。
+- 返回码：0 成功（`generation.outputs` 列出输出文件），2 失败（`generation.node_type`、`message`），3 还在跑（`generation.state` 为 `running` 或 `pending`）。改了分辨率或采样方式后接续旧段落，可能在开始生成前失败（`VAE_FALLBACK_REQUIRED`），见 SKILL.md 的「分辨率」。
 
 ## 7. 看画面检查（选用）
 
@@ -86,7 +86,7 @@ python scripts/review_frames.py --project mv-alice --tasks s03,s04 --user-asked
 
 ## 8. 修改与重跑
 
-改规划里对应段落（保留 `id`），回到第 5 步，沿用同一个专案名称。用户在分页里动过就先回第 2 步。同一个需求最多自动重跑 3 轮，再要重跑先问用户。
+回到第 2 步读出目前的规划，改对应段落（保留 `id`），再套用，沿用同一个专案名称。同一个需求最多自动重跑 3 轮，再要重跑先问用户。
 
 ## 专案纪录
 
@@ -95,12 +95,11 @@ python scripts/review_frames.py --project mv-alice --tasks s03,s04 --user-asked
 | 文件 | 内容 | 谁写 |
 |---|---|---|
 | `README.md` | 影片描述、分段表（每段做什么、用哪些素材）、每次改了什么 | agent：`plan_workflow.py record README.md --project 名称` |
-| `history.json` | 每次执行：编号、时间、`request_id`、`prompt_id`、分页、范围、分辨率、规划文件、结果、每段的影片 | `submit_workflow.py` |
+| `history.json` | 每次排队：编号、时间、`request_id`、`prompt_id`、分页、范围、分辨率、规划文件 | `submit_workflow.py` |
 | `plans/run-NNN.json` | 每次执行跑的规划，可以用 `apply` 套回分页还原 | `submit_workflow.py` |
-| `tab-plan.json` | 上次 apply 后分页的规划，用来找出用户之后在分页里的修改 | `plan_workflow.py apply` |
 | `review/` | 看画面检查的图 | `review_frames.py` |
 
-每轮执行后更新 `README.md`，简短写下这轮改了什么。不在本机另存工作流文件。
+执行的结果看 `--until-done` 的返回内容；之后要查，用 `prompt_id` 查 ComfyUI 的历史，或看 Project Video Combine 节点里每段的版本。每轮执行后更新 `README.md`，简短写下这轮改了什么。不在本机另存工作流文件。
 
 ## 环境注意
 

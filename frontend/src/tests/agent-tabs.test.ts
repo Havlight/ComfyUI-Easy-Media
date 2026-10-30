@@ -1,6 +1,6 @@
 import type { ComfyApp } from '@comfyorg/comfyui-frontend-types'
 import { describe, expect, it, vi } from 'vitest'
-import { applyAgentTab, readAgentTab, tabFingerprint } from '@/lib/agent-tabs'
+import { applyAgentTab, readAgentTab } from '@/lib/agent-tabs'
 import type { TrackData } from '@/types/multitrack'
 
 const NEXT = 'Workspace.NextOpenedWorkflow'
@@ -77,19 +77,16 @@ describe('agent access to open workflow tabs', () => {
     const tab = hidden.status === 'read' ? hidden.tab! : undefined
     expect(tab?.workflow).toMatchObject({ id: 'graph-a' })
     expect(tab?.plans['14']).toMatchObject({ format: 'easy-media-h3-plan', tasks: [] })
-    expect(tab?.fingerprint).toBe(tabFingerprint(tab!.workflow))
     expect(await readAgentTab(nativeApp, { kind: 'tabs', request_id: 'r', claim_token: 't', tab: 'workflows/gone.json' }))
       .toMatchObject({ status: 'failed', error: expect.stringContaining('No open tab') })
   })
 
   it('sets the Editor and Project of another tab as one undoable edit, then returns to the tab in view', async () => {
-    const { app, nativeApp, editor, project, tracker, execute, graph, isActive, tabA, tabB } = setup()
-    // What a read of the hidden tab reported.
-    const expected = tabFingerprint(tabA.activeState as never)
+    const { app, nativeApp, editor, project, tracker, execute, graph, isActive, tabB } = setup()
     const result = await applyAgentTab(nativeApp, { kind: 'apply', request_id: 'r', claim_token: 't', tab: 'workflows/mv.json',
-      expected, queue: false, changes: { editor_id: 14, project_id: 15, track_data: trackData('A dancer'),
+      queue: false, changes: { editor_id: 14, project_id: 15, track_data: trackData('A dancer'),
         project: { project_name: 'mv', segment_start_number: 2, segment_count: -1 } } })
-    expect(result).toMatchObject({ status: 'applied', tab_plan: { tasks: [{ id: 's01', prompt: 'A dancer' }] } })
+    expect(result).toEqual({ status: 'applied' })
     expect(JSON.parse(editor.widgets[1].value as string).tracks[0].segments[0].id).toBe('s01')
     expect(project.widgets.map((widget) => widget.value)).toEqual(['mv', 'override', 2, -1])
     expect(graph.beforeChange).toHaveBeenCalledTimes(1)
@@ -100,13 +97,14 @@ describe('agent access to open workflow tabs', () => {
     expect(app.queuePrompt).not.toHaveBeenCalled()
   })
 
-  it('leaves a tab alone when it changed after it was read', async () => {
-    const { nativeApp, editor, isActive, tabB } = setup()
+  it('changes nothing when the named Editor is not one, and still returns to the tab in view', async () => {
+    const { app, nativeApp, editor, isActive, tabB } = setup()
     const before = editor.widgets[1].value
     const result = await applyAgentTab(nativeApp, { kind: 'apply', request_id: 'r', claim_token: 't', tab: 'workflows/mv.json',
-      expected: 'stale', queue: true, changes: { editor_id: 14, track_data: trackData('Late') } })
-    expect(result).toMatchObject({ status: 'failed', error: expect.stringContaining('changed after it was read') })
+      queue: true, changes: { editor_id: 15, track_data: trackData('Late') } })
+    expect(result).toMatchObject({ status: 'failed', error: expect.stringContaining('is not a MultiTrack Editor') })
     expect(editor.widgets[1].value).toBe(before)
+    expect(app.queuePrompt).not.toHaveBeenCalled()
     expect(isActive(tabB)).toBe(true)
   })
 

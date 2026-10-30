@@ -1,7 +1,6 @@
 """The skill's automation scripts against a fake ComfyUI and page: tabs, plans, runs, probing, review."""
 
 import asyncio
-import hashlib
 import importlib.util
 import json
 import re
@@ -66,11 +65,6 @@ class FakePage:
         return {"format": "easy-media-h3-plan", "version": 1, "tasks": [
             {"id": segment["id"], "prompt": segment["content"].get("user_prompt", "")} for segment in data["tracks"][0]["segments"]]}
 
-    def fingerprint(self) -> str:
-        project = self._node("easy multitrackProject")["widgets_values"]
-        parts = [self._node("easy multiTrackEditor")["widgets_values"][4], project[0], project[2], project[3]]
-        return hashlib.sha256(json.dumps(parts).encode()).hexdigest()[:16]
-
     def answer(self, job: dict) -> dict:
         kind = job.get("kind", "workflow")
         if kind == "workflow":
@@ -81,20 +75,16 @@ class FakePage:
             if not job.get("tab"):
                 return {"status": "read", "tabs": tabs}
             return {"status": "read", "tabs": tabs, "tab": {"key": TAB, "name": "mv", "workflow": json.loads(json.dumps(self.workflow)),
-                                                            "fingerprint": self.fingerprint(), "plans": {"14": self.plan()}}}
+                                                            "plans": {"14": self.plan()}}}
         if kind == "plan":
             return {"status": "converted", "conversion": CONVERSION}
-        if job["expected"] and job["expected"] != self.fingerprint():
-            return {"status": "failed", "error": "The tab changed after it was read; read it again"}
-        result: dict = {"status": "applied"}
         if job.get("changes"):
             changes = job["changes"]
             self._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(changes["track_data"])
             project = self._node("easy multitrackProject")["widgets_values"]
             for name, index in (("project_name", 0), ("segment_start_number", 2), ("segment_count", 3)):
                 project[index] = changes["project"][name]
-            result["tab_plan"] = self.plan()
-        return {"status": "queued", "prompt_id": "p1"} if job["queue"] else result
+        return {"status": "queued", "prompt_id": "p1"} if job["queue"] else {"status": "applied"}
 
     async def serve(self, client: TestClient, jobs: int) -> None:
         body = {"client_id": "page-1", "session_id": "socket-1"}
@@ -114,6 +104,8 @@ class FakeComfy:
         self.server_files = {"C:/mv/alice.png"}
         self.uploads: list[tuple[str, str, bytes]] = []
         self.status_requests: list[dict] = []
+        # The Project's check of each task's saved result; tasks not listed have none.
+        self.statuses = {"s01": "saved"}
         self.records = tmp_path / "records"
         self.tmp_path = tmp_path
 
@@ -151,7 +143,7 @@ class FakeComfy:
             self.status_requests.append(body)
             tasks = body["tracks_info"]["tracks"][0]["segments"]
             return web.json_response({"project_name": body["project_name"], "tasks": [
-                {"segment_id": task["id"], "index": index, "status": "saved" if task["id"] == "s01" else "missing"}
+                {"segment_id": task["id"], "index": index, "status": self.statuses.get(task["id"], "missing")}
                 for index, task in enumerate(tasks)]})
 
         @routes.get("/easy-media/project")
@@ -235,37 +227,33 @@ def test_apply_converts_on_the_page_and_sets_the_tab_from_the_first_task_to_run(
     assert subfolder.startswith("easy_media/imports/") and name == "song.wav" and data == b"wav-bytes"
     assert sent["tracks"][0]["clips"] == [{"input": f"{subfolder}/song.wav", "at": 1}]
     assert report["uploaded"] == [str(song)]
-    # s01 already has its saved result, so the run starts at task 2 and runs the rest.
+    # s01's saved result matches it, so the run starts at task 2 and runs the rest.
     assert report["run"] == {"start": 2, "count": -1}
-    assert [task["saved"] for task in report["tasks"]] == [True, False]
+    assert [task["status"] for task in report["tasks"]] == ["saved", "missing"]
+    assert report["warnings"] == ["Task 2: Timing adjusted."]
     assert [task["labels"] for task in report["tasks"]] == [{"<Picture 1>": "first frame: alice.png"}, {}]
     assert fake.status_requests[0]["project_name"] == "mv-alice"
     assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single", "first_pass_only": False}
-    # The tab changed only where the agent writes, after checking nobody edited it meanwhile.
-    assert apply["kind"] == "apply" and apply["queue"] is False and apply["expected"] == template_page().fingerprint()
+    # The tab changed only where the agent writes; no workflow file or record was written.
+    assert apply["kind"] == "apply" and apply["queue"] is False
     assert apply["changes"]["project"] == {"project_name": "mv-alice", "segment_start_number": 2, "segment_count": -1}
     assert [task["id"] for task in apply["changes"]["track_data"]["tracks"][0]["segments"]] == ["s01", "s02"]
-    assert fake.record("mv-alice", "tab-plan.json") == page.plan()
-    assert not list(tmp_path.glob("*.workflow.json"))
+    assert not list(tmp_path.glob("*.workflow.json")) and not fake.records.exists()
 
 
-def test_apply_stops_when_a_person_edited_the_tab_since_the_last_apply(tmp_path):
+def test_apply_runs_the_range_the_agent_sets_and_warns_about_tasks_left_out(tmp_path):
     fake, page = FakeComfy(tmp_path), template_page()
-    editor = page._node("easy multiTrackEditor")
-    editor["widgets_values"][4] = json.dumps(converted_track_data())
-    baseline = page.plan()
-    (fake.records / "mv-alice").mkdir(parents=True)
-    (fake.records / "mv-alice/tab-plan.json").write_text(json.dumps(baseline), encoding="utf-8")
-    data = converted_track_data()
-    data["tracks"][0]["segments"][1]["content"]["user_prompt"] = "Two, as the person rewrote it"
-    editor["widgets_values"][4] = json.dumps(data)
+    fake.statuses = {"s01": "edited", "s02": "parent_changed"}
     plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}, {"id": "s02", "seconds": 5}]})
 
-    code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
-                                      "--tab", TAB, "--project-name", "mv-alice")
-    assert code == 2, stderr
-    assert json.loads(stdout)["tab_edits"] == ["s02: prompt"]
-    assert [job["kind"] for job in page.jobs] == ["tabs"]
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv-alice", "--start", "1", "--count", "1")
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    assert report["run"] == {"start": 1, "count": 1}
+    assert [task["status"] for task in report["tasks"]] == ["edited", "parent_changed"]
+    assert report["warnings"][-1] == "Tasks 2 do not match their saved results but are outside the run range."
+    assert page.jobs[-1]["changes"]["project"] == {"project_name": "mv-alice", "segment_start_number": 1, "segment_count": 1}
 
 
 def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
@@ -276,9 +264,9 @@ def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
     assert code == 0, stderr
     report = json.loads(stdout)
     assert report["project"]["project_name"] == "" and report["editor"]["format"] == "MiniMax"
-    assert [task["id"] for task in report["tasks"]] == ["s01", "s02"]
-    # No baseline yet: the agent has not applied a plan to this project.
-    assert report["tab_edits"] is None
+    # Whether each task's saved result still matches the tab, as the Project checks it.
+    assert [(task["id"], task["status"]) for task in report["tasks"]] == [("s01", "saved"), ("s02", "missing")]
+    assert fake.status_requests[0]["tracks_info"] == converted_track_data()
     assert json.loads(out.read_text(encoding="utf-8")) == page.plan()
 
 
@@ -292,7 +280,7 @@ def test_apply_reports_plan_errors_without_touching_the_tab(tmp_path):
     assert [job["kind"] for job in page.jobs] == ["tabs"]
 
 
-def test_running_a_tab_records_the_run_and_how_it_ended(tmp_path):
+def test_running_a_tab_records_the_run_and_waits_for_it(tmp_path):
     fake, page = FakeComfy(tmp_path), template_page()
     page._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(converted_track_data())
     page._node("easy multitrackProject")["widgets_values"][:4] = ["mv-alice", "override", 2, -1]
@@ -304,9 +292,8 @@ def test_running_a_tab_records_the_run_and_how_it_ended(tmp_path):
     read, run = page.jobs
     assert run["kind"] == "apply" and run["queue"] is True and run["changes"] is None
     [entry] = fake.record("mv-alice", "history.json")
-    assert entry["run"] == 1 and entry["prompt_id"] == "p1" and entry["state"] == "success"
+    assert entry["run"] == 1 and entry["prompt_id"] == "p1" and "state" not in entry
     assert (entry["start"], entry["count"], entry["plan"]) == (2, -1, "plans/run-001.json")
-    assert entry["videos"] == {"s01": "easy_media/projects/mv/s01.mp4", "s02": "easy_media/projects/mv/s02.mp4"}
     assert entry["resolution"]["resolution"] == "width x height (megapixels)"
     assert fake.record("mv-alice", "plans/run-001.json") == page.plan()
 

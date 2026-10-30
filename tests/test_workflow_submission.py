@@ -147,7 +147,7 @@ def test_timeout_never_redelivers_and_late_result_can_resolve_unknown(monkeypatc
 
 
 def apply_payload(**kwargs):
-    return {"request_id": "apply-1", "tab": "workflows/mv.json", "expected": "abc", "queue": False,
+    return {"request_id": "apply-1", "tab": "workflows/mv.json", "queue": False,
             "changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
                         "project": {"project_name": "mv", "segment_start_number": 2, "segment_count": -1}}, **kwargs}
 
@@ -160,7 +160,7 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
     store.read_tabs({"request_id": "tabs-1"})
     job = register(store)
     assert job["kind"] == "tabs" and job["tab"] is None
-    tab = {"key": "workflows/mv.json", "workflow": {"nodes": []}, "fingerprint": "abc", "plans": {}}
+    tab = {"key": "workflows/mv.json", "workflow": {"nodes": []}, "plans": {}}
     with pytest.raises(ValueError):
         store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read"})
     result = store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read", "tabs": [], "tab": tab})
@@ -168,8 +168,8 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
     store.apply(apply_payload())
     job = register(store)
     assert job["changes"]["project"]["project_name"] == "mv" and "changes" not in store.get("apply-1")
-    result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied", "tab_plan": {"tasks": []}})
-    assert result == {**result, "status": "applied", "tab_plan": {"tasks": []}}
+    result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied"})
+    assert result["status"] == "applied"
     # Changing a tab can be retried; running it might already have happened.
     store.apply(apply_payload(request_id="apply-2"))
     register(store)
@@ -182,7 +182,7 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
 
 
 @pytest.mark.parametrize("change", [
-    {"tab": ""}, {"tab": None}, {"expected": 3}, {"queue": "yes"}, {"changes": None},
+    {"tab": ""}, {"tab": None}, {"queue": "yes"}, {"changes": None},
     {"changes": {"editor_id": 14, "track_data": {"tracks": {}}}},
     {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"seed": 1}, "project_id": 15}},
     {"changes": {"editor_id": True, "track_data": {"tracks": []}}},

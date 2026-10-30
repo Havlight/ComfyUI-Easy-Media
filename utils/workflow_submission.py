@@ -29,9 +29,8 @@ RESULT_STATUSES = {
     "apply": ("applied", "queued", "failed", "unknown"),
     "workflow": ("loaded", "queued", "failed", "unknown"),
 }
-# What a page may report besides the status: the tabs it has, the tab it read or opened, the
-# plan the tab's Editor now exports.
-RESULT_FIELDS = {"tabs": list, "tab": (dict, str), "tab_plan": dict}
+# What a page may report besides the status: the tabs it has, the tab it read or opened.
+RESULT_FIELDS = {"tabs": list, "tab": (dict, str)}
 
 
 class WorkflowSubmissions:
@@ -143,9 +142,6 @@ class WorkflowSubmissions:
         """Ask a page to change an open tab's Editor and Project, and optionally run it."""
         self._prune()
         tab = self._tab_key(payload.get("tab"), True)
-        expected = payload.get("expected")
-        if expected is not None and (not isinstance(expected, str) or len(expected) > 128):
-            raise ValueError("expected must be the fingerprint a tabs job returned")
         queue = payload.get("queue", False)
         if type(queue) is not bool:
             raise ValueError("queue must be a boolean")
@@ -162,7 +158,7 @@ class WorkflowSubmissions:
                 raise ValueError("changes need the editor_id (and project_id) of nodes in the tab")
         if changes is None and not queue:
             raise ValueError("apply needs changes, queue, or both")
-        return self._create(payload, "apply", dict(tab=tab, expected=expected, queue=queue, changes=changes))
+        return self._create(payload, "apply", dict(tab=tab, queue=queue, changes=changes))
 
     def submit(self, payload: dict) -> dict:
         self._prune()

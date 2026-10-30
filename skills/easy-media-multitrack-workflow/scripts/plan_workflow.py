@@ -2,12 +2,12 @@
 """Work on the workflow tabs open in ComfyUI with H3 plan files, or read the length of media files.
 
 tabs:   the open workflow tabs of each ComfyUI page.
-read:   one tab's Project, Editor and plan, unsaved edits included, and what a person changed in it
-        since the agent last applied a plan.
+read:   one tab's Project, Editor and plan, unsaved edits included, and whether each task's saved
+        result still matches it.
 apply:  PLAN.json -> the tab's Editor and Project. Files the plan names are copied into ComfyUI
         (uploaded when the server cannot read them), the page converts the plan with the Editor's
-        own importer, and the Project starts at the first task without a saved result. The tab
-        changes like a person's edit (one undo step); nothing is saved to disk or queued.
+        own importer, and the Project starts at the first task whose saved result does not match.
+        The tab changes like a person's edit (one undo step); nothing is saved to disk or queued.
 record: keep a note (README.md) in the project's agent records folder.
 probe:  the length of video and audio files, to plan tasks around a song or clip.
 """
@@ -39,7 +39,6 @@ from patch_workflow import (  # noqa: E402
     write_json_atomic,
 )
 from submit_workflow import (  # noqa: E402
-    get_record,
     open_workflow,
     page_job,
     project_fields,
@@ -263,7 +262,8 @@ def project_snapshot(workflow: dict, project: dict) -> dict:
 
 
 def saved_tasks(base_url: str, project_name: str, track_data: dict, snapshot: dict) -> tuple[list[dict], set[str]]:
-    """Each task's saved-result status, and the statuses that can be reused as they are."""
+    """The Project's check of each task's saved result against the timeline (saved, edited,
+    parent_changed, missing, pending or legacy), and the statuses that need no run."""
     result = request_json(base_url, "/easy-media/project/timeline-status",
                           {"project_name": project_name, "tracks_info": track_data, "project_snapshot": snapshot})
     # Without the LoRA settings a saved result reports "pending"; it still matches the task.
@@ -276,25 +276,14 @@ def first_task_to_run(statuses: list[dict], reusable: set[str]) -> int | None:
     return min(pending) + 1 if pending else None
 
 
-PLAN_FIELDS = ("seconds", "gap_before", "mode", "continuity", "seam", "prompt", "images", "videos", "audios", "ref_image_size")
-
-
-def plan_differences(before: dict, after: dict) -> list[str]:
-    """What changed between two plans the Editor exported, task by task."""
-    old = {task.get("id"): task for task in before.get("tasks", []) if isinstance(task, dict)}
-    new = {task.get("id"): task for task in after.get("tasks", []) if isinstance(task, dict)}
-    changes = [f"{task_id}: added" for task_id in new if task_id not in old]
-    changes += [f"{task_id}: removed" for task_id in old if task_id not in new]
-    for task_id, task in new.items():
-        if task_id in old:
-            fields = [field for field in PLAN_FIELDS if task.get(field) != old[task_id].get(field)]
-            if fields:
-                changes.append(f"{task_id}: {', '.join(fields)}")
-    if [task_id for task_id in new if task_id in old] != [task_id for task_id in old if task_id in new]:
-        changes.append("task order")
-    if before.get("tracks") != after.get("tracks"):
-        changes.append("timeline tracks")
-    return changes
+def status_by_task(statuses: list[dict], reusable: set[str]) -> dict[str, str]:
+    """Each task's status; a task split by markers takes the first part that needs a run."""
+    by_task: dict[str, str] = {}
+    for item in statuses:
+        task_id = item["segment_id"].split(":marker:")[0]
+        if task_id not in by_task or (by_task[task_id] in reusable and item["status"] not in reusable):
+            by_task[task_id] = item["status"]
+    return by_task
 
 
 def tab_parts(content: dict) -> tuple[dict, dict, dict, dict]:
@@ -304,14 +293,6 @@ def tab_parts(content: dict) -> tuple[dict, dict, dict, dict]:
     editor = choose_editor(workflow, project)
     settings = next(item for item in inspect_workflow(workflow)["editors"] if item["id"] == editor.get("id"))
     return workflow, project, editor, settings
-
-
-def tab_edits(base_url: str, project_name: str, current: dict | None) -> list[str] | None:
-    """What a person changed in the tab since the agent last applied a plan; None without a baseline."""
-    if not project_name or current is None:
-        return None
-    baseline = get_record(base_url, project_name, "tab-plan.json")
-    return None if baseline is None else plan_differences(json.loads(baseline), current)
 
 
 def tabs(args: argparse.Namespace) -> int:
@@ -335,26 +316,23 @@ def read(args: argparse.Namespace) -> int:
     plan = content["plans"].get(str(editor.get("id")))
     if args.output and plan is not None:
         write_json_atomic(args.output, plan)
+    statuses, reusable = saved_tasks(base_url, fields["project_name"] or "", track_data_widget(editor)[1],
+                                     project_snapshot(workflow, project))
+    by_task = status_by_task(statuses, reusable)
     report = {
         "tab": content["key"],
         "project": {"id": project.get("id"), **fields},
         "editor": {"id": editor.get("id"), "format": settings["format"], "resolution": settings["resolution"],
                    "frame_rate": settings["frame_rate"]},
         "tasks": [{"id": task.get("id"), "seconds": task.get("seconds"), "mode": task.get("mode", "default"),
-                   "continuity": task.get("continuity", "shot"), "prompt": str(task.get("prompt") or "")[:120]}
+                   "continuity": task.get("continuity", "shot"), "status": by_task.get(task.get("id"), "missing"),
+                   "prompt": str(task.get("prompt") or "")[:120]}
                   for task in (plan or {}).get("tasks", [])],
-        "tab_edits": tab_edits(base_url, fields["project_name"], plan),
     }
     if args.output:
         report["plan_file"] = str(args.output)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
-
-
-def last_run(base_url: str, project_name: str) -> dict | None:
-    history = get_record(base_url, project_name, "history.json")
-    runs = json.loads(history) if history else []
-    return runs[-1] if runs else None
 
 
 def apply(args: argparse.Namespace) -> int:
@@ -364,14 +342,7 @@ def apply(args: argparse.Namespace) -> int:
     if args.file:
         key = open_workflow(base_url, load_object(args.file, "workflow"), args.project_name, args.client_id, args.timeout)
     content = read_tab(base_url, key, args.client_id, args.timeout)["tab"]
-    workflow, project, editor, settings = tab_parts(content)
-    edits = tab_edits(base_url, args.project_name, content["plans"].get(str(editor.get("id"))))
-    if edits and not args.overwrite_tab_edits:
-        # A person changed the tab since the agent's last plan; carry those changes into the plan first.
-        print(json.dumps({"tab": key, "tab_edits": edits, "errors": [
-            "The tab was edited since the last apply. Read it (read --tab ... -o FILE), carry the edits into the plan, "
-            "then apply with --overwrite-tab-edits."]}, ensure_ascii=False, indent=2))
-        return 2
+    workflow, project, editor, _settings = tab_parts(content)
     track_index, track_data = track_data_widget(editor)
     editor_format = editor["widgets_values"][track_index - 1]
     resolved, uploaded = resolve_plan_files(base_url, plan)
@@ -385,32 +356,32 @@ def apply(args: argparse.Namespace) -> int:
     converted = conversion["track_data"]
     statuses, reusable = saved_tasks(base_url, args.project_name, converted, project_snapshot(workflow, project))
     first = first_task_to_run(statuses, reusable) if args.start == "auto" else int(args.start)
-    previous = last_run(base_url, args.project_name)
-    if first and first > 1 and previous and previous.get("resolution") != settings["resolution"]:
-        report["warnings"].append(
-            f"The resolution differs from run {previous.get('run')}; tasks continued from its saved results may not line up.")
-    saved = {item["segment_id"].split(":marker:")[0] for item in statuses if item["status"] in reusable}
+    by_task = status_by_task(statuses, reusable)
+    tasks = [row for row in conversion["tasks"] if row["change"] != "removed"]
+    if first:
+        last = None if args.count == -1 else first + args.count - 1
+        outside = [str(row["index"]) for row in tasks if by_task.get(row["id"], "missing") not in reusable
+                   and (row["index"] < first or (last is not None and row["index"] > last))]
+        if outside:
+            report["warnings"].append(
+                f"Tasks {', '.join(outside)} do not match their saved results but are outside the run range.")
     applied = page_job(base_url, "apply", {
-        "tab": key, "expected": content["fingerprint"], "queue": False,
+        "tab": key, "queue": False,
         "changes": {"editor_id": editor["id"], "track_data": converted, "project_id": project["id"], "project": {
             "project_name": args.project_name, "segment_start_number": first or 1, "segment_count": args.count}},
         **({"client_id": args.client_id} if args.client_id else {}),
     }, args.timeout)
     if applied["status"] != "applied":
         raise RuntimeError(f"The ComfyUI page did not change the tab: {applied.get('error') or applied['status']}")
-    if applied.get("tab_plan") is not None:
-        # The baseline for noticing what a person changes in the tab before the next apply.
-        put_record(base_url, args.project_name, "tab-plan.json", json.dumps(applied["tab_plan"], ensure_ascii=False, indent=2))
-    tasks = [row for row in conversion["tasks"] if row["change"] != "removed"]
     report = {
         "tab": key,
         "project_name": args.project_name,
-        # Nothing to run when every task already has its saved result.
+        # Nothing to run when every task's saved result matches it.
         "run": {"start": first, "count": args.count} if first else {"nothing_to_run": True},
         **{name: value for name, value in report.items() if name != "tab"},
         "tasks": [{"number": row["index"], "id": row["id"], "seconds": row["seconds"], "mode": row["mode"],
                    "continuity": row["continuity"], "labels": row.get("labels") or {},
-                   "saved": row["id"] in saved} for row in tasks],
+                   "status": by_task.get(row["id"], "missing")} for row in tasks],
         "tracks": [{"number": row["index"], "type": row["type"], "audio_locked": row["audioLocked"], "muted": row["muted"],
                     "clips": row["clips"]} for row in conversion["tracks"] if row["change"] != "removed"],
     }
@@ -461,10 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--file", type=Path, help="A workflow file to open in a new tab first")
     apply_parser.add_argument("--project-name", required=True)
     apply_parser.add_argument("--start", default="auto",
-                              help='"auto" (first task without a saved result) or a 1-based task number')
+                              help='"auto" (first task whose saved result does not match) or a 1-based task number')
     apply_parser.add_argument("--count", type=int, default=-1, help="Tasks to run from the start; -1 runs the rest")
-    apply_parser.add_argument("--overwrite-tab-edits", action="store_true",
-                              help="Apply although the tab was edited since the last apply (after carrying the edits over)")
     record_parser = commands.add_parser("record", help="Keep a note file in the project's agent records")
     record_parser.add_argument("file", type=Path)
     record_parser.add_argument("--project", required=True)

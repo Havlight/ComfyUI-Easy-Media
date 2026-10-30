@@ -29,7 +29,7 @@ python3 scripts/submit_workflow.py RESULT.json                  # 把工作流�
 - `client_id` 是本接口为每个页面生成的 ID；`session_id` 是对应 ComfyUI WebSocket ID。同一个页面里的多个工作流 tab 不计为多个客户端。
 - `--request-id ID` 提供重试标识；脚本在 POST 前把它输出到 stderr。相同 ID 和相同参数只返回已有请求，不重复执行；相同 ID 更换参数会报错。
 - `--status ID` 查询已有请求，不再次提交。`--timeout` 仅控制等待浏览器回执的秒数，不代表生成时限，不取消已经提交的任务。
-- `--wait 秒数` 在入队后（或配合 `--status`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --project 名称 --wait 540` 继续等，不重新提交（`--project` 让结束时更新专案纪录）。
+- `--wait 秒数` 在入队后（或配合 `--status`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --wait 540` 继续等，不重新提交。
 - `--until-done` 不限时间等到结束，给能在背景执行指令、结束时通知的工具用；等待期间不必查询。
 
 提交开始后到返回 `queued` / `loaded` 前，不要在目标页面手动切换工作流或连续点击运行；冲突会停止自动提交并报告错误。
@@ -85,14 +85,13 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 { "tab": "workflows/MV.json", "request_id": "...", "client_id": "..." }
 ```
 
-`tab` 可省略，只列分页。完成时 `status` 为 `read`，`tabs` 列出每个分页的 `key`、`name`、`active`、`modified`、`temporary`；指定 `tab` 时另有 `tab`：`workflow`（含未存档的修改）、`fingerprint`、`plans`（每个 Editor 导出的规划，依节点 id）。
+`tab` 可省略，只列分页。完成时 `status` 为 `read`，`tabs` 列出每个分页的 `key`、`name`、`active`、`modified`、`temporary`；指定 `tab` 时另有 `tab`：`workflow`（含未存档的修改）、`plans`（每个 Editor 导出的规划，依节点 id）。
 
 `POST /easy-media/workflow/apply` 修改或运行一个分页：
 
 ```json
 {
   "tab": "workflows/MV.json",
-  "expected": "fingerprint-from-the-read",
   "changes": {
     "editor_id": 14, "track_data": { "tracks": [] },
     "project_id": 15, "project": { "project_name": "mv", "segment_start_number": 1, "segment_count": -1 }
@@ -101,11 +100,11 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 }
 ```
 
-页面切到该分页；`expected` 与目前不符时（读取后有人改了 Editor 或 Project）直接 `failed`。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied` 并附 `tab_plan`（修改后 Editor 导出的规划）。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
+页面切到该分页。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied`。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
 
 ### 专案纪录
 
-`GET /easy-media/agent/records?project=名称` 列出 `output/easy_media/agent/<名称>/` 的文件；加 `&path=README.md` 读一个文件（不存在时 `text` 为 null）。`POST /easy-media/agent/records`（`{"project", "path", "text"}`）写入一个文件。`path` 只能是 `README.md`、`history.json`、`tab-plan.json` 或 `plans/<名称>.json`，最大 4 MB。
+`GET /easy-media/agent/records?project=名称` 列出 `output/easy_media/agent/<名称>/` 的文件；加 `&path=README.md` 读一个文件（不存在时 `text` 为 null）。`POST /easy-media/agent/records`（`{"project", "path", "text"}`）写入一个文件。`path` 只能是 `README.md`、`history.json` 或 `plans/<名称>.json`，最大 4 MB。
 
 请求状态只保存在当前 ComfyUI 进程内：完成记录保留一小时；未领取请求 60 秒后失败，领取后超过 120 秒无回执变成 `unknown`。`unknown` 会阻止向同一页面再次自动提交；先检查队列和历史，确认后可刷新页面重新注册。重启或记录过期后不能依赖原 ID 去重。
 

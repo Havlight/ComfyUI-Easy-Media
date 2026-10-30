@@ -170,12 +170,9 @@ def wait_for_generation(base_url: str, prompt_id: str, seconds: float | None, in
         time.sleep(interval if deadline is None else min(interval, max(0.0, deadline - time.monotonic())))
 
 
-def _now() -> str:
-    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
-
-
 def record_run(base_url: str, content: dict, result: dict) -> dict | None:
-    """Keep a queued run of a tab: the plan it ran and an entry in history.json."""
+    """Keep a queued run of a tab: the plan it ran and an entry in history.json. How it ended is
+    in ComfyUI's history (prompt_id) and the Project (each task's saved versions)."""
     workflow = content["workflow"]
     project = choose_project(workflow)
     editor = choose_editor(workflow, project)
@@ -185,10 +182,10 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
         return None
     runs = json.loads(get_record(base_url, name, "history.json") or "[]")
     number = max((entry.get("run", 0) for entry in runs), default=0) + 1
-    entry = {"run": number, "queued_at": _now(), "request_id": result["request_id"], "prompt_id": result["prompt_id"],
-             "tab": content["key"], "start": fields["segment_start_number"], "count": fields["segment_count"],
-             "resolution": next(item["resolution"] for item in inspect_workflow(workflow)["editors"] if item["id"] == editor.get("id")),
-             "state": "queued"}
+    entry = {"run": number, "queued_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+             "request_id": result["request_id"], "prompt_id": result["prompt_id"], "tab": content["key"],
+             "start": fields["segment_start_number"], "count": fields["segment_count"],
+             "resolution": next(item["resolution"] for item in inspect_workflow(workflow)["editors"] if item["id"] == editor.get("id"))}
     plan = content["plans"].get(str(editor.get("id")))
     if plan is not None:
         entry["plan"] = f"plans/run-{number:03d}.json"
@@ -196,24 +193,6 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
     runs.append(entry)
     put_record(base_url, name, "history.json", json.dumps(runs, ensure_ascii=False, indent=2))
     return {"project_name": name, "run": number}
-
-
-def finish_run(base_url: str, project_name: str, request_id: str, generation: dict) -> None:
-    """Note how a recorded run ended, and which saved version each task now uses."""
-    runs = json.loads(get_record(base_url, project_name, "history.json") or "[]")
-    entry = next((item for item in runs if item.get("request_id") == request_id), None)
-    if entry is None or generation["state"] not in {"success", "error"}:
-        return
-    entry.update(state=generation["state"], finished_at=_now())
-    if generation["state"] == "error":
-        entry["error"] = {"node_type": generation.get("node_type"), "message": generation.get("message")}
-    else:
-        try:
-            clips = request_json(base_url, f"/easy-media/project?{urlencode({'project_name': project_name})}").get("clips", [])
-            entry["videos"] = {str(clip.get("id")): clip.get("file_path") for clip in clips if clip.get("file_path")}
-        except RuntimeError:
-            pass
-    put_record(base_url, project_name, "history.json", json.dumps(runs, ensure_ascii=False, indent=2))
 
 
 def main() -> int:
@@ -228,7 +207,6 @@ def main() -> int:
     parser.add_argument("--no-queue", action="store_true", help="Open the workflow file without running it")
     parser.add_argument("--clients", action="store_true", help="List available browser pages")
     parser.add_argument("--status", metavar="REQUEST_ID", help="Read an existing submission without resubmitting")
-    parser.add_argument("--project", help="With --status: the project whose run history to update when it finishes")
     parser.add_argument("--timeout", type=float, default=150, help="Seconds to wait for browser acknowledgement, not generation")
     wait = parser.add_mutually_exclusive_group()
     wait.add_argument("--wait", type=float, default=0, metavar="SECONDS",
@@ -245,7 +223,6 @@ def main() -> int:
         parser.error("give a workflow file or --tab (or use --clients or --status)")
     try:
         base_url = resolve_comfyui_url(args.url, args.config)
-        project = args.project
         if args.clients:
             result = request_json(base_url, "/easy-media/workflow/clients")
         elif args.status:
@@ -255,10 +232,9 @@ def main() -> int:
             client = {"client_id": args.client_id} if args.client_id else {}
             content = None
             if args.tab:
-                # Read first: the run is recorded with the plan the tab holds, and the page refuses
-                # to run it if someone changes the Editor or Project in between.
+                # Read first: the run is recorded with the plan the tab holds.
                 content = read_tab(base_url, args.tab, args.client_id, args.timeout)["tab"]
-                route, payload = "apply", dict(tab=args.tab, expected=content["fingerprint"], queue=True, **client)
+                route, payload = "apply", dict(tab=args.tab, queue=True, **client)
             else:
                 workflow = json.loads(args.workflow.read_text(encoding="utf-8"))
                 if not isinstance(workflow, dict) or not isinstance(workflow.get("nodes"), list) or not isinstance(workflow.get("links"), list):
@@ -279,14 +255,8 @@ def main() -> int:
                     recorded = {"error": f"The run was queued but not recorded: {error}"}
                 if recorded:
                     result["record"] = recorded
-                    project = recorded.get("project_name")
         if (args.wait or args.until_done) and result.get("status") == "queued" and result.get("prompt_id"):
             result["generation"] = wait_for_generation(base_url, result["prompt_id"], None if args.until_done else args.wait)
-            if project:
-                try:
-                    finish_run(base_url, project, result["request_id"], result["generation"])
-                except RuntimeError as error:
-                    print(f"The run history was not updated: {error}", file=sys.stderr)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if "generation" in result:
             return {"success": 0, "error": 2}.get(result["generation"]["state"], 3)
