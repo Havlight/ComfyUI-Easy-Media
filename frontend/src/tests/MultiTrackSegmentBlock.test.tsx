@@ -7,15 +7,12 @@ import type { MultiTrackSegment, MultiTrackType } from '@/types/multitrack'
 
 vi.mock('@/components/ui/context-menu', () => ({
   ContextMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
-  ContextMenuCheckboxItem: ({ children, checked, onCheckedChange }: {
-    children: ReactNode; checked?: boolean; onCheckedChange?: (checked: boolean) => void
-  }) => (
-    <button type="button" role="menuitemcheckbox" aria-checked={checked} onClick={() => onCheckedChange?.(!checked)}>{children}</button>
-  ),
   ContextMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   ContextMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ContextMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
-    <button type="button" onClick={onClick}>{children}</button>
+  ContextMenuItem: ({ children, onClick, role, 'aria-checked': checked }: {
+    children: ReactNode; onClick?: () => void; role?: string; 'aria-checked'?: boolean
+  }) => (
+    <button type="button" role={role} aria-checked={checked} onClick={onClick}>{children}</button>
   ),
   ContextMenuSub: ({ children }: { children: ReactNode }) => <>{children}</>,
   ContextMenuSubContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,

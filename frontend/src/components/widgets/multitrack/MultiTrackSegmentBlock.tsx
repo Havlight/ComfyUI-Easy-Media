@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Lock, Share2, Unlock } from 'lucide-react'
+import { Check, Lock, Share2, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   ContextMenu,
-  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSub,
@@ -600,12 +599,15 @@ export function MultiTrackSegmentBlock({
       </ContextMenuTrigger>
       <ContextMenuContent>
         {trackType === 'video' && audioLocked && onSoundtrackReferenceToggle ? (
-          <ContextMenuCheckboxItem
-            checked={soundtrackReference}
-            onCheckedChange={(checked) => onSoundtrackReferenceToggle(checked === true)}
+          // A plain item, aligned with the others, with its check mark on the right.
+          <ContextMenuItem
+            role="menuitemcheckbox"
+            aria-checked={soundtrackReference}
+            onClick={() => onSoundtrackReferenceToggle(!soundtrackReference)}
           >
             {t('multitrack.soundtrackReferenceOnly')}
-          </ContextMenuCheckboxItem>
+            {soundtrackReference ? <Check className="ml-auto size-4 pl-1" /> : null}
+          </ContextMenuItem>
         ) : null}
         {trackType === 'video' && onSmartSplit ? (
           <ContextMenuItem onClick={() => onSmartSplit(segment.id)}>
