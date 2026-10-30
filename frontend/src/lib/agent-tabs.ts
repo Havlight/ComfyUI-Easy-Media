@@ -128,7 +128,8 @@ async function tabWorkflow(app: ComfyApp, tab: OpenWorkflow): Promise<Workflow> 
   if (tabsOf(app).isActive(tab)) return app.rootGraph.serialize()
   const state = tab.activeState ?? (await tab.load()).activeState
   if (!state) throw new Error(`The tab ${tab.path} has no content to read`)
-  return structuredClone(state) as Workflow
+  // ComfyUI keeps the state as a reactive proxy, which structuredClone rejects.
+  return JSON.parse(JSON.stringify(state)) as Workflow
 }
 
 /** Switch tabs with the same commands as the keyboard shortcuts, so ComfyUI keeps each tab's own state. */

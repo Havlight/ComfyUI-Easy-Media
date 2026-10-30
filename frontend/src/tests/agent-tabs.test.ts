@@ -23,8 +23,8 @@ function setup() {
   const graphA = () => ({ id: 'graph-a', links: [], version: 0.4, nodes: [editor, project].map((node) => ({
     id: node.id, type: node.type, widgets_values: node.widgets.map((widget) => widget.value) })) })
   const tracker = { captureCanvasState: vi.fn() }
-  // A hidden tab is read from the state ComfyUI kept when it was left.
-  const tabA = { path: 'workflows/mv.json', filename: 'mv', isModified: false, isTemporary: false, activeState: graphA(),
+  // A hidden tab is read from the state ComfyUI kept when it was left, a reactive proxy.
+  const tabA = { path: 'workflows/mv.json', filename: 'mv', isModified: false, isTemporary: false, activeState: new Proxy(graphA(), {}),
     load: vi.fn(), changeTracker: tracker }
   const tabB = { path: 'workflows/other.json', filename: 'other', isModified: true, isTemporary: true,
     activeState: { id: 'graph-b-kept', links: [], version: 0.4, nodes: [] }, load: vi.fn(), changeTracker: null }
