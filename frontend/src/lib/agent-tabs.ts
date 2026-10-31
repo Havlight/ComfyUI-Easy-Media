@@ -117,10 +117,18 @@ function listTabs(app: ComfyApp): AgentTab[] {
   }))
 }
 
+/** A tab by its key, or by its name when one open tab alone has it (".json" optional). */
 function findTab(app: ComfyApp, key: string): OpenWorkflow {
-  const tab = tabsOf(app).openWorkflows.find((workflow) => workflow.path === key)
-  if (!tab) throw new Error(`No open tab is ${key}; list the tabs again`)
-  return tab
+  const open = tabsOf(app).openWorkflows
+  const tab = open.find((workflow) => workflow.path === key)
+  if (tab) return tab
+  const name = key.replace(/\.json$/i, '')
+  const named = open.filter((workflow) => workflow.filename.replace(/\.json$/i, '') === name)
+  if (named.length === 1) return named[0]
+  const keys = open.map((workflow) => workflow.path).join(', ')
+  throw new Error(named.length
+    ? `Several open tabs are named ${key}; use one of their keys: ${named.map((workflow) => workflow.path).join(', ')}`
+    : `No open tab has the key or name ${key}; open tabs: ${keys}`)
 }
 
 /** The open tab's content, unsaved edits included: the canvas for the visible tab, its kept state otherwise. */

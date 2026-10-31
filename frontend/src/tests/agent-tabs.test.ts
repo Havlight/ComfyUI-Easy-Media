@@ -78,7 +78,18 @@ describe('agent access to open workflow tabs', () => {
     expect(tab?.workflow).toMatchObject({ id: 'graph-a' })
     expect(tab?.plans['14']).toMatchObject({ format: 'easy-media-h3-plan', tasks: [] })
     expect(await readAgentTab(nativeApp, { kind: 'tabs', request_id: 'r', claim_token: 't', tab: 'workflows/gone.json' }))
-      .toMatchObject({ status: 'failed', error: expect.stringContaining('No open tab') })
+      .toMatchObject({ status: 'failed', error: expect.stringContaining('open tabs: workflows/mv.json, workflows/other.json') })
+  })
+
+  it('finds a tab by its name when no other open tab has it', async () => {
+    const { app, nativeApp } = setup()
+    for (const name of ['mv', 'mv.json']) {
+      expect(await readAgentTab(nativeApp, { kind: 'tabs', request_id: 'r', claim_token: 't', tab: name }))
+        .toMatchObject({ status: 'read', tab: { key: 'workflows/mv.json' } })
+    }
+    app.extensionManager.workflow.openWorkflows.push({ ...app.extensionManager.workflow.openWorkflows[0], path: 'workflows/old/mv.json' })
+    expect(await readAgentTab(nativeApp, { kind: 'tabs', request_id: 'r', claim_token: 't', tab: 'mv' })).toEqual({
+      status: 'failed', error: 'Several open tabs are named mv; use one of their keys: workflows/mv.json, workflows/old/mv.json' })
   })
 
   it('sets the Editor and Project of another tab as one undoable edit, then returns to the tab in view', async () => {

@@ -198,7 +198,7 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workflow", nargs="?", type=Path, help="A workflow file to open in a new tab (instead of --tab)")
-    parser.add_argument("--tab", help="Run this open tab, as listed by plan_workflow.py tabs")
+    parser.add_argument("--tab", help="Run this open tab: its key as listed by plan_workflow.py tabs, or a name only one tab has")
     parser.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
     parser.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
     parser.add_argument("--client-id")
