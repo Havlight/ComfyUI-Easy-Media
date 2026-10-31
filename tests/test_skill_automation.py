@@ -148,6 +148,12 @@ class FakeComfy:
                 {"segment_id": task["id"], "index": index, "status": self.statuses.get(task["id"], "missing")}
                 for index, task in enumerate(tasks)]})
 
+        @routes.get("/easy-media/project/versions")
+        async def versions(request):
+            return web.json_response({"project_name": request.query["project_name"], "tasks": [
+                {"number": 1, "task": "s01", "active": 2, "versions": [{"version": 2, "continued_from": None}]}],
+                "detached": []})
+
         @routes.get("/easy-media/project")
         async def project(request):
             return web.json_response({"project_name": request.query["project_name"], "clips": [
@@ -272,6 +278,33 @@ def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
     assert [(task["id"], task["status"]) for task in report["tasks"]] == [("s01", "saved"), ("s02", "missing")]
     assert fake.status_requests[0]["tracks_info"] == converted_track_data()
     assert json.loads(out.read_text(encoding="utf-8")) == page.plan()
+    # What the plan does not carry: how the Project saves, and that the template only previews its video.
+    assert (report["project"]["project_save"], report["project"]["sampling_mode"]) == ("override", "single")
+    assert report["tracks"] == []
+    assert report["outputs"] == [{"id": 25, "output_mode": "preview_only", "temp": True}]
+
+
+def test_apply_restores_the_plan_a_recorded_run_used(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    recorded = {"format": "easy-media-h3-plan", "version": 1, "tasks": [{"id": "s01", "seconds": 5}, {"id": "s02", "seconds": 5}]}
+    folder = fake.records / "mv-alice"
+    (folder / "plans").mkdir(parents=True)
+    (folder / "plans/run-002.json").write_text(json.dumps(recorded), encoding="utf-8")
+    (folder / "history.json").write_text(json.dumps([{"run": 1, "plan": "plans/run-001.json"},
+                                                      {"run": 2, "plan": "plans/run-002.json"}]), encoding="utf-8")
+
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", "--from-run", "last",
+                                      "--tab", TAB, "--project-name", "mv-alice")
+    assert code == 0, stderr
+    _read, convert, _apply = page.jobs
+    assert convert["plan"] == recorded
+
+
+def test_project_lists_each_tasks_saved_versions(tmp_path):
+    fake = FakeComfy(tmp_path)
+    code, stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "plan_workflow.py"), "project", "--name", "mv")
+    assert code == 0, stderr
+    assert json.loads(stdout)["tasks"] == [{"number": 1, "task": "s01", "active": 2, "versions": [{"version": 2, "continued_from": None}]}]
 
 
 def test_apply_reports_plan_errors_without_touching_the_tab(tmp_path):

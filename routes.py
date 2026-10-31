@@ -109,6 +109,24 @@ async def handle_h3_project(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Failed to load H3 project: {error}"}, status=500)
 
 
+@PromptServer.instance.routes.get("/easy-media/project/versions")
+async def handle_h3_project_versions(request: web.Request) -> web.Response:
+    """Read-only: each task's saved versions, for agents that cannot see the Project widget."""
+    from .utils.h3_native_artifacts import read_native_manifest
+    from .utils.h3_native_status import native_project_versions
+    from .utils.h3_native_timing import NativePlanError
+    from .utils.h3_project import h3_project_directory
+
+    name = safe_h3_project_name(request.rel_url.query.get("project_name", ""))
+    try:
+        manifest = read_native_manifest(h3_project_directory(name))
+    except NativePlanError as error:
+        return web.json_response({"error": str(error)}, status=500)
+    if not manifest:
+        return web.json_response({"error": f"Project {name} has no saved results"}, status=404)
+    return web.json_response({"project_name": name, **native_project_versions(manifest)})
+
+
 @PromptServer.instance.routes.post("/easy-media/project/timeline-status")
 async def handle_h3_timeline_status(request: web.Request) -> web.Response:
     """Read-only status: keep timeline editing independent of saved media."""

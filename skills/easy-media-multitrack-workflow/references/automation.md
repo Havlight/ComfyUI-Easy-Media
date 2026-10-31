@@ -23,7 +23,9 @@ python scripts/plan_workflow.py tabs
 python scripts/plan_workflow.py read --tab "workflows/mmh3/MV.json" -o current.json
 ```
 
-输出 Project（专案名称、开始段、段数）、Editor（format、分辨率、帧率）、每段的摘要与 `status`，`-o` 写出分页目前的规划。要修改时就在这份规划上改，用户在分页里改过的地方才会留着。
+输出 Project（专案名称、开始段、段数、`project_save`、`sampling_mode`）、Editor（format、分辨率、帧率）、每段的摘要与 `status`、每条影音轨（是否锁定、`soundtrack`、静音、片段起讫秒数）、输出节点（`outputs`：`temp: true` 表示只是预览，ComfyUI 重开会被清掉），`-o` 写出分页目前的规划。要修改时就在这份规划上改，用户在分页里改过的地方才会留着。
+
+分页内容跟专案纪录对不上时（例如 ComfyUI 重开后分页变回空白范本），先问用户要不要还原；要的话用 `apply --from-run last --tab 分页 --project-name 名称`（或指定执行编号）套回那次执行用的规划。
 
 `status` 是 Project 对每段已存结果的检查（与 Editor 显示的一样）：`saved` 已存结果跟目前内容相符；`edited` 内容改过；`parent_changed` 接着的前一段改过或换了版本；`missing` 没有结果；`pending` 读不到片段 LoRA 设置，当作相符；`legacy` 旧格式结果。
 
@@ -73,6 +75,8 @@ python scripts/submit_workflow.py --tab "workflows/mmh3/MV.json" --until-done
   ```
 
 - 返回码：0 成功（`generation.outputs` 列出输出文件），2 失败（`generation.node_type`、`message`），3 还在跑（`generation.state` 为 `running` 或 `pending`）。改了分辨率或采样方式后接续旧段落，可能在开始生成前失败（`VAE_FALLBACK_REQUIRED`），见 SKILL.md 的「分辨率」。
+
+执行结束后用 `plan_workflow.py project --name 名称` 确认每段的版本：目前用哪一版（`active`）、接在哪一版后面（`continued_from`，如 `f05@7`）、有没有沿用锁定音频（`locked_audio`）、有没有改用备用方式（`fallback`）、是否因前一段换了版本而过期（`stale`）。
 
 ## 7. 看画面检查（选用）
 

@@ -2,12 +2,14 @@
 """Work on the workflow tabs open in ComfyUI with H3 plan files, or read the length of media files.
 
 tabs:   the open workflow tabs of each ComfyUI page.
-read:   one tab's Project, Editor and plan, unsaved edits included, and whether each task's saved
-        result still matches it.
+read:   one tab's Project, Editor, tracks, outputs and plan, unsaved edits included, and whether
+        each task's saved result still matches it.
 apply:  PLAN.json -> the tab's Editor and Project. Files the plan names are copied into ComfyUI
         (uploaded when the server cannot read them), the page converts the plan with the Editor's
         own importer, and the Project starts at the first task whose saved result does not match.
         The tab changes like a person's edit (one undo step); nothing is saved to disk or queued.
+        --from-run N applies the plan a recorded run used instead, to restore a tab.
+project: each task's saved versions: which is active, what it continued from, locked audio, fallbacks.
 record: keep a note (README.md) in the project's agent records folder.
 probe:  the length of video and audio files, to plan tasks around a song or clip.
 """
@@ -24,6 +26,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 # ComfyUI's embedded Python does not put a script's own folder on the import path.
@@ -40,6 +43,7 @@ from patch_workflow import (  # noqa: E402
     write_json_atomic,
 )
 from submit_workflow import (  # noqa: E402
+    get_record,
     open_workflow,
     page_job,
     project_fields,
@@ -308,6 +312,31 @@ def tab_parts(content: dict) -> tuple[dict, dict, dict, dict]:
     return workflow, project, editor, settings
 
 
+# Output nodes that only preview: their files go to ComfyUI's temp folder, cleared on restart.
+PREVIEW_OUTPUT_MODES = {"preview_only", "hide"}
+
+
+def tab_summary(workflow: dict, project: dict, plan: dict | None) -> dict:
+    """The settings a run depends on that the plan does not carry: Project saving and sampling,
+    each media track's lock and sound, and whether the outputs are kept."""
+    widgets = project.get("widgets_values") or []
+    setting = lambda name: widgets[PROJECT_WIDGETS[name]] if len(widgets) > PROJECT_WIDGETS[name] else None
+    tracks = [{"number": number, "type": track.get("type"), "audio_locked": track.get("audio_locked", False),
+               **({"soundtrack": track["soundtrack"]} if track.get("soundtrack") else {}),
+               "muted": track.get("muted", False),
+               "clips": [[clip.get("start"), clip.get("end")] for clip in track.get("clips", [])]}
+              for number, track in enumerate((plan or {}).get("tracks") or [], 1)]
+    outputs = []
+    for node in workflow.get("nodes", []):
+        # Only active Easy Media video savers; a bypassed or muted node writes nothing.
+        if isinstance(node, dict) and node.get("type") == "easy saveVideo" and node.get("mode", 0) == 0:
+            values = node.get("widgets_values") or []
+            mode = values[1] if len(values) > 1 and isinstance(values[1], str) else "save"
+            outputs.append({"id": node.get("id"), "output_mode": mode, "temp": mode in PREVIEW_OUTPUT_MODES})
+    return {"settings": {"project_save": setting("project_save"), "sampling_mode": setting("sampling_mode")},
+            "tracks": tracks, "outputs": outputs}
+
+
 def tabs(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
     clients = request_json(base_url, "/easy-media/workflow/clients")["clients"]
@@ -332,15 +361,18 @@ def read(args: argparse.Namespace) -> int:
     statuses, reusable = saved_tasks(base_url, fields["project_name"] or "", track_data_widget(editor)[1],
                                      project_snapshot(workflow, project))
     by_task = status_by_task(statuses, reusable)
+    summary = tab_summary(workflow, project, plan)
     report = {
         "tab": content["key"],
-        "project": {"id": project.get("id"), **fields},
+        "project": {"id": project.get("id"), **fields, **summary["settings"]},
         "editor": {"id": editor.get("id"), "format": settings["format"], "resolution": settings["resolution"],
                    "frame_rate": settings["frame_rate"]},
         "tasks": [{"id": task.get("id"), "seconds": task.get("seconds"), "mode": task.get("mode", "default"),
                    "continuity": task.get("continuity", "shot"), "status": by_task.get(task.get("id"), "missing"),
                    "prompt": str(task.get("prompt") or "")[:120]}
                   for task in (plan or {}).get("tasks", [])],
+        "tracks": summary["tracks"],
+        "outputs": summary["outputs"],
     }
     if args.output:
         report["plan_file"] = str(args.output)
@@ -348,9 +380,22 @@ def read(args: argparse.Namespace) -> int:
     return 0
 
 
+def recorded_plan(base_url: str, project_name: str, run: str) -> dict:
+    """The plan a recorded run used: run N, or "last"."""
+    runs = json.loads(get_record(base_url, project_name, "history.json") or "[]")
+    entry = runs[-1] if runs and run == "last" else next((item for item in runs if str(item.get("run")) == run), None)
+    text = get_record(base_url, project_name, entry["plan"]) if entry and entry.get("plan") else None
+    if text is None:
+        raise PlanError(f"The records of {project_name} have no plan for run {run}")
+    plan = json.loads(text)
+    if not isinstance(plan, dict):
+        raise PlanError(f"The plan of run {run} is not a JSON object")
+    return plan
+
+
 def apply(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
-    plan = load_object(args.plan, "plan")
+    plan = recorded_plan(base_url, args.project_name, args.from_run) if args.from_run else load_object(args.plan, "plan")
     key = args.tab
     if args.file:
         key = open_workflow(base_url, load_object(args.file, "workflow"), args.project_name, args.client_id, args.timeout)
@@ -403,6 +448,13 @@ def apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def project(args: argparse.Namespace) -> int:
+    base_url = resolve_comfyui_url(args.url, args.config)
+    result = request_json(base_url, f"/easy-media/project/versions?{urlencode({'project_name': args.name})}")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def record(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
     path = put_record(base_url, args.project, args.name or args.file.name, args.file.read_text(encoding="utf-8"))
@@ -440,7 +492,8 @@ def build_parser() -> argparse.ArgumentParser:
     read_parser.add_argument("--tab", required=True, help="The tab key, as listed by the tabs command")
     read_parser.add_argument("-o", "--output", type=Path, help="Write the tab's plan here")
     apply_parser = commands.add_parser("apply", help="Apply a plan to a tab's Editor and Project")
-    apply_parser.add_argument("plan", type=Path)
+    apply_parser.add_argument("plan", type=Path, nargs="?", help="The plan file (or use --from-run)")
+    apply_parser.add_argument("--from-run", metavar="N", help='Apply the plan recorded run N (or "last") used')
     source = apply_parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--tab", help="The tab key, as listed by the tabs command")
     source.add_argument("--file", type=Path, help="A workflow file to open in a new tab first")
@@ -448,6 +501,8 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--start", default="auto",
                               help='"auto" (first task whose saved result does not match) or a 1-based task number')
     apply_parser.add_argument("--count", type=int, default=-1, help="Tasks to run from the start; -1 runs the rest")
+    project_parser = commands.add_parser("project", help="List each task's saved versions")
+    project_parser.add_argument("--name", required=True, help="The project_name")
     record_parser = commands.add_parser("record", help="Keep a note file in the project's agent records")
     record_parser.add_argument("file", type=Path)
     record_parser.add_argument("--project", required=True)
@@ -457,7 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
     for sub in (tabs_parser, read_parser, apply_parser):
         sub.add_argument("--client-id", help="The ComfyUI page, when several are open")
         sub.add_argument("--timeout", type=float, default=150, help="Seconds to wait for the page")
-    for sub in (tabs_parser, read_parser, apply_parser, record_parser, probe_parser):
+    for sub in (tabs_parser, read_parser, apply_parser, project_parser, record_parser, probe_parser):
         sub.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
         sub.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
     return parser
@@ -468,7 +523,10 @@ def main() -> int:
     if args.command == "apply" and args.start != "auto" and not (args.start.isdigit() and int(args.start) >= 1):
         print('--start must be "auto" or a task number from 1', file=sys.stderr)
         return 1
-    commands = {"tabs": tabs, "read": read, "apply": apply, "record": record, "probe": probe}
+    if args.command == "apply" and (args.plan is None) == (args.from_run is None):
+        print("give a plan file or --from-run, not both", file=sys.stderr)
+        return 1
+    commands = {"tabs": tabs, "read": read, "apply": apply, "project": project, "record": record, "probe": probe}
     try:
         return commands[args.command](args)
     except (PlanError, WorkflowError) as error:

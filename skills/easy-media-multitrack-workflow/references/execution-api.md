@@ -102,6 +102,10 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 
 页面切到该分页。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied`。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
 
+### 专案版本
+
+`GET /easy-media/project/versions?project_name=名称` 只读：`tasks` 依时间轴顺序列出每段的 `active` 与 `versions`（`version`、`video`、`sampling_pass`、`locked_audio`、`continued_from`、`fallback`、`stale`），`detached` 列出已不在时间轴上的段落。专案还没有生成结果时返回 404。
+
 ### 专案纪录
 
 `GET /easy-media/agent/records?project=名称` 列出 `output/easy_media/agent/<名称>/` 的文件；加 `&path=README.md` 读一个文件（不存在时 `text` 为 null）。`POST /easy-media/agent/records`（`{"project", "path", "text"}`）写入一个文件。`path` 只能是 `README.md`、`history.json` 或 `plans/<名称>.json`，最大 4 MB。
