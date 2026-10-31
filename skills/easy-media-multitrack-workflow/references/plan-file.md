@@ -25,7 +25,7 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
       "id": "导出时带上的既有任务 id",
       "seconds": 5,
       "continuity": "context_drift",
-      "images": ["previous_frame", "C:/素材/alice.png"],
+      "images": ["C:/素材/alice.png"],
       "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] ..."
     }
   ],
@@ -60,7 +60,7 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
 | `{"input": "子目录/a.png"}`、`{"output": "a.mp4"}` | ComfyUI input／output 里已有的文件 |
 | `{"local": "C:/素材/a.png"}` | 本机文件留在原处，不复制 |
 | `{"url": "https://…"}` | 保留为网址，不下载 |
-| `"previous_frame"` | 上一段尾帧（只用于 `images`，第一段不能用） |
+| `"previous_frame"` | 上一段尾帧，要 Project 开 `allow_vae_fallback` 才能跑。规划不要新增；分页里已有的照原样保留 |
 | `{"track": "<轨道 id>"}`、`{"track": "<轨道 id>", "clip": "<公用片段 id>"}` | 时间轴参考的占位项（只用于 `videos`、`audios`），用来调整顺序与设置 |
 
 对象可以加：
@@ -68,7 +68,7 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
 - `muted: true`：只在这一段排除。时间轴占位项的 `muted: false` 会让静音或锁定音频的音频轨也在这一段作参考。
 - `shared: true`：设为公用，加到所有片段（占位项不适用）。
 - `fit`（只用于音频）：`true` 截到片段长度；上传的音频默认整段、最长 15 秒，时间轴音频默认截到片段。
-- `soundtrack`（只用于视频）：是否带原声并占用一个 `<Audio N>`。
+- `soundtrack`（只用于视频）：默认带原声并占用一个 `<Audio N>`；`false` 时只参考画面，不用另做无声副本。
 
 音频用 WAV 或 MP3 最稳。本机路径必须是绝对路径。文件找不到、格式不支持或网址下载失败时，预览会列为错误并禁止套用。占位项的轨道或公用片段不存在时，这一项会略过并列为警告。
 
@@ -76,11 +76,13 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
 
 `tracks` 列出全部视频与音频轨，顺序就是时间轴上的顺序（依序叫 Video 0、Video 1、Audio 0……）。没写 `tracks` 时影音轨完全不动；写了就整份取代：没列出的轨道与片段会被删除。每种最多 3 条。
 
+不锁定的轨道是参考素材：跟它重叠的任务各自参考自己那一段（从任务开头到下一个任务开头），所以一段影片要分给几个任务参考时，放上时间轴就好，不用自己剪。静音的视频轨照样参考画面、不带原声；静音的音频轨不作参考。
+
 agent 可以做的只有这些：
 
 - **放上整个文件**：在某条轨道的 `clips` 加 `{"file": "<路径或网址>", "at": <任务>}`。`at` 是任务 id，或任务在文件里的序号（1 是第一段，也就是专案开头）。片段从那一段的开头开始，长度是整个文件。
 - **搬动现有片段**：把它写成 `{"id": "<片段 id>", "at": <任务>}`，人做过的裁切与设置都保留。
-- **剪在某段结尾**：片段加 `"until": <任务>`（写法同 `at`），片段在那一段的结尾结束，素材后面的部分剪掉；新片段与现有片段（`{"id": …, "until": …}`）都可以。素材不够长时报错。锁定视频要结束在最后一个被锁定的任务时用它。
+- **剪在某段结尾**：片段加 `"until": <任务>`（写法同 `at`），片段在那一段的结尾结束，素材后面的部分剪掉；新片段与现有片段（`{"id": …, "until": …}`）都可以。素材不够长时报错。任何轨道的片段都能用，例如参考影片只给到某段为止，或锁定视频要结束在最后一个被锁定的任务。
 - **删除**：把片段或整条轨道从列表拿掉。
 - **轨道设定**：`"audio_locked": true` 锁定这条轨道（音频轨提供锁定音频，视频轨锁定画面时间线；每种最多一条），`"muted": true` 静音。不写就是不锁定、不静音。锁定的视频轨可以加 `"soundtrack": "reference"`：画面照样锁定，原声只当参考（`<Audio N>`），输出的是生成的音频；不写或 `"output"` 时原声就是这段的声音。
 - **新轨道**：写 `type`（`"video"` 或 `"audio"`）和 `clips`；可以自己取一个 `id`，任务的占位项就能指向它。
