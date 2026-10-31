@@ -42,7 +42,20 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
     }.items()}
 
 
-def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
+# Saved versions record which fingerprint they used; those without one predate version 2.
+TASK_FINGERPRINT_VERSION = 2
+
+
+def _window_part(segment: dict[str, Any], window: tuple[int, int]) -> dict[str, Any]:
+    """The part of a clip inside the window, and where that part starts in its source."""
+    start, end = int(segment.get('start_frame', 0)), int(segment.get('end_frame', 0))
+    origin = int(segment.get('origin_start_frame', start))
+    part_start, part_end = max(start, window[0]), min(end, window[1])
+    rest = {key: value for key, value in segment.items() if key not in {'start_frame', 'end_frame', 'origin_start_frame'}}
+    return {**rest, 'window_start': part_start, 'window_end': part_end, 'source_start': part_start - origin}
+
+
+def native_task_fingerprint(info: dict[str, Any], index: int, version: int = TASK_FINGERPRINT_VERSION) -> str:
     """Hash a task's content, its reference plan and the media tracks that can change it.
 
     A track counts when the task's reference plan uses it or when it is audio-locked
@@ -50,6 +63,10 @@ def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
     39-frame context before it and any unfitted reference after it, and its shared clip
     are hashed, so edits elsewhere on the timeline leave the task saved. The plan covers
     the task's own uploads and the order, muting and fitting of every reference.
+
+    Version 2 hashes only the part of each clip inside the window, so trimming or
+    extending a clip beyond it (a song's end, a dance cut at a later task) changes
+    nothing; version 1 hashes whole clips and is kept for versions saved with it.
     """
     tasks = native_task_segments(info)
     task = tasks[index]
@@ -68,6 +85,9 @@ def native_task_fingerprint(info: dict[str, Any], index: int) -> str:
         shared = shared_reference_clip(track)
         clips = [segment for segment in track.get('segments', []) if segment is shared or (
             int(segment.get('start_frame', 0)) < window[1] and int(segment.get('end_frame', 0)) > window[0])]
+        if version >= 2:
+            # A shared clip is referenced whole wherever it sits.
+            clips = [segment if segment is shared else _window_part(segment, window) for segment in clips]
         if str(track.get('id', '')) in referenced or (track.get('audio_locked') is True and clips):
             sources.append(_content_fields({**{k: v for k, v in track.items()
                                                if k in {'type', 'muted', 'solo', 'audio_locked', 'soundtrack', 'visible', 'volume_db'}},
@@ -103,7 +123,8 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
             status = 'parent_changed'
         elif any(meta.get(key) != getattr(plan, key) for key in ('start_frame', 'end_frame', 'continuity_mode', 'parent_segment_id')):
             status = 'edited'
-        elif recipe.get('task_fingerprint') and recipe['task_fingerprint'] != native_task_fingerprint(info, index):
+        elif recipe.get('task_fingerprint') and recipe['task_fingerprint'] != native_task_fingerprint(
+                info, index, int(recipe.get('task_fingerprint_version', 1))):
             status = 'edited'
         elif recipe.get('task_content') is not None and task_content_signature(recipe['task_content']) != task_content_signature(tasks[index].get('content', {})):
             status = 'edited'
@@ -122,3 +143,37 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
         states[plan.segment_id] = status
         result.append({'segment_id': plan.segment_id, 'index': index, 'status': status})
     return result
+
+
+def native_project_versions(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Each task's saved versions in timeline order: which is active, what it continued from,
+    whether it used locked audio, fell back or went stale. Tasks no longer on the timeline
+    keep their versions under ``detached``."""
+    owners: dict[str, str] = {}
+    groups = {'segments': manifest.get('segments', {}), 'detached': manifest.get('detached_segments', {})}
+    for segments in groups.values():
+        for segment in segments.values():
+            for key, generation in segment.get('generations', {}).items():
+                for stage in generation.get('native', {}).values():
+                    artifact = stage.get('metadata', {}).get('artifact_id')
+                    if artifact:
+                        owners[artifact] = f"{segment.get('segment_id', '')}@{key}"
+
+    def describe(segment: dict[str, Any]) -> dict[str, Any]:
+        versions = []
+        for key, generation in sorted(segment.get('generations', {}).items(), key=lambda item: int(item[0])):
+            metadata = generation.get('native', {}).get('high', {}).get('metadata', {})
+            parent = metadata.get('parent_artifact_id')
+            versions.append({
+                'version': int(key), 'video': generation.get('video') or generation.get('audio'),
+                'sampling_pass': generation.get('sampling_pass'), 'locked_audio': generation.get('audio_locked') is True,
+                'continued_from': owners.get(parent, 'missing') if parent else None,
+                'fallback': [item.get('reason') for item in generation.get('fallback_history', [])],
+                'stale': generation.get('native_stale') is True,
+            })
+        return {'task': segment.get('segment_id'), 'active': segment.get('active_generation'), 'versions': versions}
+
+    ordered = sorted(groups['segments'].items(), key=lambda item: int(item[0]))
+    return {'width': manifest.get('width'), 'height': manifest.get('height'),
+            'tasks': [{'number': int(index) + 1, **describe(segment)} for index, segment in ordered],
+            'detached': [describe(segment) for segment in groups['detached'].values()]}

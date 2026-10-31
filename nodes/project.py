@@ -14,7 +14,7 @@ from comfy.utils import ProgressBar
 from ..utils import instrument_node_timing, log_node_info
 from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_preset
 from ..utils.h3_previous_frame import previous_frame_position
-from ..utils.h3_native_status import native_task_fingerprint
+from ..utils.h3_native_status import TASK_FINGERPRINT_VERSION, native_task_fingerprint
 from ..utils.h3_segment_loras import normalize_lora_plan
 from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_stage_taper, drift_taper
 from ..utils.h3_lora_preflight import compile_project_loras
@@ -1570,7 +1570,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                       "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
                       "upscale_model": selected_upscale_model, "upscale_by": upscale_by,
                       "seed": first_pass_seed, "sampling_plan": preset_name,
-                      "task_content": content, "task_fingerprint": native_task_fingerprint(info, task_index), "disable_2nd_noise": disable_2nd_noise,
+                      "task_content": content, "task_fingerprint": native_task_fingerprint(info, task_index),
+                      "task_fingerprint_version": TASK_FINGERPRINT_VERSION, "disable_2nd_noise": disable_2nd_noise,
                       "previous_segment_id": native_plans[task_index - 1].segment_id if task_index else None,
                       **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),
                       "fallback_reasons": fallback_reasons, "rho": 0.0,

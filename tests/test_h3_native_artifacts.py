@@ -196,6 +196,24 @@ def test_parent_replacement_marks_descendants_stale_but_preserves_versions(tmp_p
     artifacts.find_native_generation(manifest, "b")
 
 
+def test_project_versions_say_what_each_version_continued_from(tmp_path):
+    status = importlib.import_module("native_artifact_unit.utils.h3_native_status")
+    first_plan, second_plan = _plan(), _plan("b", 243, 238, "a")
+    first = _latent(first_plan)
+    _commit(tmp_path, first, [first_plan, second_plan])
+    _commit(tmp_path, _latent(second_plan, first["h3_native"]), [first_plan, second_plan], 1)
+    _commit(tmp_path, _latent(first_plan), [first_plan, second_plan])
+
+    summary = status.native_project_versions(artifacts.read_native_manifest(tmp_path))
+
+    assert [(task["number"], task["task"], task["active"]) for task in summary["tasks"]] == [(1, "a", 2), (2, "b", 1)]
+    assert [version["version"] for version in summary["tasks"][0]["versions"]] == [0, 2]
+    [continued] = summary["tasks"][1]["versions"]
+    # b still follows the a it was made from, which is no longer active.
+    assert continued["continued_from"] == "a@0" and continued["stale"] is True
+    assert summary["detached"] == []
+
+
 def test_override_replaces_only_the_active_version_and_its_files(tmp_path):
     plan = _plan()
     for _ in range(2):

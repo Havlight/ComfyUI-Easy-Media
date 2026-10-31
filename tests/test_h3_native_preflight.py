@@ -153,6 +153,55 @@ def test_source_fingerprint_only_tracks_media_that_reaches_the_task():
     assert status.native_task_fingerprint(shared_edit, 0) != status.native_task_fingerprint(shared, 0)
 
 
+def test_source_fingerprint_counts_only_the_part_of_a_clip_inside_the_window():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    info = {'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90, 'content': {}},
+                                      {'id': 'b', 'start_frame': 90, 'end_frame': 180, 'content': {}}]},
+        {'id': 'song', 'type': 'audio', 'audio_locked': True, 'segments': [
+            {'id': 'track', 'start_frame': 0, 'end_frame': 400, 'content': {'media_type': 'audio', 'file_path': 'song.wav'}}]}]}
+    before = status.native_task_fingerprint(info, 0)
+
+    def edited(**fields):
+        changed = copy.deepcopy(info)
+        changed['tracks'][1]['segments'][0].update(fields)
+        return changed
+
+    # Trimming the song's end far past the task leaves the task's part, and the task, as it was.
+    trimmed = edited(end_frame=300)
+    assert status.native_task_fingerprint(trimmed, 0) == before
+    assert status.native_task_fingerprint(trimmed, 0, 1) != status.native_task_fingerprint(info, 0, 1)
+    # Cutting into the task's window, or sliding the source under it, changes what it heard.
+    assert status.native_task_fingerprint(edited(end_frame=60), 0) != before
+    assert status.native_task_fingerprint(edited(start_frame=0, origin_start_frame=-24), 0) != before
+
+
+def test_timeline_status_compares_each_version_with_its_own_fingerprint(tmp_path):
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    _commit(tmp_path, _latent(), plans)
+    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2}, 'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': plans[0].start_frame, 'end_frame': plans[0].end_frame,
+                                       'content': {'continuity_mode': plans[0].continuity_mode}}]},
+        {'id': 'song', 'type': 'audio', 'audio_locked': True, 'segments': [
+            {'id': 'track', 'start_frame': 0, 'end_frame': 600, 'content': {'media_type': 'audio', 'file_path': 'song.wav'}}]}]}
+    trimmed = copy.deepcopy(info)
+    trimmed['tracks'][1]['segments'][0]['end_frame'] = 500
+    manifest = artifacts.read_native_manifest(tmp_path)
+    generation = manifest['segments']['0']['generations']['0']
+
+    def status_after_trim(version):
+        recipe = {'task_fingerprint': status.native_task_fingerprint(info, 0, version or 1)}
+        generation['native_recipe'] = {**recipe, **({'task_fingerprint_version': version} if version else {})}
+        return status.native_timeline_status(trimmed, manifest)[0]['status']
+
+    # Versions saved before version 2 keep their old comparison, so their status does not move.
+    assert status_after_trim(None) == 'edited'
+    assert status_after_trim(2) == 'saved'
+
+
 def test_source_fingerprint_follows_the_task_reference_lists():
     import copy
     status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
