@@ -176,13 +176,15 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
     tab = {"key": "workflows/mv.json", "workflow": {"nodes": []}, "plans": {}}
     with pytest.raises(ValueError):
         store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read"})
-    result = store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read", "tabs": [], "tab": tab})
-    assert result["tab"] == tab
+    saved = [{"key": "workflows/mmh3/blank.json", "name": "blank"}]
+    result = store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read", "tabs": [], "saved": saved, "tab": tab})
+    assert result["tab"] == tab and result["saved"] == saved
     store.apply(apply_payload())
     job = register(store)
     assert job["changes"]["project"]["project_name"] == "mv" and "changes" not in store.get("apply-1")
-    result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied"})
-    assert result["status"] == "applied"
+    # The page opened a saved workflow to change it.
+    result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied", "opened": True})
+    assert result["status"] == "applied" and result["opened"] is True
     # Changing a tab can be retried; running it might already have happened.
     store.apply(apply_payload(request_id="apply-2"))
     register(store)

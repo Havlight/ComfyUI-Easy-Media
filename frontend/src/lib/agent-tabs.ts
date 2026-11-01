@@ -11,8 +11,8 @@ const PREVIOUS_TAB = 'Workspace.PreviousOpenedWorkflow'
 
 type Workflow = ReturnType<ComfyApp['rootGraph']['serialize']>
 
-/** The parts of ComfyUI's workflow store and its tabs this module uses. */
-interface OpenWorkflow {
+/** The parts of ComfyUI's workflow store this module uses: open tabs and the saved workflows. */
+interface StoreWorkflow {
   path: string
   filename: string
   isModified: boolean
@@ -22,11 +22,14 @@ interface OpenWorkflow {
   changeTracker?: { captureCanvasState?: () => void } | null
 }
 interface WorkflowTabs {
-  openWorkflows: OpenWorkflow[]
-  activeWorkflow: OpenWorkflow | null
+  openWorkflows: StoreWorkflow[]
+  activeWorkflow: StoreWorkflow | null
   isBusy: boolean
-  isActive: (workflow: OpenWorkflow) => boolean
-  isOpen: (workflow: OpenWorkflow) => boolean
+  isActive: (workflow: StoreWorkflow) => boolean
+  isOpen: (workflow: StoreWorkflow) => boolean
+  /** Saved workflows, open or not; filled by loadWorkflows like the Workflows sidebar. */
+  persistedWorkflows?: StoreWorkflow[]
+  loadWorkflows?: () => Promise<void>
 }
 
 function tabsOf(app: ComfyApp): WorkflowTabs {
@@ -41,9 +44,17 @@ export interface AgentTab {
   temporary: boolean
 }
 
+/** A saved workflow that is not open as a tab. */
+export interface SavedWorkflow {
+  key: string
+  name: string
+}
+
 export interface AgentTabContent {
   key: string
   name: string
+  /** False for a saved workflow read from its file without opening it. */
+  open: boolean
   workflow: Workflow
   /** The H3 plan each Editor exports, by node id. */
   plans: Record<string, H3PlanFile>
@@ -73,9 +84,10 @@ export interface TabApplyJob {
 }
 
 export type TabReadResult =
-  | { status: 'read'; tabs: AgentTab[]; tab?: AgentTabContent }
+  | { status: 'read'; tabs: AgentTab[]; saved: SavedWorkflow[]; tab?: AgentTabContent }
   | { status: 'failed'; error: string }
-export type TabApplyResult = { status: 'applied' } | QueueResult
+/** `opened` when a saved workflow was opened as a tab for this job. */
+export type TabApplyResult = ({ status: 'applied' } | QueueResult) & { opened?: boolean }
 
 interface SerializedNode { id: number | string; type?: string; widgets_values?: unknown }
 
@@ -117,22 +129,50 @@ function listTabs(app: ComfyApp): AgentTab[] {
   }))
 }
 
-/** A tab by its key, or by its name when one open tab alone has it (".json" optional). */
-function findTab(app: ComfyApp, key: string): OpenWorkflow {
-  const open = tabsOf(app).openWorkflows
-  const tab = open.find((workflow) => workflow.path === key)
-  if (tab) return tab
-  const name = key.replace(/\.json$/i, '')
-  const named = open.filter((workflow) => workflow.filename.replace(/\.json$/i, '') === name)
-  if (named.length === 1) return named[0]
-  const keys = open.map((workflow) => workflow.path).join(', ')
-  throw new Error(named.length
-    ? `Several open tabs are named ${key}; use one of their keys: ${named.map((workflow) => workflow.path).join(', ')}`
-    : `No open tab has the key or name ${key}; open tabs: ${keys}`)
+/**
+ * Saved workflows that are not open, once the store has listed them. The store lists every file
+ * in the workflows folder (notes, images, node packs), so only .json files count.
+ */
+async function savedWorkflows(store: WorkflowTabs): Promise<StoreWorkflow[]> {
+  await store.loadWorkflows?.()
+  return (store.persistedWorkflows ?? []).filter(
+    (workflow) => /\.json$/i.test(workflow.path) && !store.isOpen(workflow),
+  )
 }
 
-/** The open tab's content, unsaved edits included: the canvas for the visible tab, its kept state otherwise. */
-async function tabWorkflow(app: ComfyApp, tab: OpenWorkflow): Promise<Workflow> {
+const withoutJson = (name: string) => name.replace(/\.json$/i, '')
+
+/**
+ * A tab or saved workflow by its key, or by a name only one has (".json" optional). Open tabs
+ * are matched by name before saved workflows.
+ */
+async function findWorkflow(app: ComfyApp, key: string): Promise<StoreWorkflow> {
+  const store = tabsOf(app)
+  const open = store.openWorkflows
+  const saved = await savedWorkflows(store)
+  const byKey = [...open, ...saved].find((workflow) => workflow.path === key)
+  if (byKey) return byKey
+  for (const [group, label] of [[open, 'open tabs'], [saved, 'saved workflows']] as const) {
+    const named = group.filter((workflow) => withoutJson(workflow.filename) === withoutJson(key))
+    if (named.length === 1) return named[0]
+    if (named.length) throw new Error(`Several ${label} are named ${key}; use one of their keys: ${named.map((workflow) => workflow.path).join(', ')}`)
+  }
+  throw new Error(`No open tab or saved workflow has the key or name ${key}; open tabs: ${open.map((workflow) => workflow.path).join(', ')}. The tabs command with --saved finds saved workflows.`)
+}
+
+/** Open a saved workflow as its own tab the way the Workflows sidebar does, so saving writes back to its file. */
+async function openSaved(app: ComfyApp, workflow: StoreWorkflow): Promise<void> {
+  const store = tabsOf(app)
+  const state = workflow.activeState ?? (await workflow.load()).activeState
+  const loaded: unknown = await app.loadGraphData(
+    JSON.parse(JSON.stringify(state)) as Workflow, true, true, workflow as unknown as string,
+  )
+  for (let wait = 0; store.isBusy && wait < 100; wait += 1) await new Promise((resolve) => setTimeout(resolve, 50))
+  if (loaded === false || !store.isActive(workflow)) throw new Error(`Could not open the saved workflow ${workflow.path}`)
+}
+
+/** The workflow's content, unsaved edits included: the canvas for the visible tab, its kept or saved state otherwise. */
+async function tabWorkflow(app: ComfyApp, tab: StoreWorkflow): Promise<Workflow> {
   if (tabsOf(app).isActive(tab)) return app.rootGraph.serialize()
   const state = tab.activeState ?? (await tab.load()).activeState
   if (!state) throw new Error(`The tab ${tab.path} has no content to read`)
@@ -141,7 +181,7 @@ async function tabWorkflow(app: ComfyApp, tab: OpenWorkflow): Promise<Workflow> 
 }
 
 /** Switch tabs with the same commands as the keyboard shortcuts, so ComfyUI keeps each tab's own state. */
-async function activateTab(app: ComfyApp, tab: OpenWorkflow): Promise<void> {
+async function activateTab(app: ComfyApp, tab: StoreWorkflow): Promise<void> {
   const store = tabsOf(app)
   for (let step = 0; step < store.openWorkflows.length && !store.isActive(tab); step += 1) {
     const open = store.openWorkflows
@@ -158,10 +198,13 @@ async function activateTab(app: ComfyApp, tab: OpenWorkflow): Promise<void> {
 export async function readAgentTab(app: ComfyApp, job: TabReadJob): Promise<TabReadResult> {
   try {
     const tabs = listTabs(app)
-    if (!job.tab) return { status: 'read', tabs }
-    const tab = findTab(app, job.tab)
+    const saved = (await savedWorkflows(tabsOf(app))).map((workflow) => ({ key: workflow.path, name: workflow.filename }))
+    if (!job.tab) return { status: 'read', tabs, saved }
+    // A saved workflow is read from its file; only applying opens it.
+    const tab = await findWorkflow(app, job.tab)
     const workflow = await tabWorkflow(app, tab)
-    return { status: 'read', tabs, tab: { key: tab.path, name: tab.filename, workflow, plans: editorPlans(workflow) } }
+    return { status: 'read', tabs, saved, tab: {
+      key: tab.path, name: tab.filename, open: tabsOf(app).isOpen(tab), workflow, plans: editorPlans(workflow) } }
   } catch (error) {
     return { status: 'failed', error: errorMessage(error) }
   }
@@ -178,10 +221,14 @@ export async function applyAgentTab(app: ComfyApp, job: TabApplyJob): Promise<Ta
   const store = tabsOf(app)
   const previous = store.activeWorkflow
   let switched = false
+  let opened = false
   try {
     if (nativeQueueBusy(app)) throw new Error('ComfyUI is already submitting a workflow; wait for it to finish')
-    const tab = findTab(app, job.tab)
-    if (!store.isActive(tab)) {
+    const tab = await findWorkflow(app, job.tab)
+    if (!store.isOpen(tab)) {
+      switched = opened = true
+      await openSaved(app, tab)
+    } else if (!store.isActive(tab)) {
       switched = true
       await activateTab(app, tab)
     }
@@ -205,10 +252,10 @@ export async function applyAgentTab(app: ComfyApp, job: TabApplyJob): Promise<Ta
       store.activeWorkflow?.changeTracker?.captureCanvasState?.()
       app.canvas.setDirty(true, true)
     }
-    if (!job.queue) return { status: 'applied' }
-    return await queueCurrentWorkflow(app, graph.serialize().id)
+    const result = job.queue ? await queueCurrentWorkflow(app, graph.serialize().id) : { status: 'applied' as const }
+    return opened ? { ...result, opened } : result
   } catch (error) {
-    return { status: 'failed', error: errorMessage(error) }
+    return { status: 'failed', error: errorMessage(error), ...(opened ? { opened } : {}) }
   } finally {
     // Leave the person on the tab they were looking at.
     if (switched && previous && store.isOpen(previous) && !store.isActive(previous)) {

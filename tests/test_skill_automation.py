@@ -99,6 +99,23 @@ class FakePage:
             await asyncio.sleep(0.01)
 
 
+SAVED = "workflows/mmh3/blank.json"
+
+
+class SavedPage(FakePage):
+    """A page where the workflow is saved but not open; applying opens it, as the Workflows sidebar does."""
+
+    def answer(self, job: dict) -> dict:
+        result = super().answer(job)
+        if job.get("kind") == "tabs":
+            result = {**result, "tabs": [], "saved": [{"key": SAVED, "name": "blank"}, {"key": "workflows/old/mv.json", "name": "mv"}]}
+            if "tab" in result:
+                result["tab"] = {**result["tab"], "key": SAVED, "open": False}
+        elif job.get("kind") == "apply":
+            result = {**result, "opened": True}
+        return result
+
+
 class FakeComfy:
     """The routes the scripts call, recording what they receive."""
 
@@ -282,6 +299,37 @@ def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
     assert (report["project"]["project_save"], report["project"]["sampling_mode"]) == ("override", "single")
     assert report["tracks"] == []
     assert report["outputs"] == [{"id": 25, "output_mode": "preview_only", "temp": True}]
+
+
+def test_a_saved_workflow_is_listed_read_without_opening_and_opened_to_apply(tmp_path):
+    fake = FakeComfy(tmp_path)
+    template = json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    # Saved workflows are only counted unless asked for, then found by the words of their key.
+    code, stdout, stderr = with_comfy(fake, SavedPage(template), 1, str(SCRIPTS / "plan_workflow.py"), "tabs")
+    assert code == 0, stderr
+    page_report = json.loads(stdout)["pages"][0]
+    assert page_report["saved_count"] == 2 and "saved" not in page_report
+    code, stdout, stderr = with_comfy(fake, SavedPage(template), 1, str(SCRIPTS / "plan_workflow.py"), "tabs", "--saved", "BLANK mmh3")
+    assert code == 0, stderr
+    assert json.loads(stdout)["pages"][0]["saved"] == [{"key": SAVED, "name": "blank"}]
+    code, stdout, stderr = with_comfy(fake, SavedPage(template), 1, str(SCRIPTS / "plan_workflow.py"), "tabs", "--saved")
+    assert code == 0, stderr
+    assert len(json.loads(stdout)["pages"][0]["saved"]) == 2
+
+    code, stdout, stderr = with_comfy(fake, SavedPage(template), 1, str(SCRIPTS / "plan_workflow.py"), "read", "--tab", "blank")
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    assert (report["tab"], report["open"]) == (SAVED, False)
+
+    page = SavedPage(template)
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}]})
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", "blank", "--project-name", "mv-alice")
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    # The name resolves to the workflow's key, and the report says the page opened it.
+    assert (report["tab"], report["opened"]) == (SAVED, True)
+    assert page.jobs[-1]["tab"] == SAVED
 
 
 def test_apply_restores_the_plan_a_recorded_run_used(tmp_path):

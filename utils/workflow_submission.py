@@ -29,8 +29,9 @@ RESULT_STATUSES = {
     "apply": ("applied", "queued", "failed", "unknown"),
     "workflow": ("loaded", "queued", "failed", "unknown"),
 }
-# What a page may report besides the status: the tabs it has, the tab it read or opened.
-RESULT_FIELDS = {"tabs": list, "tab": (dict, str)}
+# What a page may report besides the status: the tabs it has and the saved workflows not open,
+# the tab it read or opened, and whether it opened a saved workflow for the job.
+RESULT_FIELDS = {"tabs": list, "saved": list, "tab": (dict, str), "opened": bool}
 
 
 class WorkflowSubmissions:

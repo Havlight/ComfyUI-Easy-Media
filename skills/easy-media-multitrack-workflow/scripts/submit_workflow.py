@@ -198,7 +198,7 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("workflow", nargs="?", type=Path, help="A workflow file to open in a new tab (instead of --tab)")
-    parser.add_argument("--tab", help="Run this open tab: its key as listed by plan_workflow.py tabs, or a name only one tab has")
+    parser.add_argument("--tab", help="Run this tab or saved workflow (opening it): its key as listed by plan_workflow.py tabs, or a name only one has")
     parser.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
     parser.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
     parser.add_argument("--client-id")
@@ -234,7 +234,7 @@ def main() -> int:
             if args.tab:
                 # Read first: the run is recorded with the plan the tab holds.
                 content = read_tab(base_url, args.tab, args.client_id, args.timeout)["tab"]
-                route, payload = "apply", dict(tab=args.tab, queue=True, **client)
+                route, payload = "apply", dict(tab=content["key"], queue=True, **client)
             else:
                 workflow = json.loads(args.workflow.read_text(encoding="utf-8"))
                 if not isinstance(workflow, dict) or not isinstance(workflow.get("nodes"), list) or not isinstance(workflow.get("links"), list):

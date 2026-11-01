@@ -9,7 +9,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 必守规则
 
-- **用哪个分页要问**：用户没说用哪个分页或工作流时，用 `plan_workflow.py tabs` 列出分页后问用户，不要自己挑。用户说的名称跟分页对不上，或有几个名称相近的分页时，也先问。用户说「用默认」才用 `assets/templates/v1.3.0-blank-workflow.json`（`apply --file` 开新分页），并提醒用户它的模型文件名可能跟本机不同。
+- **用哪个工作流要问**：`plan_workflow.py tabs` 列出开着的分页；存在 ComfyUI 但没打开的工作流可能有几百个，用 `tabs --saved 关键字` 找（列出 key 含每个词的）。用户指名的工作流只对上一个时直接用，没打开也一样，`apply` 会打开原文件。用户没说用哪个，或名称对不上、有几个相近的时，列出来问用户，不要自己挑。用户说「用默认」才用 `assets/templates/v1.3.0-blank-workflow.json`（`apply --file` 开成未存档复本），并提醒用户它的模型文件名可能跟本机不同。
 - **执行要明确授权**：只有用户说「执行、生成、出片、排队」时才排入队列；「规划、写进去」只改分页。
 - **任务 id 固定**：规划里每段任务都写自己的 `id`（如 `s01`、`s02`），修改时保留。已存结果依 id 对应。
 - **以分页为准**：每次修改都先 `read --tab 分页 -o current.json`，在读出来的规划上改再 `apply`，用户在分页里改过的地方（提示词、秒数等）才会留着。不要拿自己之前的规划文件直接套。
@@ -28,7 +28,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 自动循环
 
-1. `plan_workflow.py tabs` 确认用哪个分页（用户没指定就问）。
+1. `plan_workflow.py tabs` 确认用哪个分页（用户没指定就问）；用户说的工作流没打开时用 `tabs --saved 关键字` 找。
 2. `plan_workflow.py read --tab 分页 -o current.json`：看 Project（含 `project_save`）、Editor、分辨率、影音轨、输出节点、目前的规划，以及每段已存结果是否还跟内容相符（`status`）。分页内容跟专案纪录对不上时先问用户，要还原就 `apply --from-run last`。
 3. `plan_workflow.py probe` 读出歌曲、影片长度，据此分段。
 4. 在 `current.json` 上改出规划（空白分页就新写）；分段与提示词按 [references/writing.md](references/writing.md)，提示词用对应 mode 的 H3 指南写。
@@ -71,4 +71,4 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 交付
 
-说明用了哪个分页、专案名称、任务与时间轴摘要、锁定轨与公用媒体、要跑的范围，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态、输出文件与专案纪录的位置；不以「已排队」冒充「已生成」。输出文件的 `type` 是 `temp` 时，提醒用户那是预览档，ComfyUI 重开会被清掉；要保留就把输出节点（如 Save Video）改成存档，或另存一份。各段影片固定存在 `output/easy_media/projects/<专案>/`。
+说明用了哪个分页（这次打开的要说明，并提醒修改还没存，Ctrl+S 会写回原文件，要保留原文件就另存）、专案名称、任务与时间轴摘要、锁定轨与公用媒体、要跑的范围，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态、输出文件与专案纪录的位置；不以「已排队」冒充「已生成」。输出文件的 `type` 是 `temp` 时，提醒用户那是预览档，ComfyUI 重开会被清掉；要保留就把输出节点（如 Save Video）改成存档，或另存一份。各段影片固定存在 `output/easy_media/projects/<专案>/`。

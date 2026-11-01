@@ -4,8 +4,8 @@
 
 ## 准备
 
-- 用户在 ComfyUI 开好要用的工作流分页：分辨率、Project 的采样设置、模型都设好，时间轴可以是空的。没存档也可以，agent 读得到分页里没存的修改。
-- 用户没说用哪个分页时先问。用户说「用默认」时用 `assets/templates/v1.3.0-blank-workflow.json`：`apply --file` 会把它开成新分页。
+- 用户在 ComfyUI 开好要用的工作流分页，或指定一个存在 ComfyUI 里的工作流：分辨率、Project 的采样设置、模型都设好，时间轴可以是空的。没存档也可以，agent 读得到分页里没存的修改。
+- 用户没说用哪个工作流时先问。用户说「用默认」时用 `assets/templates/v1.3.0-blank-workflow.json`：`apply --file` 会把它开成新的未存档复本。`--file` 只给 ComfyUI 工作流文件夹以外的文件用。
 - agent 只改分页的 Editor 时间轴与 Project 的专案名称、开始段、段数，算一步，用户按 Ctrl+Z 可以还原（重新整理页面会清掉还原纪录）；不存档、不改其他节点。
 - 分页里已有的影音轨若要保留，规划的 `tracks` 要列出它们的 `id`；没有 `id` 的轨道是新轨道，分页原有、规划没列出的轨道会被删除。
 
@@ -13,9 +13,10 @@
 
 ```bash
 python scripts/plan_workflow.py tabs
+python scripts/plan_workflow.py tabs --saved "mmh3 blank"
 ```
 
-列出每个 ComfyUI 页面开着的分页：`key`（之后的 `--tab` 用它；名称只有一个分页用时也可以）、名称、是否在前景、有没有没存的修改。有多个页面时，后面的指令都加 `--client-id`。
+列出每个 ComfyUI 页面开着的分页（`tabs`：`key`、名称、是否在前景、有没有没存的修改），以及存在 ComfyUI 但没打开的工作流有几个（`saved_count`）。这些工作流可能有几百个，`--saved 关键字` 只列出 key 含每个词的（不分大小写；`saved`：`key`、名称），只写 `--saved` 列出全部。之后的 `--tab` 用 `key`；名称只有一个用时也可以，开着的分页优先。没打开的工作流：`read` 直接读文件，不打开；`apply`、`submit_workflow.py --tab` 会先照侧边栏的方式打开原文件（报告有 `opened: true`），存档会写回原文件。有多个页面时，后面的指令都加 `--client-id`。
 
 ## 2. 读分页
 

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Work on the workflow tabs open in ComfyUI with H3 plan files, or read the length of media files.
 
-tabs:   the open workflow tabs of each ComfyUI page.
+tabs:   the open workflow tabs of each ComfyUI page, and how many saved workflows are not open;
+        --saved WORDS lists those whose key has every word (--saved alone lists them all).
 read:   one tab's Project, Editor, tracks, outputs and plan, unsaved edits included, and whether
-        each task's saved result still matches it.
+        each task's saved result still matches it. A saved workflow is read without opening it.
 apply:  PLAN.json -> the tab's Editor and Project. Files the plan names are copied into ComfyUI
         (uploaded when the server cannot read them), the page converts the plan with the Editor's
         own importer, and the Project starts at the first task whose saved result does not match.
         The tab changes like a person's edit (one undo step); nothing is saved to disk or queued.
+        A saved workflow that is not open is opened first, as the Workflows sidebar opens it.
         --from-run N applies the plan a recorded run used instead, to restore a tab.
 project: each task's saved versions: which is active, what it continued from, locked audio, fallbacks.
 record: keep a note (README.md) in the project's agent records folder.
@@ -342,10 +344,17 @@ def tabs(args: argparse.Namespace) -> int:
     clients = request_json(base_url, "/easy-media/workflow/clients")["clients"]
     if args.client_id:
         clients = [client for client in clients if client["client_id"] == args.client_id]
+    words = args.saved.lower().split() if args.saved is not None else None
     pages = []
     for client in clients:
         result = read_tab(base_url, None, client["client_id"], args.timeout)
-        pages.append({"client_id": client["client_id"], "title": client.get("title"), "tabs": result["tabs"]})
+        saved = result.get("saved", [])
+        page = {"client_id": client["client_id"], "title": client.get("title"), "tabs": result["tabs"],
+                "saved_count": len(saved)}
+        # A ComfyUI install can keep hundreds of workflows; list only the ones asked for.
+        if words is not None:
+            page["saved"] = [item for item in saved if all(word in item["key"].lower() for word in words)]
+        pages.append(page)
     print(json.dumps({"pages": pages}, ensure_ascii=False, indent=2))
     return 0
 
@@ -364,6 +373,7 @@ def read(args: argparse.Namespace) -> int:
     summary = tab_summary(workflow, project, plan)
     report = {
         "tab": content["key"],
+        "open": content.get("open", True),
         "project": {"id": project.get("id"), **fields, **summary["settings"]},
         "editor": {"id": editor.get("id"), "format": settings["format"], "resolution": settings["resolution"],
                    "frame_rate": settings["frame_rate"]},
@@ -400,6 +410,7 @@ def apply(args: argparse.Namespace) -> int:
     if args.file:
         key = open_workflow(base_url, load_object(args.file, "workflow"), args.project_name, args.client_id, args.timeout)
     content = read_tab(base_url, key, args.client_id, args.timeout)["tab"]
+    key = content["key"]
     workflow, project, editor, _settings = tab_parts(content)
     track_index, track_data = track_data_widget(editor)
     editor_format = editor["widgets_values"][track_index - 1]
@@ -433,6 +444,7 @@ def apply(args: argparse.Namespace) -> int:
         raise RuntimeError(f"The ComfyUI page did not change the tab: {applied.get('error') or applied['status']}")
     report = {
         "tab": key,
+        **({"opened": True} if applied.get("opened") else {}),
         "project_name": args.project_name,
         # Nothing to run when every task's saved result matches it.
         "run": {"start": first, "count": args.count} if first else {"nothing_to_run": True},
@@ -488,15 +500,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     tabs_parser = commands.add_parser("tabs", help="List the workflow tabs open in each ComfyUI page")
+    tabs_parser.add_argument("--saved", nargs="?", const="", metavar="WORDS",
+                             help="Also list the saved workflows not open whose key has every word (all of them without words)")
     read_parser = commands.add_parser("read", help="Read one tab's Project, Editor and plan")
-    read_parser.add_argument("--tab", required=True, help="The tab key as listed by the tabs command, or a name only one tab has")
+    read_parser.add_argument("--tab", required=True, help="A tab or saved workflow: its key as listed by the tabs command, or a name only one has")
     read_parser.add_argument("-o", "--output", type=Path, help="Write the tab's plan here")
     apply_parser = commands.add_parser("apply", help="Apply a plan to a tab's Editor and Project")
     apply_parser.add_argument("plan", type=Path, nargs="?", help="The plan file (or use --from-run)")
     apply_parser.add_argument("--from-run", metavar="N", help='Apply the plan recorded run N (or "last") used')
     source = apply_parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--tab", help="The tab key as listed by the tabs command, or a name only one tab has")
-    source.add_argument("--file", type=Path, help="A workflow file to open in a new tab first")
+    source.add_argument("--tab", help="A tab or saved workflow: its key as listed by the tabs command, or a name only one has")
+    source.add_argument("--file", type=Path, help="A workflow file to open as a new, unsaved copy first; use --tab for workflows saved in ComfyUI")
     apply_parser.add_argument("--project-name", required=True)
     apply_parser.add_argument("--start", default="auto",
                               help='"auto" (first task whose saved result does not match) or a 1-based task number')

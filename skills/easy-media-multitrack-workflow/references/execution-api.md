@@ -23,7 +23,7 @@ python3 scripts/submit_workflow.py RESULT.json                  # 把工作流�
 运行开着的分页时，页面切到那个分页、调用与“运行”按钮相同的原生入队入口，再切回用户原本看的分页；分页 key 由 `plan_workflow.py tabs` 列出。工作流文件只接受带 `nodes`、`links`、布局和控件值的 **UI workflow JSON**，开成新分页后同样原生入队。两种都保留自定义控件和种子的提交钩子。不要手写 API prompt，也不要直接请求 `/prompt`。
 
 - `--tab` 运行前先读取分页，排队成功后把这次执行写进专案纪录（`history.json`、`plans/run-NNN.json`，见 [automation.md](automation.md)）；读取之后有人改了 Editor 或 Project 时页面拒绝运行。
-- 工作流文件总是开成新分页，不覆盖已开的分页，也不存档；`--no-queue` 只打开，不运行，结果附带新分页的 `tab`。
+- 工作流文件总是开成新的未存档复本，不覆盖已开的分页，也不存档；`--no-queue` 只打开，不运行，结果附带新分页的 `tab`。存在 ComfyUI 里的工作流改用 `--tab`，会打开原文件本身。
 - `--name 名称` 指定 tab 名称前缀；新 tab 附加请求 ID，避免与已打开流程重名。
 - `--clients` 列出在线页面；一个页面时可省略 `--client-id`，多个页面必须指定目标，不能选择第一个或广播。
 - `client_id` 是本接口为每个页面生成的 ID；`session_id` 是对应 ComfyUI WebSocket ID。同一个页面里的多个工作流 tab 不计为多个客户端。
@@ -85,7 +85,7 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 { "tab": "workflows/MV.json", "request_id": "...", "client_id": "..." }
 ```
 
-`tab` 可省略，只列分页。完成时 `status` 为 `read`，`tabs` 列出每个分页的 `key`、`name`、`active`、`modified`、`temporary`；指定 `tab` 时另有 `tab`：`workflow`（含未存档的修改）、`plans`（每个 Editor 导出的规划，依节点 id）。
+`tab` 可省略，只列分页。完成时 `status` 为 `read`，`tabs` 列出每个分页的 `key`、`name`、`active`、`modified`、`temporary`，`saved` 列出存在 ComfyUI 但没打开的工作流（工作流文件夹里的 `.json`；`key`、`name`）。`tab` 可以是分页或已存工作流的 key，或只有一个用的名称；指定时另有 `tab`：`key`、`open`（已存工作流直接读文件，不打开，为 `false`）、`workflow`（含未存档的修改）、`plans`（每个 Editor 导出的规划，依节点 id）。
 
 `POST /easy-media/workflow/apply` 修改或运行一个分页：
 
@@ -100,7 +100,7 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 }
 ```
 
-页面切到该分页。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied`。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
+页面切到该分页；已存但没打开的工作流先照侧边栏的方式打开（跟文件连结，存档写回原文件），结果附 `opened: true`。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied`。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
 
 ### 专案版本
 
