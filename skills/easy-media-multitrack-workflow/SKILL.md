@@ -50,7 +50,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 - **照着影片的动作，又要镜头不切**：两者不能兼得，先说明取舍让用户选：锁定（动作对得准，但第一个锁定的任务是新镜头，接缝可能看起来像切镜）或不锁定（镜头连续，动作大致相像）。用了不锁定时，交付时也说明。
 - **锁定视频（主体或局部替换、动作要对准时间）**：视频放在视频轨并设 `audio_locked: true`，画面时间线照它走；未另锁音频时沿用视频原声，另有锁定音频轨时优先用它的音频。只要参考原声、不要输出时，影片轨加 `"soundtrack": "reference"`，原声成为参考 `<Audio N>`，提示词写成参考关系，并写明成品要听到什么（新生成的音乐，或只有环境声）。被锁定的任务用 `ref` 或 `edit`。视频必须盖满每个被锁定任务的整段，接续任务还要多盖前面 39 帧（约 1.6 秒），所以第一个被锁定的任务用 `shot`、之后的用 `context_drift`，片段写 `"until": <最后一个被锁定的任务>`，让它刚好结束在那段结尾，后面的任务就不会被锁住。盖不满时 `apply` 报错，分页不变。用户没给片段长度时按连续 10 秒拆分，末段用剩余时长。
 - **主音频／影片原声**：需要原样沿用并驱动节奏（MV、歌词视频、旁白）时，在那条音频或视频轨设 `audio_locked: true`。同类型最多锁一条；音频与视频可各锁一条，并存时音频优先，视频继续约束画面。主音频不只一个候选时先问用户。
-- **接续**：换场景用 `shot`，接着上一段用 `context_drift`；`context` 只在用户要求时用。`context_drift` 默认 `seam: "soft"`，用户要求接缝贴紧上一段时用 `"clean"`。
+- **接续**：换场景用 `shot`，接着上一段用 `context_drift`；`context` 只在用户要求时用。`context_drift` 默认 `seam: "soft"`，用户要求接缝贴紧上一段时用 `"clean"`。用户要长镜头不逐段走样（颜色、清晰度偏移）时用 `context_anchor`，设置见 [references/plan-file.md](references/plan-file.md) 的 `anchor`；SelfLift 不能跑它。
 - **首帧、尾帧图**：会缩放成影片画面的大小，首帧直接拉伸、尾帧等比裁切。图的比例跟影片不同时，另存一份裁成相同比例的副本再用，不改用户的原档。
 - **自己处理素材**：时间轴、`until`、`muted`、`soundtrack` 做得到的（切段、去原声），不要另做副本。做不到的（如裁图）可以用 ffmpeg 另存副本，不改原档；套用时会复制进 ComfyUI，副本放在暂存区也可以。
 - **片段 LoRA**：在规划的 `loras` 写规则，用 `at`／`until` 指定套用的任务，读出来的规则修改时保留 `id`；写法见 [references/plan-file.md](references/plan-file.md)「片段 LoRA」。Project 没接 H3 Segment LoRA 节点时 `apply` 会报错，请用户接上，不要自己改节点图；`read` 有 `loras_inactive` 时节点被绕过或静音，规则不会生效，请用户取消节点的绕过或静音。改了某段的 LoRA，那段的 `status` 会变成 `edited`（用到第一次用的 LoRA 文件时是 `pending`），要重跑。
