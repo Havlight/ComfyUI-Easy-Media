@@ -3,19 +3,26 @@
 
 tabs:   the open workflow tabs of each ComfyUI page, and how many saved workflows are not open;
         --saved WORDS lists those whose key has every word (--saved alone lists them all).
-read:   one tab's Project, Editor, tracks, outputs and plan, unsaved edits included, and whether
-        each task's saved result still matches it. A saved workflow is read without opening it.
-apply:  PLAN.json -> the tab's Editor and Project. Files the plan names are copied into ComfyUI
-        (uploaded when the server cannot read them), the page converts the plan with the Editor's
-        own importer, and the Project starts at the first task whose saved result does not match.
+read:   one tab's Project and Editor settings, tracks, segment LoRA rules, outputs and plan,
+        unsaved edits included, and whether each task's saved result still matches it. A saved
+        workflow is read without opening it.
+apply:  PLAN.json -> the tab's Editor, Project and segment LoRA node. Files the plan names are
+        copied into ComfyUI (uploaded when the server cannot read them), the page converts the
+        plan with the Editor's own importer, and the Project starts at the first task whose saved
+        result does not match.
         The tab changes like a person's edit (one undo step); nothing is saved to disk or queued.
         A saved workflow that is not open is opened first, as the Workflows sidebar opens it.
         --from-run N applies the plan a recorded run used instead, to restore a tab.
         --sampling single|dual|upscale also sets the Project's sampling: upscale is Dual from each
         task's saved first pass, and needs --start.
+        --set project.NAME=VALUE / editor.NAME=VALUE also sets other settings, by the names read
+        lists; ComfyUI checks them against the nodes before anything changes.
 project: each task's saved versions: which is active, how each was made, what it continued from.
 select: make one saved version the one a task uses for continuing, combining and upscaling.
 record: keep a note (README.md) in the project's agent records folder.
+loras:  the LoRA notes every project shares (output/easy_media/loras.md): the text, the
+        LoRAs it names and whether they are installed, with what LoRA Manager keeps for them;
+        --find WORDS lists installed LoRAs whose name has every word; --write FILE replaces it.
 probe:  the length of video and audio files, to plan tasks around a song or clip.
 """
 
@@ -38,21 +45,19 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from patch_workflow import (  # noqa: E402
-    PROJECT_WIDGETS,
     WorkflowError,
     choose_editor,
     choose_project,
-    inspect_workflow,
     load_object,
-    read_sampling_mode,
     track_data_widget,
     write_json_atomic,
 )
 from submit_workflow import (  # noqa: E402
+    SettingsError,
     get_record,
+    node_settings,
     open_workflow,
     page_job,
-    project_fields,
     put_record,
     read_tab,
     request_json,
@@ -60,12 +65,14 @@ from submit_workflow import (  # noqa: E402
 )
 
 IMPORT_SUBFOLDER = "easy_media/imports"
-# Project widgets for apply --sampling; setting sampling_mode first creates its option widgets.
+# What apply --sampling means in Project settings.
 SAMPLING_WIDGETS = {
     "single": {"sampling_mode": "single"},
     "dual": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": False},
     "upscale": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True},
 }
+# Project settings apply sets from its own options: the project, and the range the run starts from.
+RUN_SETTINGS = ("project_name", "segment_start_number", "segment_count")
 MEDIA_FIELDS = (("images", "image"), ("videos", "video"), ("audios", "audio"))
 EXTENSIONS = {
     "video": {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"},
@@ -224,8 +231,10 @@ def resolve_plan_files(base_url: str, plan: dict[str, Any]) -> tuple[dict[str, A
 # ---------------------------------------------------------------------------
 
 def convert_on_page(base_url: str, track_data: dict, editor_format: str, plan: dict,
-                    client_id: str | None, timeout: float) -> dict:
-    payload = {"track_data": track_data, "format": editor_format, "plan": plan}
+                    client_id: str | None, timeout: float, tab: str, editor_id: int | str) -> dict:
+    """The page's import of the plan for this tab's Editor: track data and, when the Editor's
+    Project has a LoRA node, its rules after the import (`segment_loras`)."""
+    payload = {"track_data": track_data, "format": editor_format, "plan": plan, "tab": tab, "editor_id": editor_id}
     if client_id:
         payload["client_id"] = client_id
     result = page_job(base_url, "convert", payload, timeout)
@@ -253,16 +262,30 @@ def _link_origin(workflow: dict, node: dict, input_name: str) -> dict | None | b
         current, name = origin, (origin.get("inputs") or [{}])[0].get("name")
 
 
-def project_snapshot(workflow: dict, project: dict) -> dict:
-    """What the Project's saved-result check needs: its LoRA rules and sampling recipe."""
-    widgets = project.get("widgets_values") or []
+# ComfyUI leaves a muted or bypassed node out of the run.
+INACTIVE_MODES = {2: "muted", 4: "bypassed"}
+
+
+def lora_node_inactive(workflow: dict, project: dict) -> str | None:
+    """"bypassed" or "muted" when the Project's H3 Segment LoRA node is left out of the run, so
+    none of its rules apply."""
+    lora = _link_origin(workflow, project, "segment_loras")
+    if isinstance(lora, dict) and lora.get("type") == "easy h3SegmentLoras":
+        return INACTIVE_MODES.get(lora.get("mode"))
+    return None
+
+
+def project_snapshot(workflow: dict, project: dict, settings: dict) -> dict:
+    """What the Project's saved-result check needs: its LoRA rules and the sampling the run uses
+    (`settings` are the Project's, after any changes)."""
+    mode = settings.get("sampling_mode")
     known = all(_link_origin(workflow, project, name) is None
                 for name in ("project_name", "sampling_mode", "segment_start_number", "segment_count"))
     rules: Any = {"version": 1, "rules": []}
     lora = _link_origin(workflow, project, "segment_loras")
     if lora is False or (isinstance(lora, dict) and (lora.get("type") != "easy h3SegmentLoras" or _link_origin(workflow, lora, "rules") is not None)):
         known = False
-    elif isinstance(lora, dict):
+    elif isinstance(lora, dict) and lora.get("mode") not in INACTIVE_MODES:
         raw = (lora.get("widgets_values") or [None])[0]
         try:
             rules = json.loads(raw) if isinstance(raw, str) else raw
@@ -270,10 +293,12 @@ def project_snapshot(workflow: dict, project: dict) -> dict:
             known = False
         if not isinstance(rules, dict) or rules.get("version") != 1 or not isinstance(rules.get("rules"), list):
             known, rules = False, {"version": 1, "rules": []}
-    mode = widgets[PROJECT_WIDGETS["sampling_mode"]] if len(widgets) > PROJECT_WIDGETS["sampling_mode"] else "single"
     if mode not in ("single", "dual", "selflift", "passthrough"):
         known, mode = False, "single"
-    return {"known": known, "segment_loras": rules, "recipe": {"sampling_mode": mode}}
+    # Upscaling saved first passes does not redo them, so their first-stage LoRAs may differ.
+    reuse = mode == "dual" and settings.get("sampling_mode.use_saved_1st_pass") is True
+    return {"known": known, "segment_loras": rules,
+            "recipe": {"sampling_mode": mode, **({"use_saved_1st_pass": True} if reuse else {})}}
 
 
 def saved_tasks(base_url: str, project_name: str, track_data: dict, snapshot: dict) -> tuple[list[dict], set[str]]:
@@ -283,6 +308,50 @@ def saved_tasks(base_url: str, project_name: str, track_data: dict, snapshot: di
                           {"project_name": project_name, "tracks_info": track_data, "project_snapshot": snapshot})
     # Without the LoRA settings a saved result reports "pending"; it still matches the task.
     return result["tasks"], {"saved"} if snapshot["known"] else {"saved", "pending"}
+
+
+UNUSED_LORA_REASONS = {
+    "zero_strength": "its strength is 0",
+    "outside_timeline": "it starts after the last segment",
+    "inactive_stage": "its stage is not sampled with this sampling mode",
+    "passthrough": "it only covers passthrough tasks",
+}
+
+
+def lora_warnings(base_url: str, track_data: dict, snapshot: dict, start: int, count: int) -> list[str]:
+    """What the Project's LoRA check says about the rules: the same LoRA twice in a segment's stage
+    (a run that includes that segment stops before sampling) and rules that apply nowhere.
+    Disabled rules are meant. The check only advises, so its failure is a warning too."""
+    try:
+        result = request_json(base_url, "/easy-media/project/segment-loras-preview", {
+            "tracks_info": track_data, "project_snapshot": {**snapshot, "start_segment": start, "segment_count": count}})
+    except RuntimeError as error:
+        return [f"The Project's LoRA check could not run: {error}"]
+    if result.get("pending"):
+        return []
+    warnings = []
+    for item in result.get("conflicts", []):
+        segment = item["index"] + 1
+        in_run = segment >= start and (count == -1 or segment < start + count)
+        stop = "this run stops before sampling until one goes" if in_run else "fix it before running that segment"
+        warnings.append(f"Segment {segment}, {item['stage']} stage: LoRA rows {item['rows'][0]} and {item['rows'][1]} "
+                        f"both use {item['lora']}; {stop}.")
+    warnings += [f"LoRA row {rule['row']} applies to no segment: {UNUSED_LORA_REASONS[rule['unused_reason']]}."
+                 for rule in result.get("rules", []) if rule.get("unused_reason") in UNUSED_LORA_REASONS]
+    return warnings
+
+
+def first_pass_lora_warnings(statuses: list[dict], tasks: list[dict], start: int, count: int) -> list[str]:
+    """Upscaled tasks whose first-stage LoRA rules changed after their saved first pass, which the
+    upscale keeps as it is."""
+    numbers = {row["id"]: row["index"] for row in tasks}
+    changed = sorted({numbers[task] for item in statuses if item.get("first_loras_changed")
+                      if (task := item["segment_id"].split(":marker:")[0]) in numbers})
+    upscaled = [number for number in changed if number >= start and (count == -1 or number < start + count)]
+    if not upscaled:
+        return []
+    return [f"Tasks {', '.join(map(str, upscaled))}: their first-stage LoRA rules changed after the saved first pass; "
+            "upscaling keeps that first pass, and the new rules apply only to new previews."]
 
 
 def first_task_to_run(statuses: list[dict], reusable: set[str]) -> int | None:
@@ -313,24 +382,20 @@ def status_by_task(statuses: list[dict], reusable: set[str]) -> dict[str, str]:
     return by_task
 
 
-def tab_parts(content: dict) -> tuple[dict, dict, dict, dict]:
-    """The tab's workflow, its Project, the Editor that feeds it, and that Editor's settings."""
+def tab_parts(content: dict) -> tuple[dict, dict, dict]:
+    """The tab's workflow, its Project, and the Editor that feeds it."""
     workflow = content["workflow"]
     project = choose_project(workflow)
-    editor = choose_editor(workflow, project)
-    settings = next(item for item in inspect_workflow(workflow)["editors"] if item["id"] == editor.get("id"))
-    return workflow, project, editor, settings
+    return workflow, project, choose_editor(workflow, project)
 
 
 # Output nodes that only preview: their files go to ComfyUI's temp folder, cleared on restart.
 PREVIEW_OUTPUT_MODES = {"preview_only", "hide"}
 
 
-def tab_summary(workflow: dict, project: dict, plan: dict | None) -> dict:
-    """The settings a run depends on that the plan does not carry: Project saving and sampling,
-    each media track's lock and sound, and whether the outputs are kept."""
-    widgets = project.get("widgets_values") or []
-    setting = lambda name: widgets[PROJECT_WIDGETS[name]] if len(widgets) > PROJECT_WIDGETS[name] else None
+def tab_summary(workflow: dict, plan: dict | None) -> dict:
+    """What a run depends on besides the plan and the settings: each media track's lock and
+    sound, and whether the outputs are kept."""
     tracks = [{"number": number, "type": track.get("type"), "audio_locked": track.get("audio_locked", False),
                **({"soundtrack": track["soundtrack"]} if track.get("soundtrack") else {}),
                "muted": track.get("muted", False),
@@ -339,18 +404,11 @@ def tab_summary(workflow: dict, project: dict, plan: dict | None) -> dict:
     outputs = []
     for node in workflow.get("nodes", []):
         # Only active Easy Media video savers; a bypassed or muted node writes nothing.
-        if isinstance(node, dict) and node.get("type") == "easy saveVideo" and node.get("mode", 0) == 0:
+        if isinstance(node, dict) and node.get("type") == "easy saveVideo" and node.get("mode", 0) not in INACTIVE_MODES:
             values = node.get("widgets_values") or []
             mode = values[1] if len(values) > 1 and isinstance(values[1], str) else "save"
             outputs.append({"id": node.get("id"), "output_mode": mode, "temp": mode in PREVIEW_OUTPUT_MODES})
-    settings = {"project_save": setting("project_save"), "sampling_mode": setting("sampling_mode")}
-    try:
-        options = {key: value for key, value in read_sampling_mode(widgets)[0].items() if key != "sampling_mode"}
-    except (WorkflowError, IndexError):
-        options = {}
-    if options:
-        settings["sampling_options"] = options
-    return {"settings": settings, "tracks": tracks, "outputs": outputs}
+    return {"tracks": tracks, "outputs": outputs}
 
 
 def tabs(args: argparse.Namespace) -> int:
@@ -376,26 +434,38 @@ def tabs(args: argparse.Namespace) -> int:
 def read(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
     content = read_tab(base_url, args.tab, args.client_id, args.timeout)["tab"]
-    workflow, project, editor, settings = tab_parts(content)
-    fields = project_fields(project)
+    workflow, project, editor = tab_parts(content)
+    try:
+        settings = {"project": node_settings(base_url, project)["settings"], "editor": node_settings(base_url, editor)["settings"]}
+        settings_error = None
+    except SettingsError as error:
+        # A workflow saved without named widget values: its plan and tracks still read.
+        settings, settings_error = {"project": {}, "editor": {}}, str(error)
     plan = content["plans"].get(str(editor.get("id")))
     if args.output and plan is not None:
         write_json_atomic(args.output, plan)
-    statuses, reusable = saved_tasks(base_url, fields["project_name"] or "", track_data_widget(editor)[1],
-                                     project_snapshot(workflow, project))
+    track_data = track_data_widget(editor)[1]
+    statuses, reusable = saved_tasks(base_url, settings["project"].get("project_name") or "", track_data,
+                                     project_snapshot(workflow, project, settings["project"]))
     by_task = status_by_task(statuses, reusable)
-    summary = tab_summary(workflow, project, plan)
+    summary = tab_summary(workflow, plan)
     report = {
         "tab": content["key"],
         "open": content.get("open", True),
-        "project": {"id": project.get("id"), **fields, **summary["settings"]},
-        "editor": {"id": editor.get("id"), "format": settings["format"], "resolution": settings["resolution"],
-                   "frame_rate": settings["frame_rate"]},
+        "project": {"id": project.get("id"), "settings": settings["project"]},
+        **({"settings_error": settings_error} if settings_error else {}),
+        "editor": {"id": editor.get("id"), "settings": settings["editor"], "frame_rate": track_data.get("frame_rate")},
         "tasks": [{"id": task.get("id"), "seconds": task.get("seconds"), "mode": task.get("mode", "default"),
                    "continuity": task.get("continuity", "shot"), "status": by_task.get(task.get("id"), "missing"),
                    "prompt": str(task.get("prompt") or "")[:120]}
                   for task in (plan or {}).get("tasks", [])],
         "tracks": summary["tracks"],
+        # The rules of the LoRA node feeding the Project, as the plan writes them (by task), or why a
+        # connected LoRA node's rules cannot be read or written through the plan.
+        **({"loras": plan["loras"]} if plan and "loras" in plan else {}),
+        **({"loras_unavailable": error} if (error := (content.get("lora_errors") or {}).get(str(editor.get("id")))) else {}),
+        # A bypassed or muted LoRA node: its rules stay in the plan, but runs use none of them.
+        **({"loras_inactive": inactive} if (inactive := lora_node_inactive(workflow, project)) else {}),
         "outputs": summary["outputs"],
     }
     if args.output:
@@ -404,8 +474,8 @@ def read(args: argparse.Namespace) -> int:
     return 0
 
 
-def recorded_plan(base_url: str, project_name: str, run: str) -> dict:
-    """The plan a recorded run used: run N, or "last"."""
+def recorded_run(base_url: str, project_name: str, run: str) -> tuple[dict, dict]:
+    """A recorded run (run N, or "last") and the plan it used."""
     runs = json.loads(get_record(base_url, project_name, "history.json") or "[]")
     entry = runs[-1] if runs and run == "last" else next((item for item in runs if str(item.get("run")) == run), None)
     text = get_record(base_url, project_name, entry["plan"]) if entry and entry.get("plan") else None
@@ -414,22 +484,65 @@ def recorded_plan(base_url: str, project_name: str, run: str) -> dict:
     plan = json.loads(text)
     if not isinstance(plan, dict):
         raise PlanError(f"The plan of run {run} is not a JSON object")
-    return plan
+    return entry, plan
+
+
+def requested_settings(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    """--sampling and the --set SECTION.NAME=VALUE options, by node; ComfyUI checks the values."""
+    requested: dict[str, dict[str, Any]] = {"project": dict(SAMPLING_WIDGETS.get(args.sampling, {})), "editor": {}}
+    for item in args.set or []:
+        target, separator, value = item.partition("=")
+        section, _dot, name = target.partition(".")
+        if not separator or section not in requested or not name:
+            raise PlanError(f"--set {item}: write project.NAME=VALUE or editor.NAME=VALUE")
+        if section == "project" and name in RUN_SETTINGS:
+            raise PlanError(f"--set {item}: {name} comes from --project-name, --start and --count")
+        if section == "project" and args.sampling and name in SAMPLING_WIDGETS["upscale"]:
+            raise PlanError(f"--set {item}: --sampling already sets {name}")
+        if section == "editor" and name == "track_data":
+            raise PlanError(f"--set {item}: the Editor's track data comes from the plan")
+        requested[section][name] = value
+    return requested
+
+
+def settings_since(recorded: dict, current: dict) -> dict:
+    """Settings a recorded run used that are different now, besides the project and run range."""
+    differences = {}
+    for section in ("project", "editor"):
+        before, now = recorded.get(section) or {}, current[section]
+        changed = {name: {"run": value, "now": now.get(name)} for name, value in before.items()
+                   if name not in RUN_SETTINGS and value != now.get(name)}
+        if changed:
+            differences[section] = changed
+    return differences
 
 
 def apply(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
-    plan = recorded_plan(base_url, args.project_name, args.from_run) if args.from_run else load_object(args.plan, "plan")
+    requested = requested_settings(args)
+    run_entry, plan = (recorded_run(base_url, args.project_name, args.from_run) if args.from_run
+                       else ({}, load_object(args.plan, "plan")))
     key = args.tab
     if args.file:
         key = open_workflow(base_url, load_object(args.file, "workflow"), args.project_name, args.client_id, args.timeout)
     content = read_tab(base_url, key, args.client_id, args.timeout)["tab"]
     key = content["key"]
-    workflow, project, editor, _settings = tab_parts(content)
-    track_index, track_data = track_data_widget(editor)
-    editor_format = editor["widgets_values"][track_index - 1]
+    workflow, project, editor = tab_parts(content)
+
+    # A run setting fed by a link keeps the link's value; the run range follows it.
+    linked_run = [name for name in RUN_SETTINGS if _link_origin(workflow, project, name) is not None]
+
+    def run_range(start: int) -> dict:
+        wanted = {"project_name": args.project_name, "segment_start_number": start, "segment_count": args.count}
+        return {name: value for name, value in wanted.items() if name not in linked_run}
+
+    # Check the settings before copying files or converting; the start is set again once known.
+    checked = {"project": node_settings(base_url, project, {**run_range(1), **requested["project"]}),
+               "editor": node_settings(base_url, editor, requested["editor"])}
+    _track_index, track_data = track_data_widget(editor)
     resolved, uploaded = resolve_plan_files(base_url, plan)
-    conversion = convert_on_page(base_url, track_data, editor_format, resolved, args.client_id, args.timeout)
+    conversion = convert_on_page(base_url, track_data, checked["editor"]["settings"].get("format"), resolved,
+                                 args.client_id, args.timeout, key, editor["id"])
     report: dict[str, Any] = {"tab": key, "errors": conversion["errors"], "warnings": fold_timing_warnings(conversion["warnings"])}
     if uploaded:
         report["uploaded"] = uploaded
@@ -437,10 +550,14 @@ def apply(args: argparse.Namespace) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 2
     converted = conversion["track_data"]
-    snapshot = project_snapshot(workflow, project)
-    sampling = SAMPLING_WIDGETS.get(args.sampling, {})
-    if sampling:
-        snapshot["recipe"]["sampling_mode"] = sampling["sampling_mode"]
+    # The LoRA node's rules after the import: the plan's, or the old ones moved with their tasks.
+    loras = conversion.get("segment_loras")
+    # The saved-result check compares against the sampling and LoRA rules the run will use;
+    # a bypassed or muted LoRA node gives none, which the report says (`loras_inactive`).
+    snapshot = project_snapshot(workflow, project, checked["project"]["settings"])
+    inactive = lora_node_inactive(workflow, project)
+    if loras and not inactive:
+        snapshot["segment_loras"] = loras["rules"]
     statuses, reusable = saved_tasks(base_url, args.project_name, converted, snapshot)
     first = first_task_to_run(statuses, reusable) if args.start == "auto" else int(args.start)
     by_task = status_by_task(statuses, reusable)
@@ -452,20 +569,37 @@ def apply(args: argparse.Namespace) -> int:
         if outside:
             report["warnings"].append(
                 f"Tasks {', '.join(outside)} do not match their saved results but are outside the run range.")
+    if linked_run:
+        report["warnings"].append(f"{', '.join(linked_run)} come from links in the workflow, so they keep the "
+                                  "values the links give; the run range above may not be the one that runs.")
+    if loras and snapshot["known"] and not inactive:
+        report["warnings"] += lora_warnings(base_url, converted, snapshot, first or 1, args.count)
+    if checked["project"]["settings"].get("sampling_mode.use_saved_1st_pass") is True:
+        report["warnings"] += first_pass_lora_warnings(statuses, tasks, first or 1, args.count)
+    project_changes = node_settings(base_url, project, {**run_range(first or 1), **requested["project"]})["changes"]
+    editor_changes = checked["editor"]["changes"]
     applied = page_job(base_url, "apply", {
         "tab": key, "queue": False,
-        "changes": {"editor_id": editor["id"], "track_data": converted, "project_id": project["id"], "project": {
-            "project_name": args.project_name, "segment_start_number": first or 1, "segment_count": args.count,
-            **sampling}},
+        "changes": {"editor_id": editor["id"], "track_data": converted, "project_id": project["id"],
+                    "project": project_changes, **({"editor": editor_changes} if editor_changes else {}),
+                    **({"segment_loras": loras["rules"]} if loras and loras["changed"] else {})},
         **({"client_id": args.client_id} if args.client_id else {}),
     }, args.timeout)
     if applied["status"] != "applied":
         raise RuntimeError(f"The ComfyUI page did not change the tab: {applied.get('error') or applied['status']}")
+    changed = {"project": {name: value for name, value in project_changes if name not in RUN_SETTINGS},
+               "editor": dict(editor_changes)}
+    recorded = run_entry.get("settings")
+    since = settings_since(recorded, {section: result["settings"] for section, result in checked.items()}) if recorded else {}
     report = {
         "tab": key,
         **({"opened": True} if applied.get("opened") else {}),
         "project_name": args.project_name,
         **({"sampling": args.sampling} if args.sampling else {}),
+        # Only the settings asked for; the rest stay as the tab has them.
+        **({"settings": {section: values for section, values in changed.items() if values}}
+           if any(changed.values()) else {}),
+        **({"settings_since_run": since} if since else {}),
         # Nothing to run when every task's saved result matches it.
         "run": {"start": first, "count": args.count} if first else {"nothing_to_run": True},
         **{name: value for name, value in report.items() if name != "tab"},
@@ -475,9 +609,21 @@ def apply(args: argparse.Namespace) -> int:
         "tracks": [{"number": row["index"], "type": row["type"], "audio_locked": row["audioLocked"],
                     **({"soundtrack": row["soundtrack"]} if row.get("soundtrack") else {}), "muted": row["muted"],
                     "clips": row["clips"]} for row in conversion["tracks"] if row["change"] != "removed"],
+        # The LoRA node's rules when the plan lists them or they moved with their tasks.
+        **({"loras": [lora_row(row) for row in loras["rows"]]}
+           if loras and ("loras" in plan or loras["changed"]) else {}),
+        # As in read: the rules are written, but runs and statuses use none of them.
+        **({"loras_inactive": inactive} if inactive else {}),
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
+
+
+def lora_row(row: dict) -> dict:
+    """One rule as apply reports it: its row, what changed, and the segments it covers."""
+    return {"number": row["index"], "id": row["id"], "change": row["change"], "lora": row["lora"],
+            "strength": row["strength"], "stage": row["stage"], **({} if row["enabled"] else {"enabled": False}),
+            "segments": [row["start"], row["end"] if row["end"] is not None else "end"]}
 
 
 def project(args: argparse.Namespace) -> int:
@@ -501,6 +647,17 @@ def record(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
     path = put_record(base_url, args.project, args.name or args.file.name, args.file.read_text(encoding="utf-8"))
     print(json.dumps({"path": path}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def loras(args: argparse.Namespace) -> int:
+    base_url = resolve_comfyui_url(args.url, args.config)
+    written = {}
+    if args.write:
+        written = {"written": request_json(base_url, "/easy-media/agent/loras",
+                                           {"text": args.write.read_text(encoding="utf-8")})["path"]}
+    query = f"?{urlencode({'find': args.find})}" if args.find is not None else ""
+    print(json.dumps({**written, **request_json(base_url, f"/easy-media/agent/loras{query}")}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -548,6 +705,9 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--sampling", choices=sorted(SAMPLING_WIDGETS),
                               help="Also set the Project's sampling: single (preview), dual, or upscale "
                                    "(Dual from each task's saved first pass; needs --start)")
+    apply_parser.add_argument("--set", action="append", metavar="NODE.NAME=VALUE",
+                              help="Also set a Project or Editor setting by its name in `read`, such as "
+                                   "project.seed=7 or editor.resolution.width=1024; repeat for more")
     project_parser = commands.add_parser("project", help="List each task's saved versions")
     project_parser.add_argument("--name", required=True, help="The project_name")
     select_parser = commands.add_parser("select", help="Make one saved version the one a task uses")
@@ -558,12 +718,17 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("file", type=Path)
     record_parser.add_argument("--project", required=True)
     record_parser.add_argument("--name", help="Record name; default: the file name (README.md)")
+    loras_parser = commands.add_parser("loras", help="Read or replace the LoRA notes every project shares")
+    loras_parser.add_argument("--find", nargs="?", const="", metavar="WORDS",
+                              help="Also list installed LoRAs whose name has every word (all of them without words)")
+    loras_parser.add_argument("--write", type=Path, metavar="FILE", help="Replace the notes with this Markdown file")
     probe_parser = commands.add_parser("probe", help="Print the length of video and audio files")
     probe_parser.add_argument("files", nargs="+")
     for sub in (tabs_parser, read_parser, apply_parser):
         sub.add_argument("--client-id", help="The ComfyUI page, when several are open")
         sub.add_argument("--timeout", type=float, default=150, help="Seconds to wait for the page")
-    for sub in (tabs_parser, read_parser, apply_parser, project_parser, select_parser, record_parser, probe_parser):
+    for sub in (tabs_parser, read_parser, apply_parser, project_parser, select_parser, record_parser, loras_parser,
+                probe_parser):
         sub.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
         sub.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
     return parser
@@ -584,10 +749,10 @@ def main() -> int:
         print("--task counts from 1 and --version is a listed version number", file=sys.stderr)
         return 1
     commands = {"tabs": tabs, "read": read, "apply": apply, "project": project, "select": select,
-                "record": record, "probe": probe}
+                "record": record, "loras": loras, "probe": probe}
     try:
         return commands[args.command](args)
-    except (PlanError, WorkflowError) as error:
+    except (PlanError, WorkflowError, SettingsError) as error:
         # Problems to fix in the plan or tab, reported like the page's own errors.
         print(json.dumps({"errors": str(error).splitlines()}, ensure_ascii=False, indent=2))
         return 2

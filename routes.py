@@ -67,6 +67,8 @@ from .utils.plan_media import PlanMediaError, resolve_plan_media
 from .utils.review_frames import ReviewError, contact_sheet
 from .utils.speech import generate_voxcpm2_speech
 from .utils.agent_records import register_record_routes
+from .utils.lora_notes import register_lora_notes_routes
+from .utils.node_settings import register_settings_routes
 from .utils.workflow_submission import JOB_EVENT as WORKFLOW_JOB_EVENT, register_workflow_routes
 from .utils.video import (
     decode_multitrack_preview_frame,
@@ -94,6 +96,14 @@ register_record_routes(
     PromptServer.instance.routes,
     lambda: Path(folder_paths.get_output_directory()).resolve() / "easy_media" / "agent",
     safe_h3_project_name,
+)
+register_settings_routes(PromptServer.instance.routes)
+register_lora_notes_routes(
+    PromptServer.instance.routes,
+    # Beside the agent records folder, not in it, so no project name can collide with it.
+    lambda: Path(folder_paths.get_output_directory()).resolve() / "easy_media",
+    lambda: folder_paths.get_filename_list("loras"),
+    lambda name: folder_paths.get_full_path("loras", name),
 )
 
 
@@ -152,7 +162,8 @@ async def handle_h3_timeline_status(request: web.Request) -> web.Response:
         if isinstance(snapshot, dict) and snapshot.get('known') is True:
             compiled = compile_project_loras(info, snapshot['segment_loras'], snapshot['recipe'])
             effects = preview_lora_effects(compiled)
-        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest, effects)})
+        reuse = isinstance(snapshot, dict) and bool((snapshot.get('recipe') or {}).get('use_saved_1st_pass'))
+        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest, effects, reuse)})
     except (OSError, KeyError, TypeError, ValueError) as error:
         return web.json_response({"error": str(error)}, status=400)
 

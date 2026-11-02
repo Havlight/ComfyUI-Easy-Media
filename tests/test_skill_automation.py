@@ -1,10 +1,12 @@
 """The skill's automation scripts against a fake ComfyUI and page: tabs, plans, runs, probing, review."""
 
 import asyncio
+import importlib
 import importlib.util
 import json
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -25,7 +27,32 @@ def _load(name: str, path: Path):
 
 
 submissions = _load("workflow_submission_for_skill", ROOT / "utils/workflow_submission.py")
-records = _load("agent_records_for_skill", ROOT / "utils/agent_records.py")
+node_settings = _load("node_settings_for_skill", ROOT / "utils/node_settings.py")
+
+
+def utils_module(name: str):
+    """A utils module imported as part of a stand-in package: its relative imports work, and
+    utils/__init__ (which pulls in torch and ComfyUI) never runs."""
+    package = "easy_media_utils_under_test"
+    if package not in sys.modules:
+        stub = types.ModuleType(package)
+        stub.__path__ = [str(Path(__file__).resolve().parents[1] / "utils")]
+        sys.modules[package] = stub
+    return importlib.import_module(f"{package}.{name}")
+
+
+records = utils_module("agent_records")
+lora_notes = utils_module("lora_notes")
+# The Project's and Editor's definitions as ComfyUI's /object_info gives them (tooltips left out).
+DEFINITIONS = json.loads((ROOT / "tests/fixtures/node_definitions.json").read_text(encoding="utf-8"))
+
+
+def set_widgets(node: dict, *changes: tuple[str, object]) -> None:
+    """Set widgets by name as the page does; a saved workflow keeps them named and in order."""
+    named = node["widgets_values_named"]
+    for name, value in changes:
+        named[name] = value
+    node["widgets_values"] = list(named.values())
 
 
 def converted_track_data() -> dict:
@@ -57,6 +84,8 @@ class FakePage:
     def __init__(self, workflow: dict):
         self.workflow = workflow
         self.jobs: list[dict] = []
+        # The LoRA node's rules after a conversion, when the Editor's Project has one.
+        self.loras: dict | None = None
 
     def _node(self, node_type: str) -> dict:
         return next(node for node in self.workflow["nodes"] if node["type"] == node_type)
@@ -79,13 +108,12 @@ class FakePage:
             return {"status": "read", "tabs": tabs, "tab": {"key": TAB, "name": "mv", "workflow": json.loads(json.dumps(self.workflow)),
                                                             "plans": {"14": self.plan()}}}
         if kind == "plan":
-            return {"status": "converted", "conversion": CONVERSION}
+            return {"status": "converted", "conversion": {**CONVERSION, **({"segment_loras": self.loras} if self.loras else {})}}
         if job.get("changes"):
             changes = job["changes"]
-            self._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(changes["track_data"])
-            project = self._node("easy multitrackProject")["widgets_values"]
-            for name, index in (("project_name", 0), ("segment_start_number", 2), ("segment_count", 3)):
-                project[index] = changes["project"][name]
+            set_widgets(self._node("easy multiTrackEditor"), *changes.get("editor", []),
+                        ("track_data", json.dumps(changes["track_data"])))
+            set_widgets(self._node("easy multitrackProject"), *changes["project"])
         return {"status": "queued", "prompt_id": "p1"} if job["queue"] else {"status": "applied"}
 
     async def serve(self, client: TestClient, jobs: int) -> None:
@@ -125,6 +153,8 @@ class FakeComfy:
         self.status_requests: list[dict] = []
         # The Project's check of each task's saved result; tasks not listed have none.
         self.statuses = {"s01": "saved"}
+        # Tasks whose first-stage LoRA rules changed after their saved first pass.
+        self.first_loras_changed: set[str] = set()
         self.records = tmp_path / "records"
         self.tmp_path = tmp_path
         self.selected: list[dict] = []
@@ -132,11 +162,16 @@ class FakeComfy:
                          "detached": []}
         self.clips = [{"id": "s01", "index": 0, "file_path": "easy_media/projects/mv/s01.mp4"},
                       {"id": "s02", "index": 1, "file_path": "easy_media/projects/mv/s02.mp4"}]
+        self.lora_preview: dict = {"pending": True, "tasks": [], "rules": [], "conflicts": []}
+        self.lora_requests: list[dict] = []
 
     def routes(self) -> web.RouteTableDef:
         routes = web.RouteTableDef()
         submissions.register_workflow_routes(routes, lambda _: True)
         records.register_record_routes(routes, lambda: self.records, lambda name: re.sub(r"[^A-Za-z0-9_-]", "_", str(name)))
+        node_settings.register_settings_routes(routes, DEFINITIONS.get)
+        lora_notes.register_lora_notes_routes(routes, lambda: self.records, lambda: ["mmh3\\style.safetensors", "wan\\other.safetensors"],
+                                              lambda _name: None)
 
         @routes.post("/easy-media/plan/resolve-media")
         async def resolve(request):
@@ -167,8 +202,14 @@ class FakeComfy:
             self.status_requests.append(body)
             tasks = body["tracks_info"]["tracks"][0]["segments"]
             return web.json_response({"project_name": body["project_name"], "tasks": [
-                {"segment_id": task["id"], "index": index, "status": self.statuses.get(task["id"], "missing")}
+                {"segment_id": task["id"], "index": index, "status": self.statuses.get(task["id"], "missing"),
+                 **({"first_loras_changed": True} if task["id"] in self.first_loras_changed else {})}
                 for index, task in enumerate(tasks)]})
+
+        @routes.post("/easy-media/project/segment-loras-preview")
+        async def segment_loras_preview(request):
+            self.lora_requests.append(await request.json())
+            return web.json_response(self.lora_preview)
 
         @routes.get("/easy-media/project/versions")
         async def versions(request):
@@ -269,7 +310,8 @@ def test_apply_converts_on_the_page_and_sets_the_tab_from_the_first_task_to_run(
     assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single"}
     # The tab changed only where the agent writes; no workflow file or record was written.
     assert apply["kind"] == "apply" and apply["queue"] is False
-    assert apply["changes"]["project"] == {"project_name": "mv-alice", "segment_start_number": 2, "segment_count": -1}
+    assert apply["changes"]["project"] == [["project_name", "mv-alice"], ["segment_start_number", 2], ["segment_count", -1]]
+    assert "editor" not in apply["changes"] and "settings" not in report
     assert [task["id"] for task in apply["changes"]["track_data"]["tracks"][0]["segments"]] == ["s01", "s02"]
     assert not list(tmp_path.glob("*.workflow.json")) and not fake.records.exists()
 
@@ -286,7 +328,7 @@ def test_apply_runs_the_range_the_agent_sets_and_warns_about_tasks_left_out(tmp_
     assert report["run"] == {"start": 1, "count": 1}
     assert [task["status"] for task in report["tasks"]] == ["edited", "parent_changed"]
     assert report["warnings"][-1] == "Tasks 2 do not match their saved results but are outside the run range."
-    assert page.jobs[-1]["changes"]["project"] == {"project_name": "mv-alice", "segment_start_number": 1, "segment_count": 1}
+    assert page.jobs[-1]["changes"]["project"] == [["project_name", "mv-alice"], ["segment_start_number", 1], ["segment_count", 1]]
 
 
 def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
@@ -296,13 +338,19 @@ def test_read_reports_the_tab_and_writes_its_plan(tmp_path):
     code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "read", "--tab", TAB, "-o", str(out))
     assert code == 0, stderr
     report = json.loads(stdout)
-    assert report["project"]["project_name"] == "" and report["editor"]["format"] == "MiniMax"
+    # Every setting by the name --set takes; sockets and the track data are not settings.
+    assert report["project"]["settings"] == {
+        "project_name": "", "project_save": "override", "segment_start_number": 1, "segment_count": -1,
+        "seed": page._node("easy multitrackProject")["widgets_values_named"]["seed"], "control_after_generate": "randomize",
+        "sampling_plan": "medium", "sampling_mode": "single"}
+    assert report["editor"] == {"id": 14, "frame_rate": 24, "settings": {
+        "resolution": "width x height (megapixels)", "resolution.aspect_ratio": "16:9 (Widescreen)",
+        "resolution.megapixels": 0.8, "format": "MiniMax"}}
     # Whether each task's saved result still matches the tab, as the Project checks it.
     assert [(task["id"], task["status"]) for task in report["tasks"]] == [("s01", "saved"), ("s02", "missing")]
     assert fake.status_requests[0]["tracks_info"] == converted_track_data()
     assert json.loads(out.read_text(encoding="utf-8")) == page.plan()
-    # What the plan does not carry: how the Project saves, and that the template only previews its video.
-    assert (report["project"]["project_save"], report["project"]["sampling_mode"]) == ("override", "single")
+    # What the plan does not carry: that the template only previews its video.
     assert report["tracks"] == []
     assert report["outputs"] == [{"id": 25, "output_mode": "preview_only", "temp": True}]
 
@@ -344,12 +392,19 @@ def test_apply_restores_the_plan_a_recorded_run_used(tmp_path):
     folder = fake.records / "mv-alice"
     (folder / "plans").mkdir(parents=True)
     (folder / "plans/run-002.json").write_text(json.dumps(recorded), encoding="utf-8")
+    # The run used other settings than the tab has now; restoring the plan leaves them as they are.
+    used = {"project": {"project_name": "mv-alice", "project_save": "new", "sampling_plan": "medium", "sampling_mode": "single"},
+            "editor": {"resolution": "width x height (megapixels)", "resolution.aspect_ratio": "16:9 (Widescreen)",
+                       "resolution.megapixels": 0.5, "format": "MiniMax"}}
     (folder / "history.json").write_text(json.dumps([{"run": 1, "plan": "plans/run-001.json"},
-                                                      {"run": 2, "plan": "plans/run-002.json"}]), encoding="utf-8")
+                                                      {"run": 2, "plan": "plans/run-002.json", "settings": used}]), encoding="utf-8")
 
     code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", "--from-run", "last",
                                       "--tab", TAB, "--project-name", "mv-alice")
     assert code == 0, stderr
+    since = json.loads(stdout)["settings_since_run"]
+    assert since == {"project": {"project_save": {"run": "new", "now": "override"}},
+                     "editor": {"resolution.megapixels": {"run": 0.5, "now": 0.8}}}
     _read, convert, _apply = page.jobs
     assert convert["plan"] == recorded
 
@@ -384,24 +439,188 @@ def test_apply_sets_the_sampling_and_an_upscale_needs_a_start(tmp_path):
     code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
                                       "--tab", TAB, "--project-name", "mv", "--sampling", "upscale", "--start", "1")
     assert code == 0, stderr
-    assert json.loads(stdout)["sampling"] == "upscale"
-    assert page.jobs[-1]["changes"]["project"] == {"project_name": "mv", "segment_start_number": 1, "segment_count": -1,
-                                                   "sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True}
-    # The saved-result check compares against the sampling the run will use.
-    assert fake.status_requests[-1]["project_snapshot"]["recipe"] == {"sampling_mode": "dual"}
+    report = json.loads(stdout)
+    assert report["sampling"] == "upscale"
+    assert report["settings"] == {"project": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True}}
+    # A combo before its options, so the page has created them when they are set.
+    assert page.jobs[-1]["changes"]["project"] == [
+        ["project_name", "mv"], ["segment_start_number", 1], ["segment_count", -1],
+        ["sampling_mode", "dual"], ["sampling_mode.use_saved_1st_pass", True]]
+    # The saved-result check compares against the sampling the run will use, which upscales saved first passes.
+    assert fake.status_requests[-1]["project_snapshot"]["recipe"] == {"sampling_mode": "dual", "use_saved_1st_pass": True}
+    assert not any("first-stage LoRA" in warning for warning in report["warnings"])
+
+    # An upscale keeps each saved first pass, whatever first-stage LoRA rules came after it.
+    fake.first_loras_changed = {"s02"}
+    code, stdout, stderr = with_comfy(fake, template_page(), 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv", "--sampling", "upscale", "--start", "1")
+    assert code == 0, stderr
+    assert json.loads(stdout)["warnings"][-1] == (
+        "Tasks 2: their first-stage LoRA rules changed after the saved first pass; upscaling keeps that first pass, "
+        "and the new rules apply only to new previews.")
+    # A preview samples a new first pass with them, so it says nothing.
+    code, stdout, stderr = with_comfy(fake, template_page(), 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv", "--sampling", "single", "--start", "1")
+    assert code == 0, stderr
+    assert not any("first-stage LoRA" in warning for warning in json.loads(stdout)["warnings"])
+
+
+def test_apply_sets_project_and_editor_settings_by_the_names_read_lists(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}]})
+    code, stdout, stderr = with_comfy(
+        fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path), "--tab", TAB, "--project-name", "mv",
+        "--sampling", "dual", "--set", "project.sampling_mode.upscale_by=1.5", "--set", "project.seed=7",
+        "--set", "project.sampling_mode.enabled_tiling=true", "--set", "project.sampling_mode.enabled_tiling.tile_count=4",
+        "--set", "editor.resolution=width x height (custom)", "--set", "editor.resolution.width=1024")
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    # Values become the widget's own type; options follow the combo that has them.
+    assert report["settings"] == {
+        "project": {"seed": 7, "sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": False,
+                    "sampling_mode.upscale_by": 1.5, "sampling_mode.enabled_tiling": "true",
+                    "sampling_mode.enabled_tiling.tile_count": 4},
+        "editor": {"resolution": "width x height (custom)", "resolution.width": 1024}}
+    changes = page.jobs[-1]["changes"]
+    assert changes["editor"] == [["resolution", "width x height (custom)"], ["resolution.width", 1024]]
+    assert [name for name, _value in changes["project"]][3:] == [
+        "sampling_mode", "seed", "sampling_mode.use_saved_1st_pass", "sampling_mode.upscale_by",
+        "sampling_mode.enabled_tiling", "sampling_mode.enabled_tiling.tile_count"]
+
+
+@pytest.mark.parametrize(("option", "error"), [
+    ("project.steps=4", "has no setting steps"),
+    ("project.sampling_mode.upscale_by=2", "is a setting of sampling_mode dual"),
+    ("editor.resolution.width=1000", "is a setting of resolution width x height (custom)"),
+    ("project.project_save=keep", "project_save must be one of: new, override"),
+    ("project.segment_count=2", "comes from --project-name, --start and --count"),
+    ("editor.track_data={}", "the Editor's track data comes from the plan"),
+    ("seed=7", "write project.NAME=VALUE or editor.NAME=VALUE"),
+])
+def test_apply_refuses_settings_the_nodes_do_not_take_before_changing_anything(tmp_path, option, error):
+    fake, page = FakeComfy(tmp_path), template_page()
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}]})
+    jobs = 0 if option.startswith(("seed", "project.segment", "editor.track")) else 1
+    code, stdout, stderr = with_comfy(fake, page, jobs, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv", "--set", option)
+    assert code == 2, stderr
+    assert error in json.loads(stdout)["errors"][0]
+    assert [job["kind"] for job in page.jobs] == ["tabs"] * jobs
+
+
+def test_apply_writes_the_plans_lora_rules_and_reports_what_the_project_says(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    rules = {"version": 1, "rules": [{"id": "r1", "enabled": True, "lora": "mmh3/a.safetensors", "start_segment": 2,
+                                      "segment_count": -1, "strength": 0.7, "stage": "all"}]}
+    page.loras = {"rules": rules, "changed": True, "rows": [
+        {"id": "r1", "index": 1, "change": "added", "lora": "mmh3/a.safetensors", "strength": 0.7, "stage": "all",
+         "enabled": True, "start": 2, "end": None}]}
+    fake.lora_preview = {"pending": False, "tasks": [], "conflicts": [
+        {"index": 1, "stage": "first", "rows": [1, 2], "lora": "mmh3/a.safetensors"}], "rules": [
+        {"id": "r1", "row": 1, "unused_reason": None, "start": 2, "end": 2, "incomplete": False},
+        {"id": "r2", "row": 2, "unused_reason": "zero_strength", "start": 1, "end": 2, "incomplete": False}]}
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}, {"id": "s02", "seconds": 5}],
+                                      "loras": [{"lora": "mmh3/a.safetensors", "strength": 0.7, "at": "s02"}]})
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv")
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    _read, convert, apply = page.jobs
+    # The page converts for this tab's Editor, whose Project's LoRA node the rules replace.
+    assert (convert["tab"], convert["editor_id"]) == (TAB, 14)
+    assert apply["changes"]["segment_loras"] == rules
+    # Saved results are compared with the rules the run will use, and the Project checks them.
+    assert fake.status_requests[-1]["project_snapshot"]["segment_loras"] == rules
+    assert fake.lora_requests[-1]["project_snapshot"]["start_segment"] == 2
+    assert report["loras"] == [{"number": 1, "id": "r1", "change": "added", "lora": "mmh3/a.safetensors",
+                                "strength": 0.7, "stage": "all", "segments": [2, "end"]}]
+    assert report["warnings"][-2:] == [
+        "Segment 2, first stage: LoRA rows 1 and 2 both use mmh3/a.safetensors; this run stops before sampling until one goes.",
+        "LoRA row 2 applies to no segment: its strength is 0."]
+
+    # Rules that stay as they are need no write and no report.
+    loras, page = page.loras, template_page()
+    page.loras = {**loras, "changed": False}
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}, {"id": "s02", "seconds": 5}]})
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv")
+    assert code == 0, stderr
+    assert "segment_loras" not in page.jobs[-1]["changes"] and "loras" not in json.loads(stdout)
+
+
+def with_lora_node(page: FakePage, rules: dict, mode: int) -> None:
+    """Feed the tab's Project from an H3 Segment LoRA node in the given ComfyUI mode."""
+    project = page._node("easy multitrackProject")
+    project["inputs"].append({"name": "segment_loras", "type": "H3_LORA_PLAN", "link": 900})
+    page.workflow["links"].append([900, 99, 0, project["id"], len(project["inputs"]) - 1, "H3_LORA_PLAN"])
+    page.workflow["nodes"].append({"id": 99, "type": "easy h3SegmentLoras", "mode": mode, "inputs": [],
+                                   "outputs": [{"name": "segment_loras", "links": [900]}], "widgets_values": [json.dumps(rules)]})
+
+
+def test_a_bypassed_or_muted_lora_node_gives_runs_no_rules(tmp_path):
+    rules = {"version": 1, "rules": [{"id": "r1", "enabled": True, "lora": "mmh3/a.safetensors", "start_segment": 1,
+                                      "segment_count": -1, "strength": 0.7, "stage": "all"}]}
+    fake = FakeComfy(tmp_path)
+    for mode, inactive, used in ((0, None, rules), (2, "muted", {"version": 1, "rules": []}), (4, "bypassed", {"version": 1, "rules": []})):
+        page = template_page()
+        with_lora_node(page, rules, mode)
+        code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "read", "--tab", TAB)
+        assert code == 0, stderr
+        assert json.loads(stdout).get("loras_inactive") == inactive
+        # Saved results are compared with the rules runs use: none from a node they leave out.
+        assert fake.status_requests[-1]["project_snapshot"]["segment_loras"] == used
+        assert fake.status_requests[-1]["project_snapshot"]["known"] is True
+
+    # apply still writes the plan's rules, but checks saved results without them and skips the Project's rule check.
+    page = template_page()
+    with_lora_node(page, rules, 2)
+    page.loras = {"rules": rules, "changed": True, "rows": []}
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}],
+                                      "loras": [{"lora": "mmh3/a.safetensors", "strength": 0.7}]})
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv")
+    assert code == 0, stderr
+    assert json.loads(stdout)["loras_inactive"] == "muted"
+    assert page.jobs[-1]["changes"]["segment_loras"] == rules
+    assert fake.status_requests[-1]["project_snapshot"]["segment_loras"] == {"version": 1, "rules": []}
+    assert fake.status_requests[-1]["project_snapshot"]["known"] is True
+    assert fake.lora_requests == []
+
+
+def test_loras_reads_and_replaces_the_shared_notes(tmp_path):
+    fake = FakeComfy(tmp_path)
+    notes = tmp_path / "loras.md"
+    notes.write_text("## mmh3/style.safetensors\n- For: painterly look, strength 0.6\n", encoding="utf-8")
+    code, stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "plan_workflow.py"), "loras", "--write", str(notes))
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    assert report["written"] == str(fake.records / "loras.md")
+    assert report["documented"] == [{"name": "mmh3/style.safetensors", "installed": True}]
+    assert report["installed_count"] == 2 and "found" not in report
+    code, stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "plan_workflow.py"), "loras", "--find", "wan")
+    assert code == 0, stderr
+    report = json.loads(stdout)
+    assert report["text"].startswith("## mmh3/style.safetensors")
+    assert report["found"] == [{"name": "wan/other.safetensors", "installed": True}]
 
 
 def test_read_reports_the_selected_modes_options(tmp_path):
     fake, page = FakeComfy(tmp_path), template_page()
-    page._node("easy multitrackProject")["widgets_values"][7:] = [
-        "dual", True, 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors", False, False, "false"]
+    project_node = page._node("easy multitrackProject")
+    set_widgets(project_node, ("sampling_mode", "dual"), ("sampling_mode.use_saved_1st_pass", True),
+                ("sampling_mode.upscale_by", 1.5), ("sampling_mode.upscale_model", "minimax_h3_latent_upscaler_3d_fp16.safetensors"),
+                ("sampling_mode.keep_1st_pass_audio", False), ("sampling_mode.disable_2nd_noise", False),
+                ("sampling_mode.enabled_tiling", "false"), ("allow_vae_fallback", False), ("easy-media-sampling-preview", ""))
     code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "read", "--tab", TAB)
     assert code == 0, stderr
-    project = json.loads(stdout)["project"]
-    assert project["sampling_mode"] == "dual"
-    assert project["sampling_options"] == {
-        "use_saved_1st_pass": True, "upscale_by": 1.5, "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
-        "keep_1st_pass_audio": False, "disable_2nd_noise": False, "enabled_tiling": False}
+    settings = json.loads(stdout)["project"]["settings"]
+    assert {name: value for name, value in settings.items() if name.startswith("sampling_mode")} == {
+        "sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True, "sampling_mode.upscale_by": 1.5,
+        "sampling_mode.upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "sampling_mode.keep_1st_pass_audio": False, "sampling_mode.disable_2nd_noise": False,
+        "sampling_mode.enabled_tiling": "false"}
+    # The frontend's own preview widget is not a setting.
+    assert settings["allow_vae_fallback"] is False and "easy-media-sampling-preview" not in settings
 
 
 def test_review_versions_makes_a_sheet_for_each_take(tmp_path):
@@ -439,7 +658,7 @@ def test_apply_reports_plan_errors_without_touching_the_tab(tmp_path):
 def test_running_a_tab_records_the_run_and_waits_for_it(tmp_path):
     fake, page = FakeComfy(tmp_path), template_page()
     page._node("easy multiTrackEditor")["widgets_values"][4] = json.dumps(converted_track_data())
-    page._node("easy multitrackProject")["widgets_values"][:4] = ["mv-alice", "override", 2, -1]
+    set_widgets(page._node("easy multitrackProject"), ("project_name", "mv-alice"), ("segment_start_number", 2))
     code, stdout, stderr = with_comfy(fake, page, 2, str(SCRIPTS / "submit_workflow.py"), "--tab", TAB, "--until-done")
     assert code == 0, stderr
     result = json.loads(stdout)
@@ -450,7 +669,9 @@ def test_running_a_tab_records_the_run_and_waits_for_it(tmp_path):
     [entry] = fake.record("mv-alice", "history.json")
     assert entry["run"] == 1 and entry["prompt_id"] == "p1" and "state" not in entry
     assert (entry["start"], entry["count"], entry["plan"]) == (2, -1, "plans/run-001.json")
-    assert entry["resolution"]["resolution"] == "width x height (megapixels)"
+    # The settings the plan does not carry, by the names apply --set takes.
+    assert entry["settings"]["project"]["project_save"] == "override"
+    assert entry["settings"]["editor"]["resolution"] == "width x height (megapixels)"
     assert fake.record("mv-alice", "plans/run-001.json") == page.plan()
 
 
