@@ -124,6 +124,21 @@ def native_dependents(manifest: dict[str, Any], artifact_ids: set[str]) -> list[
     return found
 
 
+def dropped_version_dependents(manifest: dict[str, Any], segment: dict[str, Any], keys: list[str]) -> list[str]:
+    """Tasks with versions that continue from data only these versions of a task hold.
+
+    An upscaled version carries its first pass on, so that first pass stays while
+    another version of the task still holds it.
+    """
+    generations = segment["generations"]
+    kept = {d["metadata"]["artifact_id"] for key, generation in generations.items() if key not in keys
+            for d in generation.get("native", {}).values()}
+    identities = {media_version_id(segment["segment_id"], key, generations[key]) for key in keys}
+    identities.update(d["metadata"]["artifact_id"] for key in keys for d in generations[key].get("native", {}).values()
+                      if d["metadata"]["artifact_id"] not in kept)
+    return native_dependents(manifest, identities)
+
+
 def native_parent_ids(metadata: dict[str, Any]) -> list[str]:
     return [value for value in [metadata.get("parent_artifact_id"), *metadata.get("reference_artifact_ids", [])] if value]
 
@@ -134,8 +149,11 @@ def media_version_id(segment_id: str, generation_id: str, generation: dict[str, 
     return "media:" + hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
 
 
-def refresh_native_dependencies(manifest: dict[str, Any]) -> None:
-    """A version is valid only while its exact parent versions are active and valid."""
+def refresh_native_dependencies(manifest: dict[str, Any]) -> set[str]:
+    """A version is valid only while its exact parent versions are active and valid.
+
+    Returns the artifact and media ids of the valid active versions.
+    """
     active = [(s.get("segment_id", ""), str(s.get("active_generation")),
                s.get("generations", {}).get(str(s.get("active_generation")), {}))
               for s in manifest.get("segments", {}).values()]
@@ -154,6 +172,7 @@ def refresh_native_dependencies(manifest: dict[str, Any]) -> None:
             remaining.remove(item)
     for _, _, generation in remaining:
         generation["native_stale"] = True
+    return valid_ids
 
 
 GENERATION_FILE_FIELDS = ("context_latent", "context_latent_low", "video", "audio", "raw_audio", "last_frame", "locked_audio")

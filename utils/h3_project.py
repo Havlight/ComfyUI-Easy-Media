@@ -947,11 +947,9 @@ def _delete_h3_project_video(project_name: str, segment_index: int, file_path: s
         raise ValueError("Video does not belong to this project segment")
 
     if manifest.get("h3_native"):
-        from .h3_native_artifacts import media_version_id, native_dependents
+        from .h3_native_artifacts import dropped_version_dependents
 
-        identities = {media_version_id(segment["segment_id"], key, generations[key]) for key in generation_keys}
-        identities.update(d["metadata"]["artifact_id"] for key in generation_keys for d in generations[key].get("native", {}).values())
-        dependents = native_dependents(manifest, identities)
+        dependents = dropped_version_dependents(manifest, segment, generation_keys)
         if dependents:
             raise ValueError("This version supplies continuation data to: " + ", ".join(sorted(set(dependents))) + ". Remove the dependent versions first.")
     artifact_keys = ("video", "audio", "raw_audio", "locked_audio", "latent", "context_latent", "context_latent_low", "last_frame")

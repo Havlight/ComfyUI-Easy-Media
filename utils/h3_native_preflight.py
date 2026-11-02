@@ -40,23 +40,24 @@ def parent_stage_labels(recipe: dict[str, Any], label: str) -> tuple[str, ...]:
     return ('high', 'low') if recipe['sampling_mode'] == 'single' and label == 'high' else (label,)
 
 
-# Where a version keeps its first pass, by the pass that produced the version.
-FIRST_PASS_LABELS = {'single': 'high', 'second': 'low'}
+# Where a version keeps its first pass, by the pass that produced the version
+# ('first': checkpoints of the former first-pass-only preview).
+FIRST_PASS_LABELS = {'single': 'high', 'second': 'low', 'first': 'high'}
 
 
 def saved_first_pass(directory: Path, manifest: dict[str, Any], plan: NativeTaskPlan,
-                     recipe: dict[str, Any]) -> dict[str, Any]:
-    """The active version's first pass, which a Dual run upscales instead of sampling again."""
+                     recipe: dict[str, Any], valid_ids: set[str]) -> dict[str, Any]:
+    """The active version's first pass, which a Dual run upscales instead of sampling again.
+
+    ``valid_ids`` are the artifacts of the valid active versions. Only the first pass must
+    still continue from them: a version whose second pass went stale keeps a usable first pass.
+    """
     segment = next((s for s in manifest.get('segments', {}).values() if s.get('segment_id') == plan.segment_id), {})
     generation = str(segment.get('active_generation'))
     record = segment.get('generations', {}).get(generation)
     if not isinstance(record, dict):
         raise NativePlanError('SAVED_FIRST_PASS', 'There is no saved first pass to upscale. Run this task '
                               'with single first, or turn off use_saved_1st_pass.', plan.segment_id)
-    if record.get('native_stale'):
-        raise NativePlanError('SAVED_FIRST_PASS_STALE', 'Its active version continued from a version of the '
-                              'previous task that is no longer selected. Select that version again, or run '
-                              'this task with single again.', plan.segment_id)
     label = FIRST_PASS_LABELS.get(record.get('sampling_pass'))
     descriptor = record.get('native', {}).get(label) if label else None
     if descriptor is None:
@@ -64,6 +65,10 @@ def saved_first_pass(directory: Path, manifest: dict[str, Any], plan: NativeTask
                               f"{record.get('sampling_pass', 'unknown')}) has no first pass to upscale. Select a "
                               'single or dual version in MultiTrack Project Video Combine, or run this task '
                               'with single.', plan.segment_id)
+    if not set(native_parent_ids(descriptor['metadata'])) <= valid_ids:
+        raise NativePlanError('SAVED_FIRST_PASS_STALE', 'Its first pass continued from a version of the '
+                              'previous task that is no longer selected. Select that version again, or run '
+                              'this task with single again.', plan.segment_id)
     latent = load_native_latent(directory, descriptor)
     meta = validate_native_latent(latent)
     size = tuple(latent['samples'].unbind()[0].shape[-2:])
@@ -121,7 +126,7 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                              selected: list[int], recipe: dict[str, Any],
                              previous_frames: set[int], contents: list[dict[str, Any]],
                              passthrough: set[int]) -> dict[str, Any]:
-    refresh_native_dependencies(manifest)
+    valid_ids = refresh_native_dependencies(manifest)
     state: dict[str, Any] = {'existing': {}, 'produced': {}, 'first_pass': {},
                              'planned_ids': [plans[i].segment_id for i in selected]}
     contracts: dict[str, dict[str, tuple[dict[str, Any], tuple[int, int]]]] = {}
@@ -165,12 +170,17 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                 continue
             first_pass = None
             if use_saved_first_pass:
-                first_pass = saved_first_pass(directory, manifest, plan, recipe)
+                first_pass = saved_first_pass(directory, manifest, plan, recipe, valid_ids)
                 # The previous task's new version carries only its own saved first pass on.
-                if index - 1 in selected:
+                parent_ids = set(native_parent_ids(first_pass['meta']))
+                if parent_ids and index - 1 in passthrough:
+                    raise NativePlanError('SAVED_FIRST_PASS_CHAIN', f'Task {index} is passthrough, which every run '
+                                          'imports again, so the first pass that continues from it would be stale '
+                                          f'afterwards. Start the run at task {index + 1}.', plan.segment_id)
+                if parent_ids and index - 1 in selected:
                     carried = state['first_pass'].get(plans[index - 1].segment_id)
                     allowed = {carried['meta']['artifact_id']} if carried else set()
-                    if not set(native_parent_ids(first_pass['meta'])) <= allowed:
+                    if not parent_ids <= allowed:
                         raise NativePlanError('SAVED_FIRST_PASS_CHAIN', 'Its saved first pass does not continue from '
                                               f'task {index}, whose saved first pass this run upscales, so it would be '
                                               f'stale afterwards. Upscale task {index} first, then run this task '

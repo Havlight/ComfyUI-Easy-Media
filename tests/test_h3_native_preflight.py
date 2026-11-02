@@ -238,11 +238,11 @@ def _sized(plan, parent=None, stage='single_final', side=2):
     return native.stamp_native_result({'samples': native._official_nested_tensor((video, audio))}, meta)
 
 
-def _version(directory, plans, index, high, low=None, sampling_pass='single', seed=51, **fields):
+def _version(directory, plans, index, high, low=None, sampling_pass='single', seed=51, media=None, **fields):
     from test_h3_native_artifacts import _fields
     record = {'continuity_mode': plans[index].continuity_mode, 'sampling_pass': sampling_pass, 'seed': seed, **fields}
     return artifacts.commit_native_generation(directory, index, _fields(plans), record,
-                                              {'high': high, **({'low': low} if low is not None else {})}, {})
+                                              {'high': high, **({'low': low} if low is not None else {})}, media or {})
 
 
 def saved_recipe(**kwargs):
@@ -361,3 +361,74 @@ def test_project_versions_say_how_each_version_was_made(tmp_path):
     # b continued from the first pass a@0 made; the upscaled a@2 carries it on, so b is still valid.
     [continued] = summary['tasks'][1]['versions']
     assert continued['continued_from'] == 'a@0' and continued['stale'] is False
+
+
+def test_a_version_stale_only_through_its_second_pass_can_still_be_upscaled(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first_a = _sized(plans[0])
+    first_b = _sized(plans[1], first_a['h3_native'])
+    high_a = _sized(plans[0], stage='dual_high_final', side=4)
+    _version(tmp_path, plans, 0, first_a)
+    _version(tmp_path, plans, 1, first_b)
+    _version(tmp_path, plans, 0, high_a, first_a, sampling_pass='second')
+    _version(tmp_path, plans, 1, _sized(plans[1], high_a['h3_native'], stage='dual_high_final', side=4), first_b,
+             sampling_pass='second')
+    # Upscaling a again replaces its second pass and keeps its first pass.
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first_a, sampling_pass='second')
+    assert artifacts.read_native_manifest(tmp_path)['segments']['1']['generations']['3']['native_stale'] is True
+    state = check(tmp_path, plans, [1], saved_recipe(target_width=64, target_height=64))
+    assert state['first_pass']['b']['meta']['artifact_id'] == first_b['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_reports_a_stale_first_pass_and_a_passthrough_predecessor(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first_a = _sized(plans[0])
+    _version(tmp_path, plans, 0, first_a)
+    _version(tmp_path, plans, 1, _sized(plans[1], first_a['h3_native']))
+    # Every run imports a passthrough task again, so b's first pass would be stale afterwards.
+    with pytest.raises(timing.NativePlanError, match='Task 1 is passthrough.*Start the run at task 2'):
+        check(tmp_path, plans, [0, 1], saved_recipe(), passthrough={0})
+    _version(tmp_path, plans, 0, _sized(plans[0]))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_STALE'):
+        check(tmp_path, plans, [1], saved_recipe())
+
+
+def test_saved_first_pass_accepts_a_former_first_pass_only_checkpoint(tmp_path):
+    plans = [_plan()]
+    checkpoint = _sized(plans[0], stage='dual_low_prediction')
+    _version(tmp_path, plans, 0, checkpoint, sampling_pass='first')
+    state = check(tmp_path, plans, [0], saved_recipe())
+    assert state['first_pass']['a']['meta']['artifact_id'] == checkpoint['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_edits_leave_missing_versions_to_the_source_check(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
+            'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
+                                                       'content': {'continuity_mode': 'shot'}}]}]}
+    first_lora = {'a': {'first': [{'sha256': 'x', 'strength': 1.0}]}}
+    assert status.saved_first_pass_edits(info, {}, [0], first_lora) == []
+
+
+def test_project_versions_omit_an_upscaled_from_version_that_was_replaced(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second',
+             first_pass_generation='7')
+    [version] = status.native_project_versions(artifacts.read_native_manifest(tmp_path))['tasks'][0]['versions']
+    assert 'upscaled_from' not in version
+
+
+def test_deleting_a_version_keeps_a_first_pass_another_version_still_holds(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second')
+    manifest = artifacts.read_native_manifest(tmp_path)
+    segment = manifest['segments']['0']
+    # The upscaled a@2 still holds the first pass b continued from, so either version alone can go.
+    assert artifacts.dropped_version_dependents(manifest, segment, ['0']) == []
+    assert artifacts.dropped_version_dependents(manifest, segment, ['2']) == []
+    assert artifacts.dropped_version_dependents(manifest, segment, ['0', '2']) == ['b']

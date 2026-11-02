@@ -100,6 +100,22 @@ def native_task_fingerprint(info: dict[str, Any], index: int, version: int = TAS
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
+def _active_record(manifest: dict[str, Any], sid: str) -> dict[str, Any]:
+    segment = next((s for s in manifest.get('segments', {}).values() if s.get('segment_id') == sid), {})
+    return segment.get('generations', {}).get(str(segment.get('active_generation')), {})
+
+
+def _record_edited(info: dict[str, Any], plans: list[Any], tasks: list[dict[str, Any]], index: int,
+                   meta: dict[str, Any], recipe: dict[str, Any]) -> bool:
+    """Whether the task's timing, continuity, content or sources changed since the version was saved."""
+    plan = plans[index]
+    return (any(meta.get(key) != getattr(plan, key) for key in ('start_frame', 'end_frame', 'continuity_mode', 'parent_segment_id'))
+            or bool(recipe.get('task_fingerprint') and recipe['task_fingerprint'] != native_task_fingerprint(
+                info, index, int(recipe.get('task_fingerprint_version', 1))))
+            or (recipe.get('task_content') is not None
+                and task_content_signature(recipe['task_content']) != task_content_signature(tasks[index].get('content', {}))))
+
+
 def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
                            lora_effects: dict[str, dict[str, Any] | None] | None = None) -> list[dict[str, Any]]:
     from .h3_lora_preflight import task_dependencies
@@ -110,8 +126,7 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
     result: list[dict[str, Any]] = []
     states: dict[str, str] = {}
     for index, plan in enumerate(plans):
-        segment = next((s for s in manifest.get('segments', {}).values() if s.get('segment_id') == plan.segment_id), {})
-        record = segment.get('generations', {}).get(str(segment.get('active_generation')), {})
+        record = _active_record(manifest, plan.segment_id)
         meta = record.get('native', {}).get('high', {}).get('metadata', {})
         recipe = record.get('native_recipe', meta.get('recipe', {}))
         status = 'saved'
@@ -121,12 +136,7 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
             status = 'legacy'
         elif record.get('native_stale'):
             status = 'parent_changed'
-        elif any(meta.get(key) != getattr(plan, key) for key in ('start_frame', 'end_frame', 'continuity_mode', 'parent_segment_id')):
-            status = 'edited'
-        elif recipe.get('task_fingerprint') and recipe['task_fingerprint'] != native_task_fingerprint(
-                info, index, int(recipe.get('task_fingerprint_version', 1))):
-            status = 'edited'
-        elif recipe.get('task_content') is not None and task_content_signature(recipe['task_content']) != task_content_signature(tasks[index].get('content', {})):
+        elif _record_edited(info, plans, tasks, index, meta, recipe):
             status = 'edited'
         if status == 'saved' and lora_effects is not None:
             effect = lora_effects.get(plan.segment_id)
@@ -151,17 +161,21 @@ def saved_first_pass_edits(info: dict[str, Any], manifest: dict[str, Any], selec
 
     Only the first pass is reused, so second-pass settings and LoRAs may change freely.
     """
-    statuses = native_timeline_status(info, manifest)
+    plans = compile_native_plan(info)
+    tasks = native_task_segments(info)
     problems = []
     for index in selected:
-        sid = statuses[index]['segment_id']
-        if statuses[index]['status'] == 'edited':
-            problems.append(f'Task {index + 1}: its content changed after the first pass. Run it with single again.')
+        sid = plans[index].segment_id
+        record = _active_record(manifest, sid)
+        meta = record.get('native', {}).get('high', {}).get('metadata', {})
+        if not meta:
+            # The source preflight explains a missing or legacy version.
             continue
-        segment = next((s for s in manifest.get('segments', {}).values() if s.get('segment_id') == sid), {})
-        record = segment.get('generations', {}).get(str(segment.get('active_generation')), {})
-        recipe = record.get('native_recipe', record.get('native', {}).get('high', {}).get('metadata', {}).get('recipe', {}))
-        if (recipe.get('segment_loras') or {}).get('first', []) != (lora_effects.get(sid) or {}).get('first', []):
+        recipe = record.get('native_recipe', meta.get('recipe', {}))
+        # A version can be stale through its second pass alone; its first pass is checked by itself.
+        if _record_edited(info, plans, tasks, index, meta, recipe):
+            problems.append(f'Task {index + 1}: its content changed after the first pass. Run it with single again.')
+        elif (recipe.get('segment_loras') or {}).get('first', []) != (lora_effects.get(sid) or {}).get('first', []):
             problems.append(f'Task {index + 1}: its first-stage segment LoRAs changed after the first pass. '
                             'Run it with single again, or restore the LoRA rows.')
     return problems
@@ -197,7 +211,9 @@ def native_project_versions(manifest: dict[str, Any]) -> dict[str, Any]:
                 **({'first_pass_size': f"{recipe['first_width']}x{recipe['first_height']}"}
                    if dual and 'first_width' in recipe else {}),
                 **({'seed': generation['seed']} if 'seed' in generation else {}),
-                **({'upscaled_from': int(generation['first_pass_generation'])} if 'first_pass_generation' in generation else {}),
+                # override drops the version a first pass was upscaled from.
+                **({'upscaled_from': int(generation['first_pass_generation'])}
+                   if str(generation.get('first_pass_generation')) in segment.get('generations', {}) else {}),
                 **({'keep_1st_pass_audio': generation['keep_1st_pass_audio']} if 'keep_1st_pass_audio' in generation else {}),
                 'locked_audio': generation.get('audio_locked') is True,
                 'continued_from': owners.get(parent, 'missing') if parent else None,
