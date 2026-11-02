@@ -2312,38 +2312,31 @@ def test_easy_h3_hard_and_hires_context_have_chinese_localization():
     assert "easy MiniMaxH3HiResAnchorContinuity" not in node_defs
 
 
-def test_multitrack_h3_project_has_matching_chinese_localization():
+def _frontend_input_keys(ports, prefix=""):
+    """Input names as the frontend looks them up: a DynamicCombo child is
+    "<combo>.<key>", and dots become underscores."""
+    keys = set()
+    for port in ports:
+        name = f"{prefix}{port.name}"
+        keys.add(name.replace(".", "_"))
+        for option in port.kwargs.get("options") or []:
+            if isinstance(option, tuple):
+                keys |= _frontend_input_keys(option[1], f"{name}.")
+    return keys
+
+
+def test_multitrack_h3_project_has_matching_chinese_localization(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
     node_defs = json.loads(
-        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text()
+        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text(encoding="utf-8")
     )
     translation = node_defs["easy multitrackProject"]
+    schema = module.EasyMultiTrackProject.define_schema()
 
     assert translation["display_name"] == "多轨项目"
-    assert set(translation["inputs"]) == {
-        "model_loader",
-        "tracks_info",
-        "sampler",
-        "sigmas",
-        "project_name",
-        "project_save",
-        "sampling_plan",
-        "sampling_mode",
-        "transition_ratio",
-        "lowres_scale",
-        "enabled_tiling",
-        "tile_count",
-        "model_loader_2nd",
-        "use_saved_1st_pass",
-        "keep_1st_pass_audio",
-        "disable_2nd_noise",
-        "upscale_by",
-        "upscale_model",
-        "segment_start_number",
-        "segment_count",
-        "seed",
-        "sampler_2nd",
-        "sigmas_2nd",
-    }
+    assert set(translation["inputs"]) == _frontend_input_keys(schema.inputs)
+    assert "sampling_mode_enabled_tiling_tile_count" in translation["inputs"]
+    assert all(entry.get("name") for entry in translation["inputs"].values())
     assert translation["outputs"] == {
         "0": {"name": "项目名称"},
         "1": {"name": "锁定音频"},

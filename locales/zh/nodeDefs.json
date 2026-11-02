@@ -1423,7 +1423,7 @@
 
       "sampling_plan": {
         "name": "采样方案",
-        "tooltip": "选择采样器与 Sigmas 的预设，Turbo 与非 Turbo 模型各有一组；采样器或 Sigmas 接入后取代对应的预设。custom 没有预设，实际运行的每个采样阶段都要同时接入采样器与 Sigmas。",
+        "tooltip": "选择采样器与 Sigmas 的预设，Turbo 与非 Turbo 模型各有一组；采样器或 Sigmas 接入后取代对应的预设。custom 没有预设：实际运行的每个采样阶段都要接入 Sigmas，single 与 dual 还要接入采样器（SelfLift 固定使用 Euler）。",
         "options": {
           "custom": "自定义",
           "light": "轻度",
@@ -1438,19 +1438,19 @@
         "tooltip": "single 单次采样效果最好；dual 先以编辑器尺寸一采，放大后再二采；selflift 使用单条渐进分辨率调度；passthrough 直接输出第 0 个完整时间线参考视频，并保存下一段所需的上下文。dual 与 selflift 的参数在选中后展开。",
         "options": {"single": "单次采样", "dual": "两次采样", "selflift": "SelfLift", "passthrough": "直通"}
       },
-      "transition_ratio": {
+      "sampling_mode_transition_ratio": {
         "name": "步数过渡比例",
         "tooltip": "SelfLift 在低分辨率执行的去噪评估比例。"
       },
-      "lowres_scale": {
+      "sampling_mode_lowres_scale": {
         "name": "低分缩放比例",
         "tooltip": "SelfLift 前段低分辨率相对于目标潜空间的缩放比例。"
       },
-      "enabled_tiling": {
+      "sampling_mode_enabled_tiling": {
         "name": "启用分块",
         "tooltip": "为 Dual 二采或 SelfLift 高分辨率阶段启用空间分块。"
       },
-      "tile_count": {
+      "sampling_mode_enabled_tiling_tile_count": {
         "name": "分块数量",
         "tooltip": "高分辨率采样的空间分块数量。"
       },
@@ -1466,25 +1466,25 @@
         "name": "Sigmas(二采)",
         "tooltip": "可选的 Dual 二采 Sigmas；不接时使用采样方案的预设。接入后续接片段也改用这组 Sigmas，不再使用预设中较轻的续接排程。"
       },
-      "use_saved_1st_pass": {
+      "sampling_mode_use_saved_1st_pass": {
         "name": "用已存一采",
         "tooltip": "不重跑一采，直接放大每段使用中版本（single 或 dual）存下的一采再二采。有片段没有一采，或一采后改过内容、时间或一采 LoRA 时，在采样前报错。二采沿用该一采的种子。"
       },
-      "keep_1st_pass_audio": {
+      "sampling_mode_keep_1st_pass_audio": {
         "name": "保留一采声音",
         "tooltip": "二采时不重画声音，保留一采的声音。续接片段本来就保留；开启后新镜头片段也保留。"
       },
-      "disable_2nd_noise": {
+      "sampling_mode_disable_2nd_noise": {
         "name": "禁用二采噪声",
         "tooltip": "二采时不加入新的噪声。"
       },
-      "upscale_by": {
+      "sampling_mode_upscale_by": {
         "name": "二采放大倍率",
         "tooltip": "二采尺寸相对于编辑器尺寸的倍率，宽高各自对齐到 32 的倍数。"
       },
-      "upscale_model": {
+      "sampling_mode_upscale_model": {
         "name": "放大模型",
-        "tooltip": "Dual：两次采样之间的潜空间放大模型；选 None 时改用 RTX VSR 放大像素并重新编码，需开启 allow_vae_fallback。SelfLift：提升到完整分辨率时使用的潜空间放大模型；None 使用最近邻提升。"
+        "tooltip": "Dual：两次采样之间的潜空间放大模型；选 None 时改用 RTX VSR 放大像素并重新编码，需开启「允许 VAE 回退」。SelfLift：提升到完整分辨率时使用的潜空间放大模型；None 使用最近邻提升。"
       },
       "segment_start_number": { "name": "片段开始编号" },
       "segment_count": {
@@ -1493,7 +1493,15 @@
       },
       "seed": {
         "name": "种子",
-        "tooltip": "一采与二采共用的随机种子。"
+        "tooltip": "一采与二采共用的随机种子。使用已存一采时，二采改用该一采保存的种子。"
+      },
+      "allow_vae_fallback": {
+        "name": "允许 VAE 回退",
+        "tooltip": "原生来源不可用或不兼容时，允许重新编码已生成的媒体。关闭时，若整次运行无法保持原生来源，会在采样前停止。外部媒体的初次编码与预览、输出解码始终允许；时间与锁定规则始终生效。"
+      },
+      "segment_loras": {
+        "name": "片段 LoRA",
+        "tooltip": "按全项目片段编号与采样阶段追加的 MODEL LoRA。"
       }
     },
     "outputs": {

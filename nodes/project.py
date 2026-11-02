@@ -975,8 +975,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                                     default=False,
                                     tooltip=(
                                         "Upscale each task's saved first pass (its active single or dual "
-                                        "version) instead of sampling it again. The run stops before "
-                                        "sampling if a task has none or was edited since."
+                                        "version) instead of sampling it again, with the seed saved with it. "
+                                        "The run stops before sampling if a task has none or was edited since."
                                     ),
                                 ),
                                 io.Float.Input(
