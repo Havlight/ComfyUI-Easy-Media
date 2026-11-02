@@ -16,7 +16,11 @@ from urllib.request import Request, urlopen
 # ComfyUI's embedded Python does not put a script's own folder on the import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from patch_workflow import PROJECT_WIDGETS, WorkflowError, choose_editor, choose_project, inspect_workflow  # noqa: E402
+from patch_workflow import WorkflowError, choose_editor, choose_project  # noqa: E402
+
+
+class SettingsError(ValueError):
+    """A setting a node does not have, or a value it does not take, as ComfyUI's check reports it."""
 
 
 def default_config_path() -> Path:
@@ -114,9 +118,22 @@ def open_workflow(base_url: str, workflow: dict, name: str, client_id: str | Non
 
 
 def project_fields(project: dict) -> dict:
-    widgets = project.get("widgets_values") or []
-    return {name: widgets[index] if index < len(widgets) else None
-            for name, index in PROJECT_WIDGETS.items() if name in ("project_name", "segment_start_number", "segment_count")}
+    """The Project's name and run range, by the names ComfyUI saves its widgets under."""
+    named = project.get("widgets_values_named") or {}
+    return {name: named.get(name) for name in ("project_name", "segment_start_number", "segment_count")}
+
+
+def node_settings(base_url: str, node: dict, changes: dict | None = None) -> dict:
+    """A node's settings by name, and changes to them checked against the node's definition in
+    ComfyUI: `changes` in the order to set them, `settings` and the widget values after them."""
+    try:
+        return request_json(base_url, "/easy-media/workflow/settings", {"node": node, "changes": changes or {}})
+    except RuntimeError as error:
+        try:
+            message = json.loads(str(error).removeprefix("HTTP 400: "))["error"]
+        except (ValueError, KeyError, TypeError):
+            raise error from None
+        raise SettingsError(message) from None
 
 
 def get_record(base_url: str, project: str, path: str) -> str | None:
@@ -177,6 +194,8 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
     workflow = content["workflow"]
     project = choose_project(workflow)
     editor = choose_editor(workflow, project)
+    if not isinstance(project.get("widgets_values_named"), dict):
+        raise WorkflowError("the Project has no named widget values; open the workflow in ComfyUI and save it again")
     fields = project_fields(project)
     name = fields["project_name"]
     if not isinstance(name, str) or not name.strip():
@@ -186,7 +205,9 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
     entry = {"run": number, "queued_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
              "request_id": result["request_id"], "prompt_id": result["prompt_id"], "tab": content["key"],
              "start": fields["segment_start_number"], "count": fields["segment_count"],
-             "resolution": next(item["resolution"] for item in inspect_workflow(workflow)["editors"] if item["id"] == editor.get("id"))}
+             # The settings the plan does not carry, to say later what a run used.
+             "settings": {"project": node_settings(base_url, project)["settings"],
+                          "editor": node_settings(base_url, editor)["settings"]}}
     plan = content["plans"].get(str(editor.get("id")))
     if plan is not None:
         entry["plan"] = f"plans/run-{number:03d}.json"

@@ -837,7 +837,7 @@
         "segment_start_number": 1,
         "segment_count": -1,
         "seed": 797204186153197,
-        "fixed": "randomize",
+        "control_after_generate": "randomize",
         "sampling_plan": "medium",
         "sampling_mode": "single"
       }

@@ -109,7 +109,16 @@ def test_plan_conversions_return_track_data_and_fail_safely(monkeypatch):
     assert store.submit(payload())["status"] == "pending"
 
 
-@pytest.mark.parametrize("change", [{"track_data": {"tracks": {}}}, {"plan": []}, {"format": ""}])
+def test_a_plan_for_a_tab_names_its_editor_for_the_lora_rules():
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    store.submit_plan(plan_payload(tab="workflows/mv.json", editor_id=14))
+    job = register(store)
+    assert (job["tab"], job["editor_id"]) == ("workflows/mv.json", 14)
+
+
+@pytest.mark.parametrize("change", [{"track_data": {"tracks": {}}}, {"plan": []}, {"format": ""},
+                                    {"tab": "workflows/mv.json"}, {"editor_id": 14}, {"tab": "mv", "editor_id": True}])
 def test_invalid_plan_conversions_do_not_create_jobs(change):
     store = module.WorkflowSubmissions(lambda _: True)
     register(store)
@@ -162,7 +171,8 @@ def test_timeout_never_redelivers_and_late_result_can_resolve_unknown(monkeypatc
 def apply_payload(**kwargs):
     return {"request_id": "apply-1", "tab": "workflows/mv.json", "queue": False,
             "changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
-                        "project": {"project_name": "mv", "segment_start_number": 2, "segment_count": -1}}, **kwargs}
+                        "project": [["project_name", "mv"], ["segment_start_number", 2], ["segment_count", -1]]},
+            **kwargs}
 
 
 def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
@@ -181,15 +191,20 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
     assert result["tab"] == tab and result["saved"] == saved
     store.apply(apply_payload())
     job = register(store)
-    assert job["changes"]["project"]["project_name"] == "mv" and "changes" not in store.get("apply-1")
+    assert job["changes"]["project"][0] == ["project_name", "mv"] and "changes" not in store.get("apply-1")
     # The page opened a saved workflow to change it.
     result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied", "opened": True})
     assert result["status"] == "applied" and result["opened"] is True
-    # An agent may switch between a single preview and Dual from the saved first pass.
-    upscale = {"project_name": "mv", "sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True}
-    store.apply(apply_payload(request_id="apply-upscale", changes={**apply_payload()["changes"], "project": upscale}))
+    # Settings arrive checked and in the order to set them: a combo before its options.
+    upscale = [["sampling_mode", "dual"], ["sampling_mode.use_saved_1st_pass", True], ["sampling_mode.upscale_by", 1.5]]
+    resolution = [["resolution", "width x height (custom)"], ["resolution.width", 1024]]
+    loras = {"version": 1, "rules": [{"id": "r", "enabled": True, "lora": "a.safetensors", "start_segment": 1,
+                                      "segment_count": -1, "strength": 1.0, "stage": "all"}]}
+    store.apply(apply_payload(request_id="apply-upscale", changes={
+        **apply_payload()["changes"], "project": upscale, "editor": resolution, "segment_loras": loras}))
     job = register(store)
-    assert job["changes"]["project"] == upscale
+    assert (job["changes"]["project"], job["changes"]["editor"]) == (upscale, resolution)
+    assert job["changes"]["segment_loras"] == loras
     store.complete("apply-upscale", {"claim_token": job["claim_token"], "status": "applied"})
     # Changing a tab can be retried; running it might already have happened.
     store.apply(apply_payload(request_id="apply-2"))
@@ -205,14 +220,14 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
 @pytest.mark.parametrize("change", [
     {"tab": ""}, {"tab": None}, {"queue": "yes"}, {"changes": None},
     {"changes": {"editor_id": 14, "track_data": {"tracks": {}}}},
-    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"seed": 1}, "project_id": 15}},
     {"changes": {"editor_id": True, "track_data": {"tracks": []}}},
-    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"project_name": "mv"}}},
-    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"sampling_mode": "selflift"}, "project_id": 15}},
-    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
-                 "project": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": "yes"}}},
-    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
-                 "project": {"sampling_mode": "dual", "sampling_mode.upscale_by": 2}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": [["project_name", "mv"]]}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"seed": 1}, "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": [["seed"]], "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": [["seed", [1]]], "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "editor": [["track_data", "{}"]]}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "segment_loras": {"rules": []}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "segment_loras": {"version": 1, "rules": ["x"]}}},
 ])
 def test_invalid_tab_applies_do_not_create_jobs(change):
     store = module.WorkflowSubmissions(lambda _: True)

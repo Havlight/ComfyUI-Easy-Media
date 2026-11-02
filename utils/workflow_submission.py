@@ -4,7 +4,9 @@ Four kinds of job go to a page:
 - workflow: a UI workflow to open in a new tab, and optionally run;
 - plan: an H3 plan to convert into Editor track data with the page's own importer (no tab changes);
 - tabs: list the open workflow tabs, and read one of them including unsaved edits;
-- apply: set an open tab's Editor track data and Project fields, and optionally run that tab.
+- apply: set an open tab's Editor track data and settings, its Project settings and LoRA rules, and
+  optionally run that tab. Settings arrive as checked by /easy-media/workflow/settings (the agent
+  scripts call it first); this only checks their shape, and the page fails on a widget it lacks.
 """
 
 import hashlib
@@ -20,9 +22,6 @@ from aiohttp import web
 # minute; while its WebSocket stays connected it is still there, and a job wakes it at once.
 HEARTBEAT_SECONDS = 300
 PAYLOAD_KEYS = ("workflow", "track_data", "plan", "changes")
-# Project widgets an agent may set; sampling_mode only switches between preview and Dual.
-PROJECT_CHANGE_FIELDS = {"project_name", "segment_start_number", "segment_count",
-                         "sampling_mode", "sampling_mode.use_saved_1st_pass"}
 JOB_EVENT = "easy_media_workflow_job"
 
 
@@ -127,7 +126,24 @@ class WorkflowSubmissions:
         editor_format = payload.get("format", "MiniMax")
         if not isinstance(editor_format, str) or not editor_format:
             raise ValueError("format must be the Editor format, such as MiniMax")
-        return self._create(payload, "plan", dict(track_data=track_data, plan=plan, format=editor_format))
+        # The tab and Editor the plan is for: their LoRA node's rules are what the plan's replace.
+        tab = self._tab_key(payload.get("tab"), False)
+        editor_id = payload.get("editor_id")
+        if (tab is None) != (editor_id is None) or (
+                editor_id is not None and (not isinstance(editor_id, (int, str)) or isinstance(editor_id, bool))):
+            raise ValueError("tab and editor_id go together: the tab key and the Editor's node id")
+        target = dict(tab=tab, editor_id=editor_id) if tab is not None else {}
+        return self._create(payload, "plan", dict(track_data=track_data, plan=plan, format=editor_format, **target))
+
+    @staticmethod
+    def _settings(value: object, field: str) -> list:
+        """Widget changes in the order to set them, as /easy-media/workflow/settings checked them."""
+        if not isinstance(value, list) or any(
+                not isinstance(item, list) or len(item) != 2 or not isinstance(item[0], str) or not item[0]
+                or not (item[1] is None or isinstance(item[1], (str, int, float, bool)))
+                for item in value):
+            raise ValueError(f"changes.{field} must be a list of [setting name, value] pairs")
+        return value
 
     @staticmethod
     def _tab_key(value: object, required: bool) -> str | None:
@@ -154,13 +170,14 @@ class WorkflowSubmissions:
             track_data = changes.get("track_data") if isinstance(changes, dict) else None
             if not isinstance(track_data, dict) or not isinstance(track_data.get("tracks"), list):
                 raise ValueError("changes.track_data must be Editor track data with a tracks list")
-            project = changes.get("project", {})
-            if not isinstance(project, dict) or not set(project) <= PROJECT_CHANGE_FIELDS:
-                raise ValueError("changes.project may set only " + ", ".join(sorted(PROJECT_CHANGE_FIELDS)))
-            if project.get("sampling_mode", "single") not in {"single", "dual"} or not isinstance(
-                    project.get("sampling_mode.use_saved_1st_pass", False), bool):
-                raise ValueError("changes.project may switch sampling_mode between single and dual, "
-                                 "and set Dual's use_saved_1st_pass")
+            project = self._settings(changes.get("project", []), "project")
+            if any(name == "track_data" for name, _value in self._settings(changes.get("editor", []), "editor")):
+                raise ValueError("changes.track_data sets the Editor's track data; changes.editor is for its settings")
+            loras = changes.get("segment_loras")
+            if loras is not None and not (isinstance(loras, dict) and loras.get("version") == 1
+                                          and isinstance(loras.get("rules"), list)
+                                          and all(isinstance(rule, dict) for rule in loras["rules"])):
+                raise ValueError("changes.segment_loras must be H3 Segment LoRA rules: {version: 1, rules: [...]}")
             if any(not isinstance(changes.get(key), (int, str)) or isinstance(changes.get(key), bool)
                    for key in ("editor_id", *(("project_id",) if project else ()))):
                 raise ValueError("changes need the editor_id (and project_id) of nodes in the tab")
