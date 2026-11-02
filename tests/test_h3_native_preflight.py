@@ -228,3 +228,112 @@ def test_source_fingerprint_follows_the_task_reference_lists():
     assert unfitted != base
     unfitted_info['tracks'][2]['segments'][0]['content']['file_path'] = 'other.wav'
     assert status.native_task_fingerprint(unfitted_info, 0) != unfitted
+
+
+def _sized(plan, parent=None, stage='single_final', side=2):
+    import torch
+    meta = native.new_native_metadata(plan, stage, {'seed': 51, 'adapter': 'test'}, parent)
+    video = torch.zeros(1, 24, timing.video_steps(plan.raw_frames), side, side)
+    audio = torch.zeros(1, 32, 2, meta['audio_ticks'])
+    return native.stamp_native_result({'samples': native._official_nested_tensor((video, audio))}, meta)
+
+
+def _version(directory, plans, index, high, low=None, sampling_pass='single', seed=51):
+    from test_h3_native_artifacts import _fields
+    record = {'continuity_mode': plans[index].continuity_mode, 'sampling_pass': sampling_pass, 'seed': seed}
+    return artifacts.commit_native_generation(directory, index, _fields(plans), record,
+                                              {'high': high, **({'low': low} if low is not None else {})}, {})
+
+
+def saved_recipe(**kwargs):
+    return recipe('dual', use_saved_1st_pass=True, **kwargs)
+
+
+def test_saved_first_pass_selects_each_task_active_first_pass(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first, seed=7)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']), seed=9)
+    state = check(tmp_path, plans, [0, 1], saved_recipe())
+    assert {sid: (item['generation'], item['seed'], item['meta']['stage']) for sid, item in state['first_pass'].items()} == {
+        'a': ('0', 7, 'single_final'), 'b': ('1', 9, 'single_final')}
+    assert state['first_pass']['a']['meta']['artifact_id'] == first['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_reads_a_dual_version_low_stage(tmp_path):
+    plans = [_plan()]
+    low = _sized(plans[0], stage='dual_low_prediction')
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), low, sampling_pass='second')
+    state = check(tmp_path, plans, [0], saved_recipe(target_width=64, target_height=64))
+    assert state['first_pass']['a']['meta']['artifact_id'] == low['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_needs_a_first_pass_at_the_editor_size(tmp_path):
+    plans = [_plan()]
+    with pytest.raises(timing.NativePlanError, match='no saved first pass'):
+        check(tmp_path, plans, [0], saved_recipe())
+    _version(tmp_path, plans, 0, _sized(plans[0]))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_SIZE'):
+        check(tmp_path, plans, [0], saved_recipe(first_width=64, first_height=64, target_width=64, target_height=64))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='selflift_high_final'), sampling_pass='selflift')
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_MODE'):
+        check(tmp_path, plans, [0], saved_recipe())
+
+
+def test_saved_first_pass_needs_the_previous_task_upscaled(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_PARENT'):
+        check(tmp_path, plans, [1], saved_recipe(target_width=64, target_height=64))
+    # Upscaling both in one run is fine: the second continues from the first's new version.
+    state = check(tmp_path, plans, [0, 1], saved_recipe(target_width=64, target_height=64))
+    assert set(state['first_pass']) == {'a', 'b'}
+
+
+def test_saved_first_pass_in_one_run_must_continue_from_the_previous_first_pass(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    high = _sized(plans[0], stage='dual_high_final')
+    _version(tmp_path, plans, 0, high, _sized(plans[0], stage='dual_low_prediction'), sampling_pass='second')
+    # At the same size a single run continues from the Dual task's final stage.
+    _version(tmp_path, plans, 1, _sized(plans[1], high['h3_native']))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_CHAIN'):
+        check(tmp_path, plans, [0, 1], saved_recipe())
+    check(tmp_path, plans, [1], saved_recipe())
+
+
+def test_single_continues_from_a_dual_predecessor_first_pass(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4),
+             _sized(plans[0], stage='dual_low_prediction'), sampling_pass='second')
+    check(tmp_path, plans, [1], recipe('single'))
+    with pytest.raises(timing.NativePlanError, match='compatible high'):
+        check(tmp_path, plans, [1], recipe('selflift'))
+
+
+def test_an_upscaled_version_keeps_tasks_continued_from_its_first_pass_valid(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second')
+    manifest = artifacts.read_native_manifest(tmp_path)
+    assert manifest['segments']['0']['active_generation'] == 2
+    assert not manifest['segments']['1']['generations']['1'].get('native_stale')
+    state = check(tmp_path, plans, [1], recipe('single'))
+    assert state['existing']['a']['generation'] == '2'
+
+
+def test_saved_first_pass_edits_compare_content_and_first_stage_loras(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    _version(tmp_path, plans, 0, _sized(plans[0]))
+    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
+            'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
+                                                       'content': {'continuity_mode': 'shot'}}]}]}
+    manifest = artifacts.read_native_manifest(tmp_path)
+    second_only = {'a': {'second': [{'sha256': 'x', 'strength': 1.0}]}}
+    assert status.saved_first_pass_edits(info, manifest, [0], second_only) == []
+    first_added = {'a': {'first': [{'sha256': 'x', 'strength': 1.0}]}}
+    assert 'first-stage segment LoRAs' in status.saved_first_pass_edits(info, manifest, [0], first_added)[0]

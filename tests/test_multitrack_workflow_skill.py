@@ -474,7 +474,7 @@ def test_project_sampling_mode_writes_its_option_widgets(patch_workflow_module):
 
     project = _node(result, report["project_node_id"])
     assert project["widgets_values"][7:] == [
-        "dual", 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors", False, "true", 4,
+        "dual", False, 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors", False, False, "true", 4,
     ]
     named = project["widgets_values_named"]
     assert named["sampling_mode"] == "dual"
@@ -486,8 +486,8 @@ def test_project_sampling_mode_writes_its_option_widgets(patch_workflow_module):
     )
     inspected = patch_workflow_module.inspect_workflow(result)["projects"][0]
     assert inspected["sampling_mode"] == {
-        "sampling_mode": "dual", "upscale_by": 1.5,
-        "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "sampling_mode": "dual", "use_saved_1st_pass": False, "upscale_by": 1.5,
+        "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors", "keep_1st_pass_audio": False,
         "disable_2nd_noise": False, "enabled_tiling": True, "tile_count": 4,
     }
 
@@ -495,13 +495,13 @@ def test_project_sampling_mode_writes_its_option_widgets(patch_workflow_module):
 def test_project_sampling_mode_keeps_saved_options_and_later_widgets(patch_workflow_module):
     workflow = _template_workflow()
     project = next(node for node in workflow["nodes"] if node["type"] == "easy multitrackProject")
-    project["widgets_values"][7:] = ["dual", 2.0, "custom.safetensors", True, "false", True]
+    project["widgets_values"][7:] = ["dual", True, 2.0, "custom.safetensors", True, True, "false", True]
 
     kept, report = patch_workflow_module.apply_plan(
-        workflow, {"project": {"sampling_mode": {"sampling_mode": "dual", "disable_2nd_noise": False}}},
+        workflow, {"project": {"sampling_mode": {"sampling_mode": "dual", "use_saved_1st_pass": False}}},
     )
     assert _node(kept, report["project_node_id"])["widgets_values"][7:] == [
-        "dual", 2.0, "custom.safetensors", False, "false", True,
+        "dual", False, 2.0, "custom.safetensors", True, True, "false", True,
     ]
 
     single, report = patch_workflow_module.apply_plan(workflow, {"project": {"sampling_mode": "single"}})
@@ -524,7 +524,7 @@ def test_project_sampling_mode_rejects_invalid_settings(patch_workflow_module, p
 def test_project_sampling_mode_rejects_an_old_widget_layout(patch_workflow_module):
     workflow = _template_workflow()
     project = next(node for node in workflow["nodes"] if node["type"] == "easy multitrackProject")
-    project["widgets_values"][7:] = ["dual", False, False, 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors"]
+    project["widgets_values"][7:] = ["dual", 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors", False, "false"]
 
     with pytest.raises(patch_workflow_module.WorkflowError, match="do not match the current node layout"):
         patch_workflow_module.apply_plan(workflow, {"project": {"sampling_mode": "single"}})

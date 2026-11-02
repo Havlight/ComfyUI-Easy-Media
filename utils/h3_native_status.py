@@ -145,6 +145,28 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
     return result
 
 
+def saved_first_pass_edits(info: dict[str, Any], manifest: dict[str, Any], selected: list[int],
+                           lora_effects: dict[str, dict[str, Any]]) -> list[str]:
+    """Tasks whose saved first pass no longer matches their timeline content or first-stage LoRAs.
+
+    Only the first pass is reused, so second-pass settings and LoRAs may change freely.
+    """
+    statuses = native_timeline_status(info, manifest)
+    problems = []
+    for index in selected:
+        sid = statuses[index]['segment_id']
+        if statuses[index]['status'] == 'edited':
+            problems.append(f'Task {index + 1}: its content changed after the first pass. Run it with single again.')
+            continue
+        segment = next((s for s in manifest.get('segments', {}).values() if s.get('segment_id') == sid), {})
+        record = segment.get('generations', {}).get(str(segment.get('active_generation')), {})
+        recipe = record.get('native_recipe', record.get('native', {}).get('high', {}).get('metadata', {}).get('recipe', {}))
+        if (recipe.get('segment_loras') or {}).get('first', []) != (lora_effects.get(sid) or {}).get('first', []):
+            problems.append(f'Task {index + 1}: its first-stage segment LoRAs changed after the first pass. '
+                            'Run it with single again, or restore the LoRA rows.')
+    return problems
+
+
 def native_project_versions(manifest: dict[str, Any]) -> dict[str, Any]:
     """Each task's saved versions in timeline order: which is active, what it continued from,
     whether it used locked audio, fell back or went stale. Tasks no longer on the timeline

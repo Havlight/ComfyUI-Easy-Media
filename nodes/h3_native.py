@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from copy import deepcopy
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,13 @@ from ..utils.h3_native_artifacts import (
     commit_native_generation, file_checksum, load_native_latent, media_version_id, native_child_path,
     read_native_manifest, refresh_native_dependencies,
 )
-from ..utils.h3_native_lock import validate_native_locked_video
+from ..utils.h3_native_lock import freeze_native_audio, validate_native_locked_video
 from ..utils.h3_lora_preflight import preflight_project_loras, task_lora_recipe, upstream_lora_warnings
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
 from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
 from ..utils.h3_native_preflight import (
-    generation_snapshot, native_stage_layout, preflight_native_sources, run_source, validate_parent_range,
+    generation_snapshot, native_stage_layout, parent_stage_labels, preflight_native_sources, run_source,
+    validate_parent_range,
 )
 from ..utils.h3_project import compact_h3_task_segments, safe_h3_project_name, save_h3_audio
 from ..utils.h3_previous_frame import save_tail_image
@@ -87,7 +89,7 @@ class EasyH3NativePreflight(io.ComfyNode):
             raise NativePlanError('SELFLIFT_CONFIG', 'SelfLift needs lowres_scale between 0.25 and 1, and transition_ratio between 0 and 1.')
         if any(i not in passthrough for i in selected):
             for name, schedule, required in (
-                ('first', sigmas, True),
+                ('first', sigmas, not recipe.get('use_saved_1st_pass')),
                 ('second', second_sigmas, config['run_second_pass']),
                 ('context second', context_second_sigmas, config['has_context_second_pass']),
             ):
@@ -106,6 +108,12 @@ class EasyH3NativePreflight(io.ComfyNode):
         loras = preflight_project_loras(tracks_info, config.get('segment_loras'), recipe,
                                        selected, model, second_model if second_model is not None else model)
         status = {item['segment_id']: item['status'] for item in native_timeline_status(tracks_info, manifest, loras['effects'])}
+        if recipe.get('use_saved_1st_pass'):
+            from ..utils.h3_native_status import saved_first_pass_edits
+            edits = saved_first_pass_edits(tracks_info, manifest, [i for i in selected if i not in passthrough],
+                                           loras['effects'])
+            if edits:
+                raise NativePlanError('SAVED_FIRST_PASS_EDITED', '\n' + '\n'.join(edits))
         selected_ids = {plans[i].segment_id for i in selected}
         # A continuation reads its predecessor's saved latent, so content, source and
         # LoRA edits to unselected ancestors do not block it; include a task to redo it.
@@ -195,6 +203,13 @@ class EasyH3NativePrepare(io.ComfyNode):
         if run_state is not None and 'segment_loras' in run_state:
             task = next(item for item in run_state['segment_loras']['tasks'] if item['segment_id'] == plan.segment_id)
             recipe.update(task_lora_recipe(task))
+        first_pass = None
+        if recipe.get("use_saved_1st_pass"):
+            first_pass = (run_state or {}).get("first_pass", {}).get(plan.segment_id)
+            if first_pass is None:
+                raise NativePlanError("SAVED_FIRST_PASS", "The run preflight selected no saved first pass for this task.", plan.segment_id)
+            # The second pass keeps the first pass's seed, and the version records which first pass it upscaled.
+            recipe.update(seed=first_pass["seed"], first_pass_generation=first_pass["generation"])
         recipe["model_patch_revision"] = str(getattr(model, "patches_uuid", "unavailable"))
         recipe["second_model_patch_revision"] = str(getattr(second_model, "patches_uuid", "unavailable"))
         for key, schedule in (("sigmas", sigmas), ("second_sigmas", second_sigmas)):
@@ -221,11 +236,14 @@ class EasyH3NativePrepare(io.ComfyNode):
 
             def load_stage(label: str, stage: str, size: tuple[int, int]) -> dict[str, Any]:
                 nonlocal seed_window, imported_parent
-                if label in descriptors:
-                    saved = load_native_latent(directory, descriptors[label])
+                mismatch = None
+                for source_label in parent_stage_labels(recipe, label):
+                    if source_label not in descriptors:
+                        continue
+                    saved = load_native_latent(directory, descriptors[source_label])
                     if recipe.get("parent_plan"):
                         validate_parent_range(validate_native_latent(saved), NativeTaskPlan(**recipe["parent_plan"]))
-                    if label == "high":
+                    if source_label == label == "high":
                         imported_parent = validate_native_latent(saved)["source_kind"] == "imported_seed"
                     try:
                         sliced = slice_native_context(saved, plan, stage, size)
@@ -235,8 +253,9 @@ class EasyH3NativePrepare(io.ComfyNode):
                     except NativePlanError as error:
                         if error.code not in {"STAGE_MISMATCH", "SIZE_MISMATCH", "STAGE_CLOCK"}:
                             raise
-                        if not imported_parent and not recipe.get("allow_vae_fallback"):
-                            raise
+                        mismatch = error
+                if mismatch is not None and not imported_parent and not recipe.get("allow_vae_fallback"):
+                    raise mismatch
                 kind = "imported_seed" if imported_parent else "rebuilt_generated"
                 if kind == "rebuilt_generated" and not recipe.get("allow_vae_fallback"):
                     raise NativePlanError("VAE_FALLBACK_REQUIRED", f"The predecessor has no {label} native source. Regenerate it or allow VAE fallback.", plan.segment_id)
@@ -265,7 +284,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                     or (expected_parent and any(high_parent[key] != expected_parent[key] for key in ("start_frame", "end_frame")))):
                 raise NativePlanError("PARENT_RANGE", "The predecessor's delivered range changed; regenerate it before continuing.", plan.segment_id)
             high_source = slice_native_context(full_high, plan, high_stage, high_size)
-            if low_stage:
+            if low_stage and first_pass is None:
                 low_size = layout["low"][1]
                 full_low = load_stage("low", low_stage, low_size)
                 low_parent = validate_native_latent(full_low)
@@ -274,7 +293,16 @@ class EasyH3NativePrepare(io.ComfyNode):
                 low_source = high_source
         reasons = tuple(recipe.get("fallback_reasons", []))
         high_meta = new_native_metadata(plan, high_stage, recipe, high_parent, reasons)
-        low_meta = new_native_metadata(plan, low_stage, recipe, low_parent, reasons) if low_stage else None
+        if first_pass is not None:
+            # The saved first pass keeps its identity, so tasks continued from it stay valid.
+            low_meta = deepcopy(first_pass["meta"])
+            if (low_meta["audio_origin_units"], low_meta["audio_ticks"]) != (high_meta["audio_origin_units"], high_meta["audio_ticks"]):
+                raise NativePlanError("STAGE_CLOCK", "The saved first pass and the second pass use different audio clocks; run this task with single again.", plan.segment_id)
+            for item in low_meta.get("fallback_history", []):
+                if item not in high_meta["fallback_history"]:
+                    high_meta["fallback_history"].append(item)
+        else:
+            low_meta = new_native_metadata(plan, low_stage, recipe, low_parent, reasons) if low_stage else None
         if low_meta is not None and low_parent is not None:
             if low_meta["audio_origin_units"] != high_meta["audio_origin_units"] or low_meta["audio_ticks"] != high_meta["audio_ticks"]:
                 raise NativePlanError("STAGE_CLOCK", "The two stages use different audio clocks; regenerate their shared predecessor.")
@@ -399,6 +427,42 @@ class EasyH3NativeSeed(io.ComfyNode):
         return io.NodeOutput(high, low, audio)
 
 
+class EasyH3NativeSavedFirstPass(io.ComfyNode):
+    """Load the saved first pass that the run preflight selected for a Dual upscale."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativeSavedFirstPass", display_name="H3 Native Saved First Pass",
+                         category="EasyUse/H3/dev", is_dev_only=True, not_idempotent=True,
+                         inputs=[io.String.Input("project_name"), io.String.Input("plan_json"),
+                                 io.AnyType.Input("run_state"), io.AnyType.Input("previous", optional=True)],
+                         outputs=[io.Latent.Output("latent"), io.Int.Output("seed")])
+
+    @classmethod
+    def execute(cls, project_name: str, plan_json: str, run_state: dict[str, Any], previous: Any = None) -> io.NodeOutput:
+        del previous
+        plan = NativeTaskPlan(**json.loads(plan_json))
+        first_pass = run_state.get("first_pass", {}).get(plan.segment_id)
+        if first_pass is None:
+            raise NativePlanError("SAVED_FIRST_PASS", "The run preflight selected no saved first pass for this task.", plan.segment_id)
+        saved = load_native_latent(_project_directory(project_name), first_pass["descriptor"])
+        return io.NodeOutput({"samples": saved["samples"]}, first_pass["seed"])
+
+
+class EasyH3NativeKeepAudio(io.ComfyNode):
+    """Keep the first pass's audio through the second pass."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativeKeepAudio", display_name="H3 Native Keep Audio",
+                         category="EasyUse/H3/dev", is_dev_only=True,
+                         inputs=[io.Latent.Input("latent")], outputs=[io.Latent.Output("latent")])
+
+    @classmethod
+    def execute(cls, latent: dict[str, Any]) -> io.NodeOutput:
+        return io.NodeOutput(freeze_native_audio(latent))
+
+
 class EasyH3NativeResult(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -467,6 +531,8 @@ class EasyH3NativeArtifact(io.ComfyNode):
         record = {"continuity_mode": meta["continuity_mode"], "seed": recipe.get("seed", 0),
                   "sampling_pass": "second" if recipe["sampling_mode"] == "dual" else "single",
                   "audio_locked": locked_audio is not None,
+                  **({"first_pass_generation": recipe["first_pass_generation"]} if "first_pass_generation" in recipe else {}),
+                  **({"keep_1st_pass_audio": bool(recipe.get("keep_1st_pass_audio"))} if recipe["sampling_mode"] == "dual" else {}),
                   "raw_audio_sample_rate": raw_audio["sample_rate"], "native_recipe": recipe,
                   **({"previous_frame_source": meta["previous_frame_source"]} if meta.get("previous_frame_source") else {}),
                   "fallback_history": meta["fallback_history"]}

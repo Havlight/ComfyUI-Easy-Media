@@ -383,3 +383,105 @@ def test_locked_raw_windows_are_native_in_all_sampling_modes(monkeypatch, durati
     assert prepares[1]['context_frames'] == (0 if method == 'shot' else 39)
     assert all(n['class_type'] != 'easy h3ContextMediaTrim' for n in graph.values())
     assert sum(n['class_type'] == 'easy h3NativeMediaView' for n in graph.values()) == 2
+
+
+@pytest.mark.parametrize("continuity", ["context", "context_drift"])
+def test_saved_first_pass_skips_first_sampling_and_reuses_its_seed(monkeypatch, continuity):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs("dual", upscale_by=[1.0], use_saved_1st_pass=[True])
+    _task_content(inputs)["continuity_mode"] = continuity
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    starts = [n for n in graph.values() if n["class_type"] == "easy h3SegmentSamplingStart"]
+    assert [n["inputs"]["sampling_pass"] for n in starts] == ["second", "second"]
+    assert not any(n["class_type"] in {"easy MiniMaxH3MotionContextHard", "easy MiniMaxH3ContextSwap"}
+                   for n in graph.values())
+    saved = {k: n for k, n in graph.items() if n["class_type"] == "easy h3NativeSavedFirstPass"}
+    assert len(saved) == 2
+    for start in starts:
+        noise = graph[start["inputs"]["noise"][0]]
+        assert noise["inputs"]["noise_seed"][0] in saved
+    results = [n for n in graph.values() if n["class_type"] == "easy h3NativeResult"]
+    assert all(n["inputs"]["low_latent"][0] in saved for n in results)
+    prepares = [n for n in graph.values() if n["class_type"] == "easy h3NativePrepare"]
+    assert all("sigmas" not in n["inputs"] for n in prepares)
+    assert all(json.loads(n["inputs"]["recipe_json"])["use_saved_1st_pass"] is True for n in prepares)
+    assert not any(n["class_type"] == "easy h3NativeKeepAudio" for n in graph.values())
+
+
+def test_saved_first_pass_applies_audio_locks_only_to_the_second_pass(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    inputs = native_inputs("dual", upscale_by=[1.0], use_saved_1st_pass=[True])
+    inputs["tracks_info"][0]["tracks"].append({"id": "audio", "type": "audio", "audio_locked": True,
+        "segments": [{"start_frame": 0, "end_frame": 481, "content": {"media_type": "audio"}}]})
+    graph = module.EasyMultiTrackProject.execute(**inputs).expand
+    locks = {k: n for k, n in graph.items() if n["class_type"] == "easy h3NativeAudioLock"}
+    assert len(locks) == 2 and all(k.endswith(("native_second_audio_lock_0", "native_second_audio_lock_1")) for k in locks)
+    selects = [n for n in graph.values() if n["class_type"] == "easy h3LockedAudioSelect"]
+    assert all(n["inputs"]["locked_audio"][0] in locks for n in selects)
+
+
+def test_keep_first_pass_audio_freezes_audio_right_before_the_second_pass(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    graph = module.EasyMultiTrackProject.execute(
+        **native_inputs("dual", upscale_by=[1.0], keep_1st_pass_audio=[True])).expand
+    keeps = {k for k, n in graph.items() if n["class_type"] == "easy h3NativeKeepAudio"}
+    assert len(keeps) == 2
+    starts = [n for n in graph.values() if n["class_type"] == "easy h3SegmentSamplingStart"
+              and n["inputs"]["sampling_pass"] == "second"]
+    assert all(n["inputs"]["latent_image"][0] in keeps for n in starts)
+    single = module.EasyMultiTrackProject.execute(**native_inputs("single")).expand
+    assert not any(n["class_type"] == "easy h3NativeKeepAudio" for n in single.values())
+
+
+def test_saved_first_pass_runtime_upscales_the_saved_version_and_keeps_its_identity(monkeypatch, tmp_path):
+    module = _load_minimax_node(monkeypatch)
+    monkeypatch.setattr(module.folder_paths, "get_output_directory", lambda: str(tmp_path))
+    spec = importlib.util.spec_from_file_location("easy_media.nodes.h3_native", Path(__file__).resolve().parents[1] / "nodes/h3_native.py")
+    runtime = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, runtime)
+    spec.loader.exec_module(runtime)
+    model = types.SimpleNamespace(model=types.SimpleNamespace(
+        model_config=type("MiniMaxH3", (), {})(), latent_format=type("MiniMaxH3AV", (), {})()))
+    info = native_inputs()["tracks_info"][0]
+    info.update(width=32, height=32)
+    info["tracks"][0]["segments"] = info["tracks"][0]["segments"][:1]
+    info["tracks"][0]["segments"][0]["end_frame"] = 56
+    plans = runtime.compile_native_plan(info)
+    plan_json = json.dumps(plans[0].as_dict())
+    raw_audio = {"waveform": torch.zeros(1, 2, 18800), "sample_rate": 8000}
+    single = {"sampling_mode": "single", "first_width": 32, "first_height": 32,
+              "target_width": 32, "target_height": 32, "seed": 77}
+    empty, _ = module._empty_av_latent(32, 32, 56)
+    canvas, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(single)).values
+    canvas["samples"].unbind()[0].fill_(3)
+    high, _, done = runtime.EasyH3NativeResult.execute(canvas, state).values
+    _, delivered = runtime.EasyH3NativeMediaView.execute(done, raw_audio).values
+    runtime.EasyH3NativeArtifact.execute("test", 0, info, high, raw_audio, audio=delivered)
+    first_id = high["h3_native"]["artifact_id"]
+
+    dual = {**single, "sampling_mode": "dual", "seed": 5, "use_saved_1st_pass": True, "keep_1st_pass_audio": True,
+            "allow_vae_fallback": False}
+    directory = tmp_path / "easy_media/projects/test"
+    run_state = runtime.preflight_native_sources(directory, runtime.read_native_manifest(directory), plans, [0],
+                                                 dual, set(), [{}], set())
+    _, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(dual),
+                                                         run_state=run_state).values
+    assert state["low"]["artifact_id"] == first_id
+    assert state["high"]["recipe"]["seed"] == 77 and state["high"]["recipe"]["first_pass_generation"] == "0"
+    saved, seed = runtime.EasyH3NativeSavedFirstPass.execute("test", plan_json, run_state).values
+    assert seed == 77 and torch.all(saved["samples"].unbind()[0] == 3)
+    kept = runtime.EasyH3NativeKeepAudio.execute(saved).values[0]
+    assert not torch.any(kept["noise_mask"].unbind()[1]) and torch.all(kept["noise_mask"].unbind()[0] == 1)
+    high, low, done = runtime.EasyH3NativeResult.execute(saved, state, low_latent=saved).values
+    _, delivered = runtime.EasyH3NativeMediaView.execute(done, raw_audio).values
+    runtime.EasyH3NativeArtifact.execute("test", 0, info, high, raw_audio, low_latent=low, audio=delivered)
+
+    segment = json.loads((directory / "project.json").read_text())["segments"]["0"]
+    record = segment["generations"][str(segment["active_generation"])]
+    assert record["sampling_pass"] == "second" and record["seed"] == 77
+    assert record["first_pass_generation"] == "0" and record["keep_1st_pass_audio"] is True
+    assert record["native"]["low"]["metadata"]["artifact_id"] == first_id
+    # The upscaled version's first pass can be upscaled again with other second-pass settings.
+    again = runtime.preflight_native_sources(directory, runtime.read_native_manifest(directory), plans, [0],
+                                             dual, set(), [{}], set())
+    assert again["first_pass"][plans[0].segment_id]["meta"]["artifact_id"] == first_id

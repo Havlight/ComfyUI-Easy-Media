@@ -32,8 +32,8 @@ PROJECT_WIDGETS = {
 H3_LATENT_UPSCALER = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
 SAMPLING_MODE_WIDGETS: dict[str, list[tuple[str, Any]]] = {
     "single": [],
-    "dual": [("upscale_by", 1.25), ("upscale_model", H3_LATENT_UPSCALER),
-             ("disable_2nd_noise", False), ("enabled_tiling", False)],
+    "dual": [("use_saved_1st_pass", False), ("upscale_by", 1.25), ("upscale_model", H3_LATENT_UPSCALER),
+             ("keep_1st_pass_audio", False), ("disable_2nd_noise", False), ("enabled_tiling", False)],
     "selflift": [("transition_ratio", 0.6), ("lowres_scale", 0.6),
                  ("upscale_model", "None"), ("enabled_tiling", False)],
     "passthrough": [],
@@ -507,7 +507,7 @@ def check_sampling_value(name: str, value: Any) -> None:
         low, high = SAMPLING_MODE_RANGES[name]
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= high:
             raise WorkflowError(f"sampling_mode.{name} must be a number from {low} to {high}")
-    elif name in {"disable_2nd_noise", "enabled_tiling"}:
+    elif name in {"use_saved_1st_pass", "keep_1st_pass_audio", "disable_2nd_noise", "enabled_tiling"}:
         if not isinstance(value, bool):
             raise WorkflowError(f"sampling_mode.{name} must be true or false")
     elif name == "upscale_model":

@@ -187,7 +187,7 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 
 1. **读取任务并编码**：按当前任务读取提示词和媒体，根据任务模式构建文生、首尾帧、尾帧或多媒体参考条件，并创建音视频潜空间。存在锁定音频时，将音频编码并施加采样约束。
 2. **一采**：`sampling_mode = single` 和 `dual` 都按编辑器设定尺寸生成，不再根据 `upscale_by` 反推缩小一采尺寸。
-3. **放大与二采（仅 `dual`）**：将设定的宽、高分别乘以 `upscale_by`，再按 `round(尺寸 * upscale_by / 32) * 32` 就近对齐到 32 的倍数。把一采的视频潜空间放大到此尺寸，与音频潜空间重新组合后进行二采；尺寸变化时重新构建对应的参考条件。`upscale_by = 1.000` 时不做尺寸放大，但仍可进行二采。
+3. **放大与二采（仅 `dual`）**：将设定的宽、高分别乘以 `upscale_by`，再按 `round(尺寸 * upscale_by / 32) * 32` 就近对齐到 32 的倍数。把一采的视频潜空间放大到此尺寸，与音频潜空间重新组合后进行二采；尺寸变化时重新构建对应的参考条件。`upscale_by = 1.000` 时不做尺寸放大，但仍可进行二采。续接片段的二采保留一采的声音；`keep_1st_pass_audio` 让新镜头片段也保留。
 4. **解码与保存**：解码视频和音频；上下文片段会同步裁掉开头重复的引导部分及末尾用于时间网格对齐的多余帧，再保存当前片段。
 5. **继续下一段**：保存上下文与项目记录后，自动处理后续任务。分镜模式重新开始一个镜头，上下文模式继承前一段；最终输出 `PROJECT_NAME` 供合并节点读取。
 
@@ -197,10 +197,14 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 | `model_loader_2nd` | 可选的二采 H3 模型；不接时复用一采模型，接入后也仍使用一采加载器的编码器和 VAE |
 | `segment_loras` | 可选的 H3 Segment LoRA 计划，按全项目任务编号及采样阶段追加 MODEL LoRA |
 | `sampling_plan` | 内置 `ultra_light`、`light`、`medium`、`high` 等预设，根据 Turbo / 非 Turbo 模型选择采样器和 sigmas；也可用 `custom` 自定义 |
-| `sampling_mode` | 可选 `single`、`dual`、`selflift` 或 `passthrough`，选中后只展开该模式用到的参数：`dual` 展开 `upscale_by`、`upscale_model`、`disable_2nd_noise`、`enabled_tiling`；`selflift` 展开 `transition_ratio`、`lowres_scale`、`upscale_model`、`enabled_tiling`。普通片段关闭像素/VAE 修正，上下文续接自动使用内部保守预设；同时分别保存低、高分辨率上下文 |
+| `sampling_mode` | 可选 `single`、`dual`、`selflift` 或 `passthrough`，选中后只展开该模式用到的参数：`dual` 展开 `use_saved_1st_pass`、`upscale_by`、`upscale_model`、`keep_1st_pass_audio`、`disable_2nd_noise`、`enabled_tiling`；`selflift` 展开 `transition_ratio`、`lowres_scale`、`upscale_model`、`enabled_tiling`。普通片段关闭像素/VAE 修正，上下文续接自动使用内部保守预设；同时分别保存低、高分辨率上下文 |
 | `sampler` / `sigmas` | 可选的一采采样器与 sigmas，没接的那个使用采样方案的预设；`sampler_2nd` / `sigmas_2nd` 对 Dual 二采同理。接入 `sigmas_2nd` 后，续接片段也改用它，不再使用预设中较轻的续接排程。`custom` 没有预设，实际运行的每个采样阶段都要同时接入这两个输入 |
 | `upscale_by` | Dual 参数：相对于编辑器尺寸的二采放大倍率；默认 `1.250`，三位小数，步长 `0.001` |
 | `disable_2nd_noise` | Dual 参数：控制是否禁用二采新增噪声，不代表跳过二采 |
+| `use_saved_1st_pass` | Dual 参数：不重跑一采，直接放大每段已存的一采（见下文） |
+| `keep_1st_pass_audio` | Dual 参数：新镜头片段的二采也保留一采的声音；续接片段本来就保留 |
+
+**先看一采，再决定放大。** `single` 就是 Dual 的一采：尺寸、默认 sigmas 与续接方式都相同。先用 `single` 生成（保存方式选 `new` 可保留每一版），比较后在多轨项目视频合并节点勾选要用的版本，再用 `dual` 并开启 `use_saved_1st_pass`：每段使用中的版本会以生成时的种子放大并二采，结果另存为新版本。Dual 版本也能从它自己的一采重新放大，例如换一组二采设置。若某段没有编辑器尺寸的一采、一采之后改过内容、时间或一采阶段的 Segment LoRA，或它续接的前一段还没有二采，会在采样前报错；请按时间轴顺序放大，或在同一次运行中一起放大。二采的设置、模型与 LoRA 可以随意更改。
 
 对齐使用 Python `round`，与 [H3 潜空间放大节点](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py) 一致，并非固定向上对齐；恰好居中时取偶数。例如 `1344 × 768`、倍率 `1.250`，相乘后为 `1680 × 960`，二采对齐尺寸为 **`1664 × 960`**。两条放大路径采用相同尺寸，项目记录与合并导出也保留实际输出尺寸。单采样保持编辑器尺寸；纯音频项目（`32 × 32`）不放大。ComfyUI 只保存当前模式的参数，重新载入后切换到其他模式会从默认值开始。这些参数移入 `sampling_mode` 之前保存的工作流，请检查 Project 参数后重新保存。
 

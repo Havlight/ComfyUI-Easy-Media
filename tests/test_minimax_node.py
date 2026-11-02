@@ -1285,11 +1285,15 @@ def test_multitrack_h3_project_schema_exposes_pipeline_configuration(monkeypatch
     assert sampling_mode_options[3][1] == []
     dual_inputs = {port.name: port for port in sampling_mode_options[1][1]}
     assert list(dual_inputs) == [
+        "use_saved_1st_pass",
         "upscale_by",
         "upscale_model",
+        "keep_1st_pass_audio",
         "disable_2nd_noise",
         "enabled_tiling",
     ]
+    assert dual_inputs["use_saved_1st_pass"].kwargs["default"] is False
+    assert dual_inputs["keep_1st_pass_audio"].kwargs["default"] is False
     assert dual_inputs["upscale_by"].kwargs["default"] == 1.250
     assert dual_inputs["upscale_by"].kwargs["step"] == 0.001
     assert dual_inputs["upscale_by"].kwargs["round"] == 0.001
@@ -2329,6 +2333,8 @@ def test_multitrack_h3_project_has_matching_chinese_localization():
         "enabled_tiling",
         "tile_count",
         "model_loader_2nd",
+        "use_saved_1st_pass",
+        "keep_1st_pass_audio",
         "disable_2nd_noise",
         "upscale_by",
         "upscale_model",
