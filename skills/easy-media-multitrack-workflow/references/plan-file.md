@@ -2,7 +2,7 @@
 
 MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「导入规划」两个按钮。规划文件是任务轨与时间轴影音轨的 JSON，适合人工或会操作电脑的 agent 编辑后导回：导入时先显示变更预览，确认后才套用，套用算一步，可以 undo。导出的文件导入另一个工作流，会重建同样的任务与影音轨。
 
-字幕轨、系统提示词、提示词 B、分辨率、Project 节点参数与片段 LoRA 不在规划里，导入时保持原样。需要改这些时，改用 Editor 或 `scripts/patch_workflow.py`。
+字幕轨、系统提示词、提示词 B、分辨率、Project 节点参数与片段 LoRA 不在规划里，导入时保持原样。需要改这些时，改用 Editor 或 `scripts/patch_workflow.py`；只有采样方式能在套用时用 `apply --sampling` 切换（预览与放大，见 [automation.md](automation.md)「先预览再放大」）。
 
 ## 格式
 
