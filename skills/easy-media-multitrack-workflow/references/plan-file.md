@@ -1,8 +1,8 @@
 # H3 规划文件（导入／导出）
 
-MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「导入规划」两个按钮。规划文件是任务轨与时间轴影音轨的 JSON，适合人工或会操作电脑的 agent 编辑后导回：导入时先显示变更预览，确认后才套用，套用算一步，可以 undo。导出的文件导入另一个工作流，会重建同样的任务与影音轨。
+MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「导入规划」两个按钮。规划文件是任务轨、时间轴影音轨与片段 LoRA 规则的 JSON，适合人工或会操作电脑的 agent 编辑后导回：导入时先显示变更预览，确认后才套用，套用算一步，可以 undo。导出的文件导入另一个工作流，会重建同样的任务与影音轨。
 
-字幕轨、系统提示词、提示词 B、分辨率、Project 节点参数与片段 LoRA 不在规划里，导入时保持原样。需要改这些时，改用 Editor 或 `scripts/patch_workflow.py`；只有采样方式能在套用时用 `apply --sampling` 切换（预览与放大，见 [automation.md](automation.md)「先预览再放大」）。
+字幕轨、系统提示词、提示词 B、分辨率与 Project 节点参数不在规划里，导入时保持原样。分辨率与 Project 参数可以在套用时用 `apply --sampling`、`--set` 改（见 [automation.md](automation.md) 第 5 步与「先预览再放大」）；其他的在 Editor 里改。
 
 ## 格式
 
@@ -31,6 +31,9 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
   ],
   "tracks": [
     { "type": "audio", "audio_locked": true, "clips": [{ "file": "D:/music/song.wav", "at": 1 }] }
+  ],
+  "loras": [
+    { "lora": "mmh3/style.safetensors", "strength": 0.8, "stage": "all", "at": "s01", "until": "s02" }
   ]
 }
 ```
@@ -91,6 +94,25 @@ agent 可以做的只有这些：
 
 锁定视频轨在执行前有两个检查，预览就会列为错误：跟它重叠的任务要用 `ref` 或 `edit`（或 `passthrough`）；它要盖满每个重叠任务的整段，接续任务（`context`、`context_drift`）还要多盖前面 39 帧。所以第一个被锁定的任务用 `shot`，片段用 `until` 结束在最后一个被锁定的任务。
 
+## 片段 LoRA
+
+`loras` 列出接到 Project `segment_loras` 的 H3 Segment LoRA 节点的全部规则；写了就整份取代（`[]` 清空），没写就不动。agent 选 LoRA 与强度照 LoRA 说明档，见 [automation.md](automation.md)「LoRA 说明档」。
+
+| 字段 | 意思 |
+|---|---|
+| `lora` | LoRA 文件名，照 ComfyUI LoRA 列表的写法（如 `mmh3/style.safetensors`）；列表里没有时报错 |
+| `strength` | 强度，默认 1 |
+| `stage` | `all`（默认，一采二采都用）、`first`（只用在一采）、`second`（只用在二采） |
+| `at`、`until` | 第一个与最后一个套用的任务，写法同片段的 `at`／`until`（任务 id 或文件里的序号）；没写 `at` 从第一段开始，没写 `until` 套到最后 |
+| `enabled` | `false` 停用这条规则（保留但不套用），默认 `true` |
+| `id` | 导出时带上的规则 id，修改时保留；新规则不用写 |
+
+- 规则跟着任务走：用 `at`／`until` 写的规则，任务插入、删除或调换后，导入会重新换算成 LoRA 节点用的段号。没写 `loras` 而增删了任务时，节点上现有的规则也一样跟着原本的任务；规则涵盖的任务全被删掉时，那条规则跟着删除并警告。
+- 生成标记把一个任务切成几段时，规则若开始或结束在任务中间，导出会写成节点自己的 `start_segment`（第几段）与 `segment_count`（几段，`-1` 到最后）；这种规则保持段号，不跟任务移动。`at`／`until` 与这两个字段不能混用。
+- 节点要接到这个 Editor 所接的每一个 Project；没接 LoRA 节点而 `loras` 有规则时报错。几个 Project 接不同的 LoRA 节点或有的没接、LoRA 节点也接到别的 Editor 的 Project、规则由连线提供时，也会报错，`loras` 写不进去。
+- LoRA 节点被绕过（Bypass）或静音（Mute）时，规则照样写入，但执行时不会套用；`loras` 有启用的规则时导入会警告。
+- 同一段、同一阶段重复用了同一个 LoRA 时，执行会在采样前停下；`apply` 会把这种冲突和套用不到任何段的规则列在 `warnings`（LoRA 节点被绕过或静音时不检查）。
+
 ## 导入到另一个工作流
 
 导出的文件可以导入别的工作流，重建同样的任务与影音轨。任务 id 都对不上时，全部任务作为新任务加入，现有任务被删除；预览会用一条警告说明。规划里没有视频轨时，目标工作流的第一条视频轨会保留并清空。
@@ -100,5 +122,5 @@ agent 可以做的只有这些：
 agent 读分页、套用、执行与检查的流程见 [automation.md](automation.md)。在 Editor 画面上手动使用时：
 
 1. 在 Editor 按「导出规划」，以导出的文件为基础修改，保留既有任务与片段的 `id`，已存的生成结果才会沿用。
-2. 按「导入规划」选文件，检查预览：任务的变更、秒数、参考数量，影音轨的片段，以及“已存结果需要重新生成”的提示。
+2. 按「导入规划」选文件，检查预览：任务的变更、秒数、参考数量，影音轨的片段，LoRA 规则的变更，以及“已存结果需要重新生成”的提示。
 3. 有错误时修正文件后重新导入；只有警告时可以直接套用。

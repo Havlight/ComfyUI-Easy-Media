@@ -36,14 +36,14 @@ git clone https://github.com/yolain/ComfyUI-Easy-Media.git
 
 ### 🤖 使用 Skill 自动生成多轨工作流
 
-节点包附带 `easy-media-multitrack-workflow` Skill，可让 Codex 根据素材和自然语言要求，从内置模板新建或修改已有工作流，自动编排时间线、提示词、衔接模式与采样参数。
+节点包附带 `easy-media-multitrack-workflow` Skill，供 Codex、Claude Code 等编程 agent 使用。用自然语言描述影片并提供素材，agent 会把任务、提示词、参考素材、时间轴影音轨与片段 LoRA 写进 ComfyUI 里开着的工作流分页（读得到没存的修改），要求时执行、等待结果并保留专案纪录；也能修改工作流文件。
 
 ```text
-使用 $easy-media-multitrack-workflow，根据这些参考图和提示词创建三个各 5 秒的任务，
-第一段用分镜，后两段用上下文，生成新的工作流 JSON。
+使用 $easy-media-multitrack-workflow，在开着的「MV」分页用这些参考图做三个各 5 秒的任务，
+第一段分镜，后两段上下文漂移，然后执行。
 ```
 
-默认只生成 JSON；明确要求运行时可上传素材并提交 ComfyUI 执行。安装方法与详细用法见 [Skill 说明](./skills/easy-media-multitrack-workflow/README.md)。
+agent 像人一样修改分页，不会存档；只在要求时执行，也只在要求时修改 Project 与 Editor 的设置（采样方式、保存方式、seed、分辨率）。安装方法与详细用法见 [Skill 说明](./skills/easy-media-multitrack-workflow/README.md)。
 
 ## ✨ 核心功能
 
@@ -204,7 +204,7 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 | `use_saved_1st_pass` | Dual 参数：不重跑一采，直接放大每段已存的一采（见下文） |
 | `keep_1st_pass_audio` | Dual 参数：新镜头片段的二采也保留一采的声音；续接片段本来就保留 |
 
-**先看一采，再决定放大。** `single` 就是 Dual 的一采：尺寸、默认 sigmas 与续接方式都相同。先用 `single` 生成（保存方式选 `new` 可保留每一版），比较后在多轨项目视频合并节点勾选要用的版本，再用 `dual` 并开启 `use_saved_1st_pass`：每段使用中的版本会以生成时的种子放大并二采，结果另存为新版本。Dual 版本也能从它自己的一采重新放大，例如换一组二采设置。若某段没有编辑器尺寸的一采、一采之后改过内容、时间或一采阶段的 Segment LoRA，或它续接的前一段还没有二采，会在采样前报错；请按时间轴顺序放大，或在同一次运行中一起放大。二采的设置、模型与 LoRA 可以随意更改。
+**先看一采，再决定放大。** `single` 就是 Dual 的一采：尺寸、默认 sigmas 与续接方式都相同。先用 `single` 生成（保存方式选 `new` 可保留每一版），比较后在多轨项目视频合并节点勾选要用的版本，再用 `dual` 并开启 `use_saved_1st_pass`：每段使用中的版本会以生成时的种子放大并二采，结果另存为新版本。Dual 版本也能从它自己的一采重新放大，例如换一组二采设置。若某段没有编辑器尺寸的一采、一采之后改过内容或时间，或它续接的前一段还没有二采，会在采样前报错；请按时间轴顺序放大，或在同一次运行中一起放大。二采的设置、模型与 LoRA 可以随意更改；一采的也可以：放大的是已存的一采，新版本记下它当初用的 Segment LoRA，改过的一采阶段 LoRA 留给下一次 `single` 预览。
 
 对齐使用 Python `round`，与 [H3 潜空间放大节点](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py) 一致，并非固定向上对齐；恰好居中时取偶数。例如 `1344 × 768`、倍率 `1.250`，相乘后为 `1680 × 960`，二采对齐尺寸为 **`1664 × 960`**。两条放大路径采用相同尺寸，项目记录与合并导出也保留实际输出尺寸。单采样保持编辑器尺寸；纯音频项目（`32 × 32`）不放大。ComfyUI 只保存当前模式的参数，重新载入后切换到其他模式会从默认值开始。这些参数移入 `sampling_mode` 之前保存的工作流，请检查 Project 参数后重新保存。
 
@@ -267,7 +267,7 @@ H3 Project 将完整原生 AV latent 与交付视频分别保存，使用 39 帧
 | `segment_start_number` | 从第几段开始，**从 1 计数**；与多轨任务输出从 0 开始的 `task_index` 不同 |
 | `segment_count` | 本轮最多生成多少段；`-1` 表示从起始段处理到末尾 |
 | `project_save = new` | 在同一项目下保留既有结果，为重生成片段新增版本，便于后续对比 |
-| `project_save = override` | 与 `new` 一样追加可恢复版本；名称保留以兼容已有工作流，不再清除后续结果 |
+| `project_save = override` | 取代重生成片段目前的版本：新版本存好后，删除旧版本的文件 |
 
 例如只重做第 3 段，可设 `segment_start_number = 3`、`segment_count = 1`；想保留旧结果对比，再选 `project_save = new`。若第 3 段为上下文模式，需要项目里有第 2 段兼容的上下文。确认第 3 段的新版本后，依赖它的后续上下文片段也应重新生成。
 

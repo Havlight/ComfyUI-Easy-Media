@@ -34,14 +34,14 @@ After installing, open ComfyUI and find the bundled example workflows in the **T
 
 ### 🤖 Generate MultiTrack Workflows with a Skill
 
-The package includes the `easy-media-multitrack-workflow` Skill. Give Codex your assets and requirements in natural language to create a workflow from the bundled template or modify an existing one, automatically configuring the timeline, prompts, continuity modes, and sampling settings.
+The package includes the `easy-media-multitrack-workflow` Skill for coding agents such as Codex and Claude Code. Describe the video and give your assets in natural language: the agent writes the tasks, prompts, reference media, timeline tracks and segment LoRAs into the workflow tab open in ComfyUI (unsaved edits included), runs it when you ask, waits for the results and keeps project records. It can also patch workflow files.
 
 ```text
-Use $easy-media-multitrack-workflow to create three 5-second tasks from these reference images and prompts.
-Use Shot for the first segment and Context for the next two, then generate a new workflow JSON.
+Use $easy-media-multitrack-workflow on the open tab "MV": three 5-second tasks from these reference images,
+a Shot followed by two Context Drift tasks, then run it.
 ```
 
-By default, the Skill only generates JSON. When explicitly asked to run the workflow, it can upload assets and submit it to ComfyUI. See the [Skill documentation](./skills/easy-media-multitrack-workflow/README.md) for installation and detailed usage.
+The agent changes the tab like a person's edit, without saving it. It runs only when asked, and changes Project and Editor settings (sampling, save mode, seed, resolution) only when asked. See the [Skill documentation](./skills/easy-media-multitrack-workflow/README.md) for installation and detailed usage.
 
 ## ✨ Features
 
@@ -202,7 +202,7 @@ If an older workflow connects directly to the editor's media outputs, insert `Mu
 | `use_saved_1st_pass` | Dual option: upscale each task's saved first pass instead of sampling it again (see below) |
 | `keep_1st_pass_audio` | Dual option: keep the first pass's audio through the second pass in shot segments too; context segments always keep it |
 
-**Preview first, upscale later.** A `single` run is a Dual first pass: same size, same default sigmas and the same continuation. Run tasks with `single` (save mode `new` keeps every take), compare the takes, and select the one to keep in MultiTrack Project Video Combine. Then run `dual` with `use_saved_1st_pass`: each task's active version is upscaled and refined with the seed it was made with, and the result is saved as a new version. A Dual version can be upscaled again from its own first pass, for example with other second-pass settings. The run stops before sampling when a task has no first pass at the editor size, its content, timing or first-stage Segment LoRAs changed since, or the task it continues from has no second pass yet; upscale tasks in timeline order, or several in one run. Second-pass settings, models and LoRAs may change freely.
+**Preview first, upscale later.** A `single` run is a Dual first pass: same size, same default sigmas and the same continuation. Run tasks with `single` (save mode `new` keeps every take), compare the takes, and select the one to keep in MultiTrack Project Video Combine. Then run `dual` with `use_saved_1st_pass`: each task's active version is upscaled and refined with the seed it was made with, and the result is saved as a new version. A Dual version can be upscaled again from its own first pass, for example with other second-pass settings. The run stops before sampling when a task has no first pass at the editor size, its content or timing changed since, or the task it continues from has no second pass yet; upscale tasks in timeline order, or several in one run. Second-pass settings, models and LoRAs may change freely, and so may first-pass ones: the saved first pass is upscaled as it is, the new version records the Segment LoRAs it was made with, and changed first-stage LoRAs apply to the next `single` preview.
 
 Alignment uses Python `round`, matching [the H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py); it is not always upward, and exact ties round to the even integer. For example, `1344 × 768` at `1.250` becomes `1680 × 960` before alignment and **`1664 × 960`** for the second pass. Both upscaling paths use this size, and project records and combined exports retain the resulting dimensions. Single-pass generation keeps the editor dimensions; audio-only projects (`32 × 32`) do not upscale. ComfyUI saves only the selected mode's settings, so after a reload, switching to another mode starts from its defaults. Workflows saved before these settings moved under `sampling_mode` should have their Project settings checked and saved again.
 
@@ -267,7 +267,7 @@ Old MP4s remain usable in Video Combine. Old context-only artifacts may not sati
 | `segment_start_number` | Starting segment, **counting from 1**, unlike the zero-based `task_index` in MultiTrack Task Output |
 | `segment_count` | Maximum segments to generate in this run; `-1` processes all remaining segments from the start |
 | `project_save = new` | Preserves existing results in the same project and adds versions for regenerated segments, allowing comparison |
-| `project_save = override` | Adds a recoverable generation, just like `new`; the name is retained for saved-workflow compatibility, and no longer clears later results |
+| `project_save = override` | Replaces the regenerated segment's current version: the new version is saved first, then the old version's files are deleted |
 
 For example, to regenerate only segment 3, set `segment_start_number = 3` and `segment_count = 1`. Choose `project_save = new` to retain the old result for comparison. If segment 3 uses Context, the project must contain compatible context from segment 2. After accepting the new segment 3, regenerate any later Context segments that depend on it.
 

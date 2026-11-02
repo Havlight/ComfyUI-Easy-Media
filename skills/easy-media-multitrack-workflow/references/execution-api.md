@@ -72,10 +72,11 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 `POST /easy-media/workflow/convert` 让页面用 Editor 的导入逻辑把 H3 规划转换成 track data，不开分页、不改画布：
 
 ```json
-{ "track_data": { "tracks": [] }, "format": "MiniMax", "plan": { "version": 1, "tasks": [] }, "request_id": "...", "client_id": "..." }
+{ "track_data": { "tracks": [] }, "format": "MiniMax", "plan": { "version": 1, "tasks": [] },
+  "tab": "workflows/MV.json", "editor_id": 14, "request_id": "...", "client_id": "..." }
 ```
 
-状态查询同上；完成时 `status` 为 `converted`，`conversion` 含 `track_data`（有错误时为 null）、`errors`、`warnings`、`tasks`、`tracks`。转换没有副作用，页面 120 秒内没完成时直接 `failed`，可以重试。一般用 `scripts/plan_workflow.py apply`，见 [automation.md](automation.md)。
+`tab` 与 `editor_id` 要一起给（可都省略）：页面读那个分页里这个 Editor 所接 Project 的 H3 Segment LoRA 节点，规划的 `loras` 取代它的规则。状态查询同上；完成时 `status` 为 `converted`，`conversion` 含 `track_data`（有错误时为 null）、`errors`、`warnings`、`tasks`、`tracks`；有 LoRA 节点时另有 `segment_loras`：`rules`（导入后的规则，LoRA 节点的格式）、`changed`（跟节点现有的规则不同）、`rows`（每条规则的变更）。转换没有副作用，页面 120 秒内没完成时直接 `failed`，可以重试。一般用 `scripts/plan_workflow.py apply`，见 [automation.md](automation.md)。
 
 ### 读取与修改分页
 
@@ -94,13 +95,24 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
   "tab": "workflows/MV.json",
   "changes": {
     "editor_id": 14, "track_data": { "tracks": [] },
-    "project_id": 15, "project": { "project_name": "mv", "segment_start_number": 1, "segment_count": -1 }
+    "editor": [["resolution", "width x height (custom)"], ["resolution.width", 1024]],
+    "project_id": 15, "project": [["project_name", "mv"], ["segment_start_number", 1], ["segment_count", -1],
+                                  ["sampling_mode", "dual"], ["sampling_mode.upscale_by", 1.5]]
   },
   "queue": false
 }
 ```
 
-页面切到该分页；已存但没打开的工作流先照侧边栏的方式打开（跟文件连结，存档写回原文件），结果附 `opened: true`。`changes` 设定 Editor 的 track data 与 Project 的这三个字段，像人的一次编辑（可 undo、标示未存档），完成时 `applied`。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
+页面切到该分页；已存但没打开的工作流先照侧边栏的方式打开（跟文件连结，存档写回原文件），结果附 `opened: true`。`changes` 依序设定 Editor 的设置（`editor`，可省略）、track data、Project 的设置（`project`）与 LoRA 规则（`segment_loras`，转换结果的 `rules`，可省略；写进这个 Editor 所接 Project 的 H3 Segment LoRA 节点，找不到或不能写时整个请求 `failed`），像人的一次编辑（可 undo、标示未存档），完成时 `applied`。设置是 `[名称, 值]` 的列表，按顺序设：选项底下的设置要排在选项之后，页面选了选项才有那些设置。先用下面的 `/easy-media/workflow/settings` 检查并排好顺序；页面上没有的设置会让整个请求 `failed`。`queue: true` 接着原生入队，完成时 `queued` 并附 `prompt_id`。最后切回原本在前景的分页。只改不运行的请求 120 秒没完成时 `failed`，可以重试；有入队的同 `submit`，会变成 `unknown`。
+
+`POST /easy-media/workflow/settings` 照 ComfyUI 的节点定义检查一个节点的设置，不经过页面：
+
+```json
+{ "node": { "id": 15, "type": "easy multitrackProject", "widgets_values_named": {}, "inputs": [] },
+  "changes": { "sampling_mode.upscale_by": "1.5", "sampling_mode": "dual" } }
+```
+
+`node` 是工作流里的节点（要有 `widgets_values_named`，读分页拿到的工作流都有）。返回 `changes`（检查过、转成设置类型的值，选项排在它底下的设置之前）、`settings`（改完后的全部设置，不含插槽、track data 与前端自己的 widget）、`widgets_values_named` 与 `widgets_values`（改完后的 widget 值，供写回工作流文件）。名称不存在、选项不对、超出范围、不是步进的倍数或由连线提供时返回 400 与 `error`。`changes` 省略时只读出 `settings`。
 
 ### 专案版本
 
@@ -109,6 +121,8 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 `PATCH /easy-media/project/video` 切换段落使用中的版本：`{"project_name", "segment_index", "version"}`（`segment_index` 从 0 起；Project Video Combine 节点改送 `file_path`）。会更新依赖关系并通知打开着的 Project 节点重新载入。
 
 ### 专案纪录
+
+`GET /easy-media/agent/loras` 读所有专案共用的 LoRA 说明档 `output/easy_media/loras.md`：`text`（还没有时为 null）、`documented`（说明档 `## 文件名` 标题写到的 LoRA，`installed` 与 LoRA Manager 的 `lora_manager` 字段）、`installed_count`；加 `?find=关键字` 另有 `found`（文件名含每个词的已安装 LoRA）。`POST /easy-media/agent/loras`（`{"text"}`）取代说明档，最大 1 MB。
 
 `GET /easy-media/agent/records?project=名称` 列出 `output/easy_media/agent/<名称>/` 的文件；加 `&path=README.md` 读一个文件（不存在时 `text` 为 null）。`POST /easy-media/agent/records`（`{"project", "path", "text"}`）写入一个文件。`path` 只能是 `README.md`、`history.json` 或 `plans/<名称>.json`，最大 4 MB。
 
@@ -127,5 +141,5 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 
 - 工作流通过 dry-run、write 后 inspect 和不变量检查。
 - 分辨率与 DynamicCombo 子字段一致；目标 task 范围、`project_save`、sampling 符合用户要求。
-- `audio_locked` 唯一且覆盖目标任务；`shared_reference` 指向预期的公用图片、音频或视频。
+- 音频轨、视频轨各最多一条 `audio_locked`；要跟歌曲或原片同步的任务落在锁定的片段里（锁定轨不必盖满每个任务，没盖到的任务不锁定）；`shared_reference` 指向预期的公用图片、音频或视频。
 - 媒体路径存在于当前 ComfyUI 实例；要修改的分页是用户指定的。
