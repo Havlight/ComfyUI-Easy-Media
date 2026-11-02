@@ -469,6 +469,7 @@ def test_project_sampling_mode_writes_its_option_widgets(patch_workflow_module):
     result, report = patch_workflow_module.apply_plan(
         _template_workflow(),
         {"project": {"sampling_mode": {"sampling_mode": "dual", "upscale_by": 1.5,
+                                       "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
                                        "enabled_tiling": True, "tile_count": 4}}},
     )
 
@@ -513,8 +514,9 @@ def test_project_sampling_mode_keeps_saved_options_and_later_widgets(patch_workf
 @pytest.mark.parametrize("plan, error", [
     ({"sampling_mode": "triple"}, "sampling_mode must be one of"),
     ({"sampling_mode": {"sampling_mode": "single", "upscale_by": 2}}, "does not use fields"),
-    ({"sampling_mode": {"sampling_mode": "dual", "upscale_by": 9}}, "upscale_by must be a number"),
-    ({"sampling_mode": {"sampling_mode": "dual", "tile_count": 3}}, "needs enabled_tiling true"),
+    ({"sampling_mode": "dual"}, "needs sampling_mode.upscale_model"),
+    ({"sampling_mode": {"sampling_mode": "dual", "upscale_model": "None", "upscale_by": 9}}, "upscale_by must be a number"),
+    ({"sampling_mode": {"sampling_mode": "dual", "upscale_model": "None", "tile_count": 3}}, "needs enabled_tiling true"),
 ])
 def test_project_sampling_mode_rejects_invalid_settings(patch_workflow_module, plan, error):
     with pytest.raises(patch_workflow_module.WorkflowError, match=error):

@@ -291,7 +291,7 @@ custom 示例：
 - `segment_start_number` 为从 1 开始的任务片段编号；执行逻辑使用 `segment_start_number - 1` 转换为内部索引。
 - `segment_count = -1` 表示从起始索引处理到末尾；非负数限制本次任务片段数量。
 - `project_save`: `new` 或 `override`。`new` 为重跑的片段另存新版本，旧版本保留；`override` 让重跑的片段取代它目前的版本，旧版本的文件在新版本存好后删除。由用户决定；要改成 `override` 前向用户清楚说明。
-- `sampling_mode` 是 DynamicCombo：`single`、`dual`、`selflift`、`passthrough`，选中模式的参数紧跟在它后面。`dual` 有 `use_saved_1st_pass`、`upscale_by`、`upscale_model`、`keep_1st_pass_audio`、`disable_2nd_noise`、`enabled_tiling`（为 true 时再加 `tile_count`）；`selflift` 有 `transition_ratio`、`lowres_scale`、`upscale_model`、`enabled_tiling`。补丁可只写模式名，或写对象只改其中几项；同一模式没写的项保留原值，换模式时没写的项用默认值（`dual` 的 `upscale_model` 默认 `minimax_h3_latent_upscaler_3d_fp16.safetensors`）。`patch_workflow.py` 会按模式重建这些 widget，不要手工假设数组下标。`sampling_plan` 必须是当前节点可用预设，不要仅凭另一份流程中的值假设当前环境支持。
+- `sampling_mode` 是 DynamicCombo：`single`、`dual`、`selflift`、`passthrough`，选中模式的参数紧跟在它后面。`dual` 有 `use_saved_1st_pass`、`upscale_by`、`upscale_model`、`keep_1st_pass_audio`、`disable_2nd_noise`、`enabled_tiling`（为 true 时再加 `tile_count`）；`selflift` 有 `transition_ratio`、`lowres_scale`、`upscale_model`、`enabled_tiling`。补丁可只写模式名，或写对象只改其中几项；同一模式没写的项保留原值，换模式时没写的项用默认值；换到 `dual` 时必须写 `upscale_model`：本机 ComfyUI 装的潜空间放大模型文件名（不确定就问用户），或 `None` 改用像素放大（需开 `allow_vae_fallback`）。`patch_workflow.py` 会按模式重建这些 widget，不要手工假设数组下标。`sampling_plan` 必须是当前节点可用预设，不要仅凭另一份流程中的值假设当前环境支持。
 - 编辑器分辨率是一采尺寸；`dual` 不会反算缩小一采。二采宽高分别为 `round(编辑器尺寸 * upscale_by / 32) * 32`，采用 Python `round` 就近对齐，恰好居中时取偶数，不是固定向上对齐。
 - `upscale_by` 是 `dual` 的参数，默认 `1.250`，三位小数，步长 `0.001`。两条放大路径及合并导出均使用放大并对齐后的尺寸。例如 `1344 × 768`、倍率 `1.250` 的二采为 `1664 × 960`。若用户指定最终输出尺寸，应同时核对编辑器尺寸与倍率，不能将编辑器尺寸直接当作双采样的最终尺寸。
 - 单采样保持编辑器尺寸；`upscale_by = 1.000` 不放大但可二采；纯音频项目（`32 × 32`）不放大。旧版反算缩小尺寸的一采检查点和上下文潜空间应重新生成后再按新规则续跑。

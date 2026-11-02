@@ -28,11 +28,11 @@ PROJECT_WIDGETS = {
     "sampling_mode": 7,
 }
 # The selected sampling_mode's widgets follow it in widgets_values, in this order.
-# enabled_tiling "true" is followed by tile_count.
-H3_LATENT_UPSCALER = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+# enabled_tiling "true" is followed by tile_count. Dual's upscale_model has no default here:
+# the node picks the installed upscaler, whose file name differs between machines.
 SAMPLING_MODE_WIDGETS: dict[str, list[tuple[str, Any]]] = {
     "single": [],
-    "dual": [("use_saved_1st_pass", False), ("upscale_by", 1.25), ("upscale_model", H3_LATENT_UPSCALER),
+    "dual": [("use_saved_1st_pass", False), ("upscale_by", 1.25), ("upscale_model", None),
              ("keep_1st_pass_audio", False), ("disable_2nd_noise", False), ("enabled_tiling", False)],
     "selflift": [("transition_ratio", 0.6), ("lowres_scale", 0.6),
                  ("upscale_model", "None"), ("enabled_tiling", False)],
@@ -564,6 +564,9 @@ def sampling_mode_patch(value: Any, current: dict[str, Any]) -> dict[str, Any]:
     if unused:
         raise WorkflowError(f"sampling_mode {mode!r} does not use fields: {unused}")
     saved = current if current["sampling_mode"] == mode else {}
+    if mode == "dual" and "upscale_model" not in patch and "upscale_model" not in saved:
+        raise WorkflowError("Switching to dual needs sampling_mode.upscale_model: the latent upscaler file "
+                            "installed in ComfyUI, or None to upscale pixels (needs allow_vae_fallback)")
     result: dict[str, Any] = {"sampling_mode": mode}
     for name, default in SAMPLING_MODE_WIDGETS[mode]:
         result[name] = patch.get(name, saved.get(name, default))
