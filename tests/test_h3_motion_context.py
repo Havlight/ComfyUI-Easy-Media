@@ -243,28 +243,6 @@ def test_h3_anchor_falls_back_to_last_two_context_video_tokens():
     assert torch.equal(anchor["samples"], context["samples"][0][:, :, -2:])
 
 
-def test_context_swap_noise_is_disposable_deterministic_and_video_only(
-    nested_tensor_module,
-):
-    context = _av_latent()
-    original_video, original_audio = context["samples"]
-    original_video = original_video.clone()
-    original_audio = original_audio.clone()
-
-    first = core.apply_context_swap_noise(context, context_length="5", seed=42)
-    second = core.apply_context_swap_noise(context, context_length="5", seed=42)
-    first_video, first_audio = first["samples"].tensors
-    second_video, second_audio = second["samples"].tensors
-
-    assert torch.equal(context["samples"][0], original_video)
-    assert torch.equal(context["samples"][1], original_audio)
-    assert torch.equal(first_video[:, :, :5], original_video[:, :, :5])
-    assert not torch.equal(first_video[:, :, 5:], original_video[:, :, 5:])
-    assert torch.equal(first_video, second_video)
-    assert torch.equal(first_audio, original_audio)
-    assert torch.equal(second_audio, original_audio)
-
-
 def test_context_swap_dynamic_mask_tracks_selflift_stage_resolution():
     state = drift_control_av._DriftControlMaskState(
         (1, 24, 7, 8, 10),

@@ -7,3 +7,6 @@ BIGMODEL_API_KEY:
 RUNNINGHUB_API_KEY:
 # Set ComfyUI url for skill
 COMFYUI_URL:
+# Let skill agents look at frames of generated videos to judge their own runs.
+# Each video costs about one image of tokens; leave off for models that cannot see images.
+AGENT_FRAME_REVIEW: false

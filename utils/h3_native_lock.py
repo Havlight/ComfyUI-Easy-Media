@@ -114,3 +114,11 @@ def lock_native_audio(latent: dict[str, Any], metadata: dict[str, Any], audio: d
     audio_mask = torch.where(selected, torch.zeros_like(audio_mask), audio_mask)
     return {**latent, 'samples': _official_nested_tensor((video, samples)),
             'noise_mask': _official_nested_tensor((video_mask, audio_mask))}
+
+
+def freeze_native_audio(latent: dict[str, Any]) -> dict[str, Any]:
+    """Mask all audio out of sampling so the sampler returns it unchanged."""
+    video, audio = _streams_from_latent(latent)
+    video_mask, _ = _noise_mask_streams(latent)
+    video_mask = torch.ones_like(video) if video_mask is None else video_mask
+    return {**latent, 'noise_mask': _official_nested_tensor((video_mask, torch.zeros_like(audio)))}

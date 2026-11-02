@@ -134,14 +134,15 @@ def test_output_trim_uses_global_audio_clock_and_keeps_raw_source():
 
 def _fields(plans):
     return {"project_name": "test", "width": 64, "height": 64, "fps": 24,
-            "h3_native": {"version": 1, "allow_vae_fallback": False},
+            "h3_native": {"version": 2},
             "task_segments": [p.as_dict() for p in plans]}
 
 
 def _commit(directory, latent, plans, index=0, **kwargs):
     return artifacts.commit_native_generation(directory, index, _fields(plans),
                                                {"continuity_mode": plans[index].continuity_mode},
-                                               {"high": latent}, kwargs.get("media", {}))
+                                               {"high": latent}, kwargs.get("media", {}),
+                                               replace=kwargs.get("replace", False))
 
 
 def test_failed_generation_preserves_active_manifest_and_artifacts(tmp_path, monkeypatch):
@@ -193,6 +194,49 @@ def test_parent_replacement_marks_descendants_stale_but_preserves_versions(tmp_p
     manifest["segments"]["0"]["active_generation"] = 0
     artifacts.refresh_native_dependencies(manifest)
     artifacts.find_native_generation(manifest, "b")
+
+
+def test_project_versions_say_what_each_version_continued_from(tmp_path):
+    status = importlib.import_module("native_artifact_unit.utils.h3_native_status")
+    first_plan, second_plan = _plan(), _plan("b", 243, 238, "a")
+    first = _latent(first_plan)
+    _commit(tmp_path, first, [first_plan, second_plan])
+    _commit(tmp_path, _latent(second_plan, first["h3_native"]), [first_plan, second_plan], 1)
+    _commit(tmp_path, _latent(first_plan), [first_plan, second_plan])
+
+    summary = status.native_project_versions(artifacts.read_native_manifest(tmp_path))
+
+    assert [(task["number"], task["task"], task["active"]) for task in summary["tasks"]] == [(1, "a", 2), (2, "b", 1)]
+    assert [version["version"] for version in summary["tasks"][0]["versions"]] == [0, 2]
+    [continued] = summary["tasks"][1]["versions"]
+    # b still follows the a it was made from, which is no longer active.
+    assert continued["continued_from"] == "a@0" and continued["stale"] is True
+    assert summary["detached"] == []
+
+
+def test_override_replaces_only_the_active_version_and_its_files(tmp_path):
+    plan = _plan()
+    for _ in range(2):
+        _commit(tmp_path, _latent(plan), [plan])
+    _commit(tmp_path, _latent(plan), [plan], replace=True)
+    segment = artifacts.read_native_manifest(tmp_path)["segments"]["0"]
+    assert sorted(segment["generations"]) == ["0", "2"] and segment["active_generation"] == 2
+    assert not (tmp_path / "context_latent_0_1.safetensors").exists()
+    assert (tmp_path / "context_latent_0_0.safetensors").is_file()
+    assert (tmp_path / "context_latent_0_2.safetensors").is_file()
+
+
+def test_override_leaves_tasks_continued_from_the_old_version_stale(tmp_path):
+    first_plan, second_plan = _plan(), _plan("b", 243, 238, "a")
+    first = _latent(first_plan)
+    _commit(tmp_path, first, [first_plan, second_plan])
+    _commit(tmp_path, _latent(second_plan, first["h3_native"]), [first_plan, second_plan], 1)
+    _commit(tmp_path, _latent(first_plan), [first_plan, second_plan], replace=True)
+    manifest = artifacts.read_native_manifest(tmp_path)
+    assert list(manifest["segments"]["0"]["generations"]) == ["2"]
+    assert not (tmp_path / "context_latent_0_0.safetensors").exists()
+    with pytest.raises(timing.NativePlanError, match="STALE_SOURCE"):
+        artifacts.find_native_generation(manifest, "b")
 
 
 def test_project_write_lock_prevents_competing_generations(tmp_path):

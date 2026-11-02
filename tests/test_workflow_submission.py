@@ -40,6 +40,19 @@ def test_only_one_client_is_selected_automatically():
     assert register(store, "page-2") is None
 
 
+def test_a_reloaded_page_leaves_so_its_replacement_is_selected():
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    store.submit(payload())
+    # The reloaded page keeps the tab's socket ID; the old page says it is gone.
+    register(store, "page-2")
+    assert store.leave({"client_id": "page-1", "session_id": "other"}) == {"left": False}
+    assert store.leave({"client_id": "page-1", "session_id": "socket-1"}) == {"left": True}
+    assert [client["client_id"] for client in store.list_clients()] == ["page-2"]
+    assert store.get("request-1")["status"] == "failed"
+    assert store.submit(payload(request_id="request-2"))["client_id"] == "page-2"
+
+
 def test_disconnect_and_expired_heartbeat_are_not_selectable(monkeypatch):
     sockets = {"socket-1"}
     store = module.WorkflowSubmissions(lambda sid: sid in sockets)
@@ -51,8 +64,67 @@ def test_disconnect_and_expired_heartbeat_are_not_selectable(monkeypatch):
     sockets.add("socket-1")
     register(store)
     now = module.time.time()
-    monkeypatch.setattr(module.time, "time", lambda: now + 31)
+    # A hidden tab may poll only once a minute; its connected WebSocket keeps it listed.
+    monkeypatch.setattr(module.time, "time", lambda: now + 90)
+    assert [client["client_id"] for client in store.list_clients()] == ["page-1"]
+    monkeypatch.setattr(module.time, "time", lambda: now + module.HEARTBEAT_SECONDS + 1)
     assert store.list_clients() == []
+
+
+def plan_payload(**kwargs):
+    return {"request_id": "plan-1", "track_data": {"tracks": [], "frame_rate": 24}, "format": "MiniMax",
+            "plan": {"version": 1, "tasks": []}, **kwargs}
+
+
+def test_a_job_wakes_only_the_page_it_is_for():
+    woken = []
+    store = module.WorkflowSubmissions(lambda _: True, lambda session, data: woken.append((session, data)))
+    register(store, "page-1", "socket-1")
+    register(store, "page-2", "socket-2")
+    store.submit(payload(client_id="page-2"))
+    store.submit_plan(plan_payload(client_id="page-1"))
+    assert woken == [("socket-2", {"request_id": "request-1"}), ("socket-1", {"request_id": "plan-1"})]
+
+
+def test_plan_conversions_return_track_data_and_fail_safely(monkeypatch):
+    now = module.time.time()
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    store = module.WorkflowSubmissions(lambda _: True, lambda *_: (_ for _ in ()).throw(RuntimeError("socket gone")))
+    register(store)
+    # A failed wake-up still leaves the job for the page's own polling.
+    assert store.submit_plan(plan_payload())["status"] == "pending"
+    job = register(store)
+    assert job["kind"] == "plan" and job["plan"] == plan_payload()["plan"] and "workflow" not in job
+    assert "plan" not in store.get("plan-1")
+    with pytest.raises(ValueError):
+        store.complete("plan-1", {"claim_token": job["claim_token"], "status": "queued", "prompt_id": "p"})
+    conversion = {"track_data": {"tracks": []}, "issues": []}
+    result = store.complete("plan-1", {"claim_token": job["claim_token"], "status": "converted", "conversion": conversion})
+    assert result["conversion"] == conversion
+    # A conversion the page never finishes fails instead of blocking the page as unknown.
+    store.submit_plan(plan_payload(request_id="plan-2"))
+    register(store)
+    now += 121
+    assert store.get("plan-2")["status"] == "failed"
+    assert store.submit(payload())["status"] == "pending"
+
+
+def test_a_plan_for_a_tab_names_its_editor_for_the_lora_rules():
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    store.submit_plan(plan_payload(tab="workflows/mv.json", editor_id=14))
+    job = register(store)
+    assert (job["tab"], job["editor_id"]) == ("workflows/mv.json", 14)
+
+
+@pytest.mark.parametrize("change", [{"track_data": {"tracks": {}}}, {"plan": []}, {"format": ""},
+                                    {"tab": "workflows/mv.json"}, {"editor_id": 14}, {"tab": "mv", "editor_id": True}])
+def test_invalid_plan_conversions_do_not_create_jobs(change):
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    with pytest.raises(ValueError):
+        store.submit_plan(plan_payload(**change))
+    assert not store.jobs
 
 
 def test_idempotency_survives_claim_and_result():
@@ -96,10 +168,79 @@ def test_timeout_never_redelivers_and_late_result_can_resolve_unknown(monkeypatc
     assert store.get("second")["status"] == "failed"
 
 
+def apply_payload(**kwargs):
+    return {"request_id": "apply-1", "tab": "workflows/mv.json", "queue": False,
+            "changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
+                        "project": [["project_name", "mv"], ["segment_start_number", 2], ["segment_count", -1]]},
+            **kwargs}
+
+
+def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
+    now = module.time.time()
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    store.read_tabs({"request_id": "tabs-1"})
+    job = register(store)
+    assert job["kind"] == "tabs" and job["tab"] is None
+    tab = {"key": "workflows/mv.json", "workflow": {"nodes": []}, "plans": {}}
+    with pytest.raises(ValueError):
+        store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read"})
+    saved = [{"key": "workflows/mmh3/blank.json", "name": "blank"}]
+    result = store.complete("tabs-1", {"claim_token": job["claim_token"], "status": "read", "tabs": [], "saved": saved, "tab": tab})
+    assert result["tab"] == tab and result["saved"] == saved
+    store.apply(apply_payload())
+    job = register(store)
+    assert job["changes"]["project"][0] == ["project_name", "mv"] and "changes" not in store.get("apply-1")
+    # The page opened a saved workflow to change it.
+    result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied", "opened": True})
+    assert result["status"] == "applied" and result["opened"] is True
+    # Settings arrive checked and in the order to set them: a combo before its options.
+    upscale = [["sampling_mode", "dual"], ["sampling_mode.use_saved_1st_pass", True], ["sampling_mode.upscale_by", 1.5]]
+    resolution = [["resolution", "width x height (custom)"], ["resolution.width", 1024]]
+    loras = {"version": 1, "rules": [{"id": "r", "enabled": True, "lora": "a.safetensors", "start_segment": 1,
+                                      "segment_count": -1, "strength": 1.0, "stage": "all"}]}
+    store.apply(apply_payload(request_id="apply-upscale", changes={
+        **apply_payload()["changes"], "project": upscale, "editor": resolution, "segment_loras": loras}))
+    job = register(store)
+    assert (job["changes"]["project"], job["changes"]["editor"]) == (upscale, resolution)
+    assert job["changes"]["segment_loras"] == loras
+    store.complete("apply-upscale", {"claim_token": job["claim_token"], "status": "applied"})
+    # Changing a tab can be retried; running it might already have happened.
+    store.apply(apply_payload(request_id="apply-2"))
+    register(store)
+    now += 121
+    assert store.get("apply-2")["status"] == "failed"
+    store.apply(apply_payload(request_id="apply-3", queue=True, changes=None))
+    register(store)
+    now += 121
+    assert store.get("apply-3")["status"] == "unknown"
+
+
+@pytest.mark.parametrize("change", [
+    {"tab": ""}, {"tab": None}, {"queue": "yes"}, {"changes": None},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": {}}}},
+    {"changes": {"editor_id": True, "track_data": {"tracks": []}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": [["project_name", "mv"]]}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"seed": 1}, "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": [["seed"]], "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": [["seed", [1]]], "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "editor": [["track_data", "{}"]]}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "segment_loras": {"rules": []}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "segment_loras": {"version": 1, "rules": ["x"]}}},
+])
+def test_invalid_tab_applies_do_not_create_jobs(change):
+    store = module.WorkflowSubmissions(lambda _: True)
+    register(store)
+    with pytest.raises(ValueError):
+        store.apply(apply_payload(**change))
+    assert not store.jobs
+
+
 @pytest.mark.parametrize("change", [
     {"workflow": {"1": {"class_type": "Test", "inputs": {}}}},
     {"workflow": {"nodes": [1], "links": []}},
-    {"mode": "api"}, {"auto_queue": "false"}, {"name": "../workflow"},
+    {"auto_queue": "false"}, {"name": "../workflow"},
     {"request_id": "../escape"}, {"client_id": []},
 ])
 def test_invalid_submissions_do_not_create_jobs(change):
@@ -161,20 +302,20 @@ def test_skill_cli_submits_ui_json_and_can_query_without_resubmitting(tmp_path):
                     job = (await response.json())["job"]
                     if job:
                         assert job["workflow"] == payload()["workflow"]
-                        assert job["mode"] == "replace"
                         assert job["auto_queue"] is False
-                        await browser.post(f'/easy-media/workflow/submissions/{job["request_id"]}/result', json={"claim_token": job["claim_token"], "status": "loaded"})
+                        await browser.post(f'/easy-media/workflow/submissions/{job["request_id"]}/result',
+                                           json={"claim_token": job["claim_token"], "status": "loaded", "tab": "workflows/created-cli.json"})
                         return
                     await asyncio.sleep(0.01)
 
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(script), str(workflow_path), "--config", str(config_path),
-                "--no-queue", "--mode", "replace", "--request-id", "cli-request",
+                "--no-queue", "--request-id", "cli-request",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             (stdout, stderr), _ = await asyncio.wait_for(asyncio.gather(process.communicate(), receive()), timeout=10)
             assert process.returncode == 0
-            assert json.loads(stdout)["status"] == "loaded"
+            assert json.loads(stdout)["tab"] == "workflows/created-cli.json"
             assert b"request_id=cli-request" in stderr
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(script), "--url", base_url, "--status", "cli-request",

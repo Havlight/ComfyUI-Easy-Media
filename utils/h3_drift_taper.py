@@ -14,9 +14,7 @@ from typing import Any, NamedTuple
 
 from .h3_native_timing import NativePlanError
 
-DRIFT_MODES = frozenset({"context_drift", "context_swap"})
-# Former experimental mode that released every step with the schedule.
-MATCHED_DRIFT_ALIAS = "context_drift_matched"
+DRIFT_MODE = "context_drift"
 DRIFT_TAPER_MAX_STEPS = 12
 
 
@@ -40,20 +38,18 @@ def drift_taper(content: dict[str, Any] | None, segment_id: str = "") -> DriftTa
     """
     if not isinstance(content, dict) or content.get("task_mode") == "passthrough":
         return None
-    mode = content.get("continuity_mode")
-    if mode not in DRIFT_MODES and mode != MATCHED_DRIFT_ALIAS:
+    if content.get("continuity_mode") != DRIFT_MODE:
         return None
-    default = MATCHED_DRIFT_TAPER if mode == MATCHED_DRIFT_ALIAS else DEFAULT_DRIFT_TAPER
-    steps = content.get("drift_taper_steps", default.steps)
+    steps = content.get("drift_taper_steps", DEFAULT_DRIFT_TAPER.steps)
     if isinstance(steps, bool) or not isinstance(steps, int) or not 0 <= steps <= DRIFT_TAPER_MAX_STEPS:
         raise NativePlanError(
             "DRIFT_TAPER_VALUE", f"Drift taper steps must be a whole number from 0 to {DRIFT_TAPER_MAX_STEPS}.",
             segment_id)
-    floor = content.get("drift_taper_floor", default.floor)
+    floor = content.get("drift_taper_floor", DEFAULT_DRIFT_TAPER.floor)
     if (isinstance(floor, bool) or not isinstance(floor, (int, float))
             or not math.isfinite(floor) or not 0.0 <= floor <= 1.0):
         raise NativePlanError("DRIFT_TAPER_VALUE", "Drift taper floor must be a number from 0 to 1.", segment_id)
-    low_only = content.get("drift_taper_low_only", default.low_only)
+    low_only = content.get("drift_taper_low_only", DEFAULT_DRIFT_TAPER.low_only)
     if not isinstance(low_only, bool):
         raise NativePlanError("DRIFT_TAPER_VALUE", "Drift taper low_only must be true or false.", segment_id)
     if steps == 0 or floor == 1.0:

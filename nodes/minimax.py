@@ -51,7 +51,6 @@ from ..utils.minimax import (
     h3_phase_aligned_video_suffix,
     remove_output_files_by_prefix,
 )
-from ..utils.prompt_override import build_minimax_prompt_override_json
 from ..utils.video import stage_passthrough_video_media
 
 
@@ -68,145 +67,6 @@ MAX_REF_AUDIOS = 3
 REFERENCE_BRIDGE_NODE_ID = "easy MiniMaxH3ReferenceToVideoBridge"
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 MULTITRACK_PROJECT_REFRESH_EVENT = "easy_multitrack_project_refresh"
-
-
-class EasyMinimaxPromptOverride(io.ComfyNode):
-    """Assemble MiniMax H3 per-segment prompt override JSON."""
-
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(
-            node_id="easy minimaxPromptOverride",
-            display_name="MiniMax Prompt Override",
-            category=CATEGORY_MINIMAX,
-            description=(
-                "Assemble per-segment MiniMax H3 prompts, durations, generation "
-                "types, continuity modes, and track locks into a prompt_override "
-                "JSON string."
-            ),
-            inputs=[
-                io.String.Input(
-                    "system_prompt",
-                    optional=True,
-                    force_input=True,
-                    multiline=True,
-                    tooltip=(
-                        "Optional system prompt. When non-empty, this value is "
-                        "written into every task segment's system_prompt in the "
-                        "resulting TRACKS_INFO."
-                    ),
-                ),
-                io.Autogrow.Input(
-                    "prompts",
-                    template=io.Autogrow.TemplatePrefix(
-                        input=io.String.Input(
-                            "prompt",
-                            multiline=True,
-                            dynamic_prompts=True,
-                        ),
-                        prefix="prompt_",
-                        min=1,
-                        max=100,
-                    ),
-                    tooltip=(
-                        "One prompt per MiniMax H3 clip. Use @图片N/@音频N/@视频N "
-                        "or <Picture N>/<Audio N>/<Video N> to reference media slots."
-                    ),
-                ),
-                io.String.Input(
-                    "duration",
-                    default="10",
-                    tooltip=(
-                        "Seconds per clip. A single value like 10 applies to every "
-                        "clip; comma-separated values like 10,5,10 assign seconds "
-                        "in order, and missing values reuse the last value. Each "
-                        "value must be between 2 and 15 seconds."
-                    ),
-                ),
-                io.String.Input(
-                    "generation_type",
-                    default="r2v",
-                    tooltip=(
-                        "Generation type per clip. Supported values are r2v, i2v, "
-                        "and l2v; a single value applies to every clip, while "
-                        "comma-separated values like r2v,i2v,r2v assign types in "
-                        "order and reuse the last value when fewer are provided."
-                    ),
-                ),
-                io.String.Input(
-                    "continuity_mode",
-                    default="shot",
-                    tooltip=(
-                        "Continuity mode per clip. Supported values are shot, "
-                        "context, and context_drift (legacy context_swap); a single value "
-                        "applies to every "
-                        "clip, while comma-separated values like shot,context,context "
-                        "assign modes in order and reuse the last value when fewer "
-                        "are provided."
-                    ),
-                ),
-                io.Int.Input(
-                    "video_track_lock",
-                    default=0,
-                    min=0,
-                    max=3,
-                    step=1,
-                    tooltip=(
-                        "1-based index of the video track to lock; 0 disables "
-                        "video track locking."
-                    ),
-                ),
-                io.Int.Input(
-                    "audio_track_lock",
-                    default=0,
-                    min=0,
-                    max=3,
-                    step=1,
-                    tooltip=(
-                        "1-based index of the audio track to lock; 0 disables "
-                        "audio track locking."
-                    ),
-                ),
-            ],
-            outputs=[io.AnyType.Output("prompt_override")],
-        )
-
-    @classmethod
-    def execute(
-        cls,
-        prompts: io.Autogrow.Type,
-        duration: str = "10",
-        generation_type: str = "r2v",
-        continuity_mode: str = "shot",
-        system_prompt: str | None = None,
-        video_track_lock: int = 0,
-        audio_track_lock: int = 0,
-    ) -> io.NodeOutput:
-        prompt_values = [
-            value
-            for _key, value in sorted(
-                prompts.items(),
-                key=lambda item: _minimax_prompt_slot_index(item[0]),
-            )
-            if value is not None
-        ]
-        payload = build_minimax_prompt_override_json(
-            prompt_values,
-            str(duration),
-            str(generation_type),
-            str(continuity_mode),
-            system_prompt or "",
-            int(video_track_lock or 0),
-            int(audio_track_lock or 0),
-        )
-        return io.NodeOutput(payload)
-
-
-def _minimax_prompt_slot_index(name: str) -> int:
-    try:
-        return int(str(name).rsplit("_", 1)[1])
-    except (IndexError, ValueError):
-        return 0
 
 
 def _notify_multitrack_project_refresh(
@@ -727,6 +587,24 @@ class MiniMaxH3ReferenceToVideoFallback(io.ComfyNode):
         return io.NodeOutput(conditioning, latent)
 
 
+def _apply_video_soundtracks(grouped_inputs: dict[str, dict[str, Any]], flags: str) -> None:
+    """Keep each reference video's <Audio N> label as the reference plan numbered it."""
+    if not flags:
+        return
+    soundtracks = grouped_inputs["ref_video_audios"]
+    for index, flag in enumerate(str(flags).split(",")):
+        frames = grouped_inputs["ref_videos"].get(f"ref_video_{index}")
+        name = f"ref_video_audio_{index}"
+        if frames is None:
+            continue
+        if flag.strip() == "0":
+            soundtracks.pop(name, None)
+        elif name not in soundtracks:
+            sample_rate = 44100
+            samples = max(1, round(frames.shape[0] * sample_rate / FPS))
+            soundtracks[name] = {"waveform": torch.zeros(1, 2, samples), "sample_rate": sample_rate}
+
+
 class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
     """Call H3 reference conditioning without putting Autogrow in an expanded graph."""
 
@@ -757,6 +635,17 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
                     step=32,
                 ),
                 io.Int.Input("length", default=124, min=5, max=3600, step=17),
+                io.String.Input(
+                    "video_soundtracks",
+                    default="",
+                    optional=True,
+                    advanced=True,
+                    tooltip=(
+                        "Internal: one 1/0 per reference video. 1 gives the video an "
+                        "<Audio N> soundtrack, using silence when it has none; 0 drops "
+                        "it. Empty keeps whatever soundtrack each video has."
+                    ),
+                ),
                 io.Boolean.Input("native_locked_video", default=False, optional=True, advanced=True),
                 io.Int.Input(
                     "locked_video_timing_frames",
@@ -807,6 +696,7 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
         ref_image_size: str = "match",
         locked_video_timing_frames: int = 0,
         native_locked_video: bool = False,
+        video_soundtracks: str = "",
         **reference_inputs: Any,
     ) -> io.NodeOutput:
         grouped_inputs: dict[str, dict[str, Any]] = {
@@ -834,18 +724,20 @@ class EasyMiniMaxH3ReferenceToVideoBridge(io.ComfyNode):
 
         target_frame_count = _align_frame_count(max(5, int(length)))
         locked_timing_frames = int(locked_video_timing_frames)
+        # The locked video is always the first reference video; others are ordinary references.
         if native_locked_video:
-            for frames in grouped_inputs["ref_videos"].values():
-                if frames.shape[0] != locked_timing_frames or locked_timing_frames % 17 != 5:
-                    raise ValueError("H3 LOCK_VIDEO_RANGE: external video must cover the exact native raw window; it cannot be stretched or padded.")
+            frames = grouped_inputs["ref_videos"].get("ref_video_0")
+            if frames is None or frames.shape[0] != locked_timing_frames or locked_timing_frames % 17 != 5:
+                raise ValueError("H3 LOCK_VIDEO_RANGE: external video must cover the exact native raw window; it cannot be stretched or padded.")
         grouped_inputs["ref_videos"] = {
             name: (
                 _fit_reference_video_frames(frames, locked_timing_frames)
-                if locked_timing_frames > 0
+                if locked_timing_frames > 0 and name == "ref_video_0"
                 else _align_reference_video_frames(frames, target_frame_count)
             )
             for name, frames in grouped_inputs["ref_videos"].items()
         }
+        _apply_video_soundtracks(grouped_inputs, video_soundtracks)
 
         target = getattr(comfy_nodes, "NODE_CLASS_MAPPINGS", {}).get(
             "MiniMaxH3ReferenceToVideo",
@@ -976,7 +868,7 @@ class EasyMiniMaxH3MotionContextHard(io.ComfyNode):
 
 
 class EasyMiniMaxH3ContextSwap(io.ComfyNode):
-    """Use pure Drift-Control AV for context_swap without any context noise."""
+    """Use pure Drift-Control AV for Drift continuations without any context noise."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -985,7 +877,7 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
             display_name="Easy MiniMax H3 Context Swap Pure Drift-Control AV",
             category=CATEGORY_MINIMAX,
             description=(
-                "Internal context_swap continuation: copy the previous sampled "
+                "Internal Drift continuation: copy the previous sampled "
                 "H3 AV latent tail directly into the disposable target prefix, "
                 "keep the saved predecessor clean, and release the video prefix "
                 "with a sigma-matched dynamic denoise mask. No context noise or "
@@ -1000,17 +892,6 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
                     "context_length",
                     options=["22", "5", "39", "56"],
                     default="22",
-                ),
-                io.Int.Input(
-                    "seed",
-                    default=0,
-                    min=0,
-                    max=0xFFFFFFFFFFFFFFFF,
-                    control_after_generate=io.ControlAfterGenerate.fixed,
-                    tooltip=(
-                        "Retained only for graph compatibility with older context_swap "
-                        "patches. Pure Drift-Control ignores this value."
-                    ),
                 ),
                 io.Boolean.Input(
                     "continue_audio",
@@ -1071,13 +952,11 @@ class EasyMiniMaxH3ContextSwap(io.ComfyNode):
         context_latent: dict[str, Any],
         sigmas: Any,
         context_length: str = "22",
-        seed: int = 0,
         continue_audio: bool = True,
         freeze_audio: bool = False,
         seam_taper_steps: int = 4,
         seam_taper_floor: float = 0.0,
     ) -> io.NodeOutput:
-        _ = seed
         patched_model, prepared_latent, trim_frames = (
             apply_context_swap_drift_control(
                 model=model,
@@ -2480,7 +2359,7 @@ class EasyH3ProjectArtifact(io.ComfyNode):
                 TYPE_TRACKS_INFO.Input("tracks_info"),
                 io.Combo.Input(
                     "continuity_mode",
-                    options=["shot", "context", "context_drift", "context_swap"],
+                    options=["shot", "context", "context_drift"],
                     default="shot",
                 ),
                 io.Combo.Input(
@@ -2533,12 +2412,8 @@ class EasyH3ProjectArtifact(io.ComfyNode):
         if sampling_pass not in {"single", "first", "second"}:
             raise ValueError("sampling_pass must be 'single', 'first', or 'second'")
         continuity_mode = str(continuity_mode).lower()
-        if continuity_mode not in {"shot", "context", "context_drift", "context_swap"}:
-            raise ValueError(
-                "continuity_mode must be 'shot', 'context', 'context_drift', or 'context_swap'"
-            )
-        if continuity_mode == "context_swap":
-            continuity_mode = "context_drift"
+        if continuity_mode not in {"shot", "context", "context_drift"}:
+            raise ValueError("continuity_mode must be 'shot', 'context', or 'context_drift'")
         generation = choose_h3_generation(
             project_dir,
             int(segment_index),
@@ -2565,19 +2440,6 @@ class EasyH3ProjectArtifact(io.ComfyNode):
             for old_media in project_dir.glob(f"{media_prefix}_{int(segment_index)}_{generation}.*"):
                 if old_media != target_media:
                     old_media.unlink()
-
-        # Media embeds the original locked audio. Remove the legacy sidecar
-        # only when replacing its generation; other saved versions still use it.
-        stale_locked_audio = project_dir / (
-            f"locked_audio_{int(segment_index)}_{generation}.wav"
-        )
-        if stale_locked_audio.is_file():
-            try:
-                stale_locked_audio.unlink()
-            except OSError as error:
-                raise RuntimeError(
-                    f"Failed to remove stale locked audio: {error}"
-                ) from error
 
         target_context_latent = (
             project_dir
@@ -2786,6 +2648,25 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
                     default="match",
                     tooltip="Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. Reference tokens ride through every sampling step, so 'max' can be several times slower.",
                 ),
+                io.String.Input(
+                    "video_soundtracks",
+                    default="",
+                    optional=True,
+                    advanced=True,
+                    tooltip=(
+                        "Internal: one 1/0 per reference video. 1 gives the video an "
+                        "<Audio N> soundtrack, using silence when it has none; 0 drops "
+                        "it. Empty keeps whatever soundtrack each video has."
+                    ),
+                ),
+                io.Video.Input(
+                    "locked_video",
+                    optional=True,
+                    tooltip=(
+                        "Internal: the locked driving video over the exact raw window. "
+                        "It replaces the first reference video, which the plan keeps for it."
+                    ),
+                ),
             ],
             outputs=[
                 io.Conditioning.Output("positive"),
@@ -2810,6 +2691,8 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
         locked_video_timing_frames: list[int] | int = 0,
         native_locked_video: list[bool] | bool = False,
         ref_image_size: list[str] | str = "match",
+        video_soundtracks: list[str] | str = "",
+        locked_video: list[Any] | Any | None = None,
     ) -> io.NodeOutput:
         selected_mode = str(_first_input(mode, "reference"))
         frame_modes = {"multi_frames", "last_frame"}
@@ -2828,6 +2711,9 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
         locked_timing_frames = int(_first_input(locked_video_timing_frames, 0))
         expanded_images = expand_image_inputs(images)
         video_inputs = flatten_media_inputs(videos)
+        locked_inputs = flatten_media_inputs(locked_video)
+        if locked_inputs:
+            video_inputs = [locked_inputs[0], *video_inputs[1:]]
         standalone_audios = _audio_inputs(audios)
         graph = GraphBuilder()
         try:
@@ -2900,6 +2786,9 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
             if locked_timing_frames > 0:
                 node_inputs["locked_video_timing_frames"] = locked_timing_frames
                 node_inputs["native_locked_video"] = bool(_first_input(native_locked_video, False))
+            soundtrack_flags = str(_first_input(video_soundtracks, "") or "")
+            if soundtrack_flags:
+                node_inputs["video_soundtracks"] = soundtrack_flags
             for index, image in enumerate(expanded_images):
                 node_inputs[f"ref_image_{index}"] = image
                 advance_progress()
@@ -2910,8 +2799,7 @@ class EasyMiniMaxH3ToVideo(io.ComfyNode):
                     video=video,
                 )
                 node_inputs[f"ref_video_{index}"] = components.out(0)
-                if components.out(1) is not None:
-                    node_inputs[f"ref_video_audio_{index}"] = components.out(1)
+                node_inputs[f"ref_video_audio_{index}"] = components.out(1)
                 advance_progress()
             for index, audio in enumerate(standalone_audios):
                 node_inputs[f"ref_audio_{index}"] = audio

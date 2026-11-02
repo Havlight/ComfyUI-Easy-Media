@@ -13,7 +13,6 @@ import type { ProjectData } from '@/types/project'
 import { DEFAULT_PROJECT_DATA } from '@/types/project'
 import { suppressCompareVideoDefaultPreview } from '@/lib/compare-video-node'
 import { installWorkflowSubmission } from '@/lib/workflow-submission'
-import { installProjectFallbackMigration, migrateProjectFallbacks } from '@/lib/project-fallback-migration'
 import { installProjectSamplingPreview } from '@/lib/project-sampling-preview-node'
 import { initializeSegmentLoraSize } from '@/lib/segment-lora-node-size'
 import { EMPTY_LORA_PLAN, type SegmentLoraPlan } from '@/types/segment-loras'
@@ -66,12 +65,7 @@ comfyApp.registerExtension({
     installEasyMediaSyncPlay(nodeType, nodeData)
     suppressCompareVideoDefaultPreview(nodeType, nodeData)
     installProjectSamplingPreview(nodeType, nodeData, comfyApp)
-    installProjectFallbackMigration(nodeType, nodeData)
     initializeSegmentLoraSize(nodeType, nodeData)
-  },
-
-  afterConfigureGraph() {
-    migrateProjectFallbacks(comfyApp.graph)
   },
 
   getNodeMenuItems(node) {

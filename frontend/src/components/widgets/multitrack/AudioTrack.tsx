@@ -44,7 +44,7 @@ interface AudioTrackProps {
   onDeleteSegment: (segmentId: string) => void
   onCloneSegment: (segmentId: string) => void
   onDeleteTrack: (trackId: string) => void
-  onTrackAudioSettingsChange: (trackId: string, patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked'>>) => void
+  onTrackAudioSettingsChange: (trackId: string, patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked' | 'soundtrack'>>) => void
   onSharedReferenceChange?: (trackId: string, segmentId: string, enabled: boolean) => void
   onResizeSegment: (segmentId: string, edge: 'start' | 'end', nextTime: number, brakeDistanceFrames?: number) => void
   onResizeSegmentPreview: (segmentId: string, edge: 'start' | 'end', nextTime: number, brakeDistanceFrames?: number) => void

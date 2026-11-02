@@ -95,8 +95,6 @@ def load_previous_frame(project_name: str, index: int, resume: bool = False) -> 
     root, manifest, version, record = project_generation(
         project_name, index - 1, pinned.get("generation") if pinned else None,
     )
-    if record.get("sampling_pass") == "first":
-        raise ValueError(f"Segment {index} has only a first-pass checkpoint; finish it before using its last frame")
     identity = video_identity(root, index - 1, version, record)
     if pinned is not None and pinned != identity:
         raise ValueError("The previous-frame source was overwritten; regenerate this segment instead of resuming")

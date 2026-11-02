@@ -38,7 +38,7 @@ interface VideoTrackProps {
   onCloneSegment: (segmentId: string) => void
   canDeleteTrack: boolean
   onDeleteTrack: (trackId: string) => void
-  onTrackAudioSettingsChange: (trackId: string, patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked'>>) => void
+  onTrackAudioSettingsChange: (trackId: string, patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked' | 'soundtrack'>>) => void
   onSharedReferenceChange?: (trackId: string, segmentId: string, enabled: boolean) => void
   onResizeSegment: (segmentId: string, edge: 'start' | 'end', nextTime: number, brakeDistanceFrames?: number) => void
   onResizeSegmentPreview: (segmentId: string, edge: 'start' | 'end', nextTime: number, brakeDistanceFrames?: number) => void
@@ -167,6 +167,10 @@ export function VideoTrack({
             audioLockEnabled={audioLockEnabled}
             onAudioLockToggle={(locked) => {
               onTrackAudioSettingsChange(track.id, { audio_locked: locked })
+            }}
+            soundtrackReference={track.soundtrack === 'reference'}
+            onSoundtrackReferenceToggle={(enabled) => {
+              onTrackAudioSettingsChange(track.id, { soundtrack: enabled ? 'reference' : undefined })
             }}
             sharedReference={segment.content.shared_reference === true}
             onSharedReferenceToggle={(enabled) => {

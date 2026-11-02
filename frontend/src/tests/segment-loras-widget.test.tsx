@@ -80,8 +80,32 @@ describe('segment LoRA controls', () => {
     expect(screen.getByText('Connect this node to Project’s segment_loras input.')).toBeTruthy()
     await waitFor(() => expect(screen.getByText('All stages')).toBeTruthy())
   })
+  it('says when the node is bypassed or muted, and summarizes what its rules would do', async () => {
+    const rules: SegmentLoraPlan = { version: 1, rules: [
+      { id: 'r', enabled: true, lora: 'b.safetensors', start_segment: 1, segment_count: -1, strength: 0.5, stage: 'all' }] }
+    const nodes: Record<string, object> = {}
+    const graph = { beforeChange: vi.fn(), afterChange: vi.fn(), getNodeById: (id: string | number) => nodes[String(id)] ?? null,
+      links: { 1: { origin_id: 3, target_id: 2 }, 2: { origin_id: 1, target_id: 2 } } }
+    const node = { id: 1, type: 'easy h3SegmentLoras', mode: 4, widgets: [{ name: 'rules', value: JSON.stringify(rules) }], outputs: [{ links: [2] }], graph }
+    nodes[1] = node
+    nodes[2] = { id: 2, type: 'easy multitrackProject', widgets: [{ name: 'project_name', value: 'p' }],
+      inputs: [{ name: 'tracks_info', link: 1 }, { name: 'segment_loras', link: 2 }], graph }
+    nodes[3] = { id: 3, type: 'easy multiTrackEditor', outputs: [{ links: [1] }], graph,
+      widgets: [{ name: 'format', value: 'MiniMax' }, { name: 'track_data', value: JSON.stringify({ tracks: [] }) }] }
+    const fetchApi = vi.fn(async (path: string, _init?: RequestInit) => ({ ok: true,
+      json: async () => path === '/models/loras' ? ['b.safetensors'] : { pending: false, tasks: [], rules: [], conflicts: [] } }))
+    const app = { api: { fetchApi, addCustomEventListener: vi.fn(), removeCustomEventListener: vi.fn() } } as unknown as ComfyApp
+    render(<H3SegmentLorasWidget value={rules} onChange={vi.fn()} node={node} app={app}
+      inputName="rules" widget={{} as ReactWidgetProps<SegmentLoraPlan>['widget']} />)
+    expect(screen.getByText(translate('en', 'segmentLoras.inactive'))).toBeTruthy()
+    fireEvent.click(screen.getByText('Effective plan'))
+    // The Project's snapshot has no rules for a node runs leave out; the summary previews the node's own.
+    await waitFor(() => expect(fetchApi.mock.calls.some(([path]) => path === '/easy-media/project/segment-loras-preview')).toBe(true))
+    const [, init] = fetchApi.mock.calls.find(([path]) => path === '/easy-media/project/segment-loras-preview')!
+    expect(JSON.parse(String(init?.body)).project_snapshot.segment_loras).toEqual(rules)
+  })
   it('provides localized labels for both supported message catalogs', () => {
-    for (const locale of ['en', 'zh']) for (const key of ['all', 'first', 'second', 'pending', 'upstream', 'upstreamDuplicate', 'countHelp']) {
+    for (const locale of ['en', 'zh']) for (const key of ['all', 'first', 'second', 'pending', 'upstream', 'upstreamDuplicate', 'countHelp', 'inactive']) {
       expect(translate(locale, `segmentLoras.${key}`)).not.toBe(`segmentLoras.${key}`)
     }
   })

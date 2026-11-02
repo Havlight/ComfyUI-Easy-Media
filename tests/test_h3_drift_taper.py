@@ -28,19 +28,11 @@ DRIFT = {"continuity_mode": "context_drift"}
 def test_drift_taper_defaults_to_the_original_drift_control():
     taper = taper_module.drift_taper
     assert taper(DRIFT) == (4, 0.0, False)
-    assert taper({"continuity_mode": "context_swap"}) == (4, 0.0, False)
     assert taper({**DRIFT, "drift_taper_steps": 3, "drift_taper_floor": 0.25}) == (3, 0.25, False)
     assert taper({**DRIFT, "drift_taper_steps": 12, "drift_taper_floor": 0, "drift_taper_low_only": True}) == (12, 0.0, True)
     # Settings without an effect are matched Drift.
     assert taper({**DRIFT, "drift_taper_steps": 0, "drift_taper_floor": 0.5, "drift_taper_low_only": True}) == (0, 0.0, False)
     assert taper({**DRIFT, "drift_taper_steps": 3, "drift_taper_floor": 1.0}) == (0, 0.0, False)
-
-
-def test_former_matched_mode_is_drift_without_a_taper():
-    taper = taper_module.drift_taper
-    matched = {"continuity_mode": "context_drift_matched", "drift_seam_steps": 2, "drift_seam_noise": 0.3}
-    assert taper(matched) == (0, 0.0, False)
-    assert taper({**matched, "drift_taper_steps": 3, "drift_taper_floor": 0.25}) == (3, 0.25, False)
 
 
 def test_drift_taper_ignores_other_modes_and_passthrough():
@@ -82,10 +74,3 @@ def test_task_signature_changes_only_for_a_custom_taper():
     assert status.task_content_signature({**shot, "drift_taper_steps": 2}) == status.task_content_signature(shot)
     assert status.task_content_signature({**content, "drift_taper_steps": 99})["drift_taper"] == "(99, None, None)"
 
-
-def test_former_matched_task_signature_equals_its_converted_form():
-    content = {"task_mode": "default", "user_prompt": "go", "images": []}
-    matched = status.task_content_signature({**content, "continuity_mode": "context_drift_matched"})
-    converted = status.task_content_signature({**content, **DRIFT, "drift_taper_steps": 0})
-    assert matched == converted
-    assert matched["continuity_mode"] == "context_drift" and matched["drift_taper"] == [0, 0.0, False]

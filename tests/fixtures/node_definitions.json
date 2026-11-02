@@ -1,0 +1,995 @@
+{
+ "easy multitrackProject": {
+  "required": {
+   "tracks_info": [
+    "TRACKS_INFO",
+    {}
+   ],
+   "model_loader": [
+    "FAST_MODEL_LOADER",
+    {
+     "lazy": true,
+     "rawLink": true
+    }
+   ],
+   "project_name": [
+    "STRING",
+    {
+     "default": "",
+     "multiline": false
+    }
+   ],
+   "project_save": [
+    "COMBO",
+    {
+     "default": "override",
+     "multiselect": false,
+     "options": [
+      "new",
+      "override"
+     ]
+    }
+   ],
+   "segment_start_number": [
+    "INT",
+    {
+     "default": 1,
+     "min": 1,
+     "max": 2147483647,
+     "step": 1
+    }
+   ],
+   "segment_count": [
+    "INT",
+    {
+     "default": -1,
+     "min": -1,
+     "max": 2147483647,
+     "step": 1
+    }
+   ],
+   "seed": [
+    "INT",
+    {
+     "default": 42,
+     "min": 0,
+     "max": 18446744073709551615,
+     "step": 1,
+     "control_after_generate": "fixed"
+    }
+   ],
+   "sampling_plan": [
+    "COMBO",
+    {
+     "default": "light",
+     "multiselect": false,
+     "options": [
+      "custom",
+      "ultra_light",
+      "light",
+      "medium",
+      "high"
+     ]
+    }
+   ],
+   "sampling_mode": [
+    "COMFY_DYNAMICCOMBO_V3",
+    {
+     "options": [
+      {
+       "key": "single",
+       "inputs": {
+        "required": {}
+       }
+      },
+      {
+       "key": "dual",
+       "inputs": {
+        "required": {
+         "use_saved_1st_pass": [
+          "BOOLEAN",
+          {
+           "default": false
+          }
+         ],
+         "upscale_by": [
+          "FLOAT",
+          {
+           "precision": 3,
+           "default": 1.25,
+           "min": 1.0,
+           "max": 8.0,
+           "step": 0.001,
+           "round": 0.001
+          }
+         ],
+         "upscale_model": [
+          "COMBO",
+          {
+           "default": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+           "multiselect": false,
+           "options": [
+            "None",
+            "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+           ]
+          }
+         ],
+         "keep_1st_pass_audio": [
+          "BOOLEAN",
+          {
+           "default": false
+          }
+         ],
+         "disable_2nd_noise": [
+          "BOOLEAN",
+          {
+           "default": false
+          }
+         ],
+         "enabled_tiling": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+           "options": [
+            {
+             "key": "false",
+             "inputs": {
+              "required": {}
+             }
+            },
+            {
+             "key": "true",
+             "inputs": {
+              "required": {
+               "tile_count": [
+                "INT",
+                {
+                 "default": 2,
+                 "min": 2,
+                 "max": 8,
+                 "step": 1
+                }
+               ]
+              }
+             }
+            }
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "selflift",
+       "inputs": {
+        "required": {
+         "transition_ratio": [
+          "FLOAT",
+          {
+           "default": 0.6,
+           "min": 0.05,
+           "max": 0.95,
+           "step": 0.05
+          }
+         ],
+         "lowres_scale": [
+          "FLOAT",
+          {
+           "precision": 3,
+           "default": 0.6,
+           "min": 0.25,
+           "max": 1.0,
+           "step": 0.001,
+           "round": 0.001
+          }
+         ],
+         "upscale_model": [
+          "COMBO",
+          {
+           "default": "None",
+           "multiselect": false,
+           "options": [
+            "None",
+            "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+           ]
+          }
+         ],
+         "enabled_tiling": [
+          "COMFY_DYNAMICCOMBO_V3",
+          {
+           "options": [
+            {
+             "key": "false",
+             "inputs": {
+              "required": {}
+             }
+            },
+            {
+             "key": "true",
+             "inputs": {
+              "required": {
+               "tile_count": [
+                "INT",
+                {
+                 "default": 2,
+                 "min": 2,
+                 "max": 8,
+                 "step": 1
+                }
+               ]
+              }
+             }
+            }
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "passthrough",
+       "inputs": {
+        "required": {}
+       }
+      }
+     ]
+    }
+   ]
+  },
+  "optional": {
+   "model_loader_2nd": [
+    "FAST_MODEL_LOADER",
+    {
+     "lazy": true,
+     "rawLink": true
+    }
+   ],
+   "sampler": [
+    "SAMPLER",
+    {
+     "lazy": true,
+     "rawLink": true
+    }
+   ],
+   "sampler_2nd": [
+    "SAMPLER",
+    {
+     "lazy": true,
+     "rawLink": true
+    }
+   ],
+   "sigmas": [
+    "SIGMAS",
+    {
+     "lazy": true,
+     "rawLink": true
+    }
+   ],
+   "sigmas_2nd": [
+    "SIGMAS",
+    {
+     "lazy": true,
+     "rawLink": true
+    }
+   ],
+   "allow_vae_fallback": [
+    "BOOLEAN",
+    {
+     "default": false
+    }
+   ],
+   "segment_loras": [
+    "H3_LORA_PLAN",
+    {}
+   ]
+  },
+  "hidden": {
+   "prompt": [
+    "PROMPT"
+   ],
+   "unique_id": [
+    "UNIQUE_ID"
+   ]
+  }
+ },
+ "easy multiTrackEditor": {
+  "required": {
+   "resolution": [
+    "COMFY_DYNAMICCOMBO_V3",
+    {
+     "options": [
+      {
+       "key": "width x height (auto)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "width x height (shortest)",
+       "inputs": {
+        "required": {
+         "resize_to_pixel": [
+          "INT",
+          {
+           "default": 960,
+           "min": 64,
+           "max": 8096,
+           "step": 8
+          }
+         ],
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "width x height (longest)",
+       "inputs": {
+        "required": {
+         "resize_to_pixel": [
+          "INT",
+          {
+           "default": 960,
+           "min": 64,
+           "max": 8096,
+           "step": 8
+          }
+         ],
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "width x height (custom)",
+       "inputs": {
+        "required": {
+         "width": [
+          "INT",
+          {
+           "default": 544,
+           "min": 32,
+           "max": 8096,
+           "step": 8
+          }
+         ],
+         "height": [
+          "INT",
+          {
+           "default": 960,
+           "min": 32,
+           "max": 8096,
+           "step": 8
+          }
+         ],
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "width x height (megapixels)",
+       "inputs": {
+        "required": {
+         "aspect_ratio": [
+          "COMBO",
+          {
+           "default": "1:1 (Square)",
+           "multiselect": false,
+           "options": [
+            "1:1 (Square)",
+            "2:3 (Portrait Photo)",
+            "3:2 (Photo)",
+            "3:4 (Portrait Standard)",
+            "4:3 (Standard)",
+            "9:16 (Portrait Widescreen)",
+            "16:9 (Widescreen)",
+            "21:9 (Ultrawide)"
+           ]
+          }
+         ],
+         "megapixels": [
+          "FLOAT",
+          {
+           "default": 1.0,
+           "min": 0.1,
+           "max": 16.0,
+           "step": 0.1
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "480 x 832 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "544 x 960 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "576 x 1024 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "720 x 1280 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "768 x 1024 (3:4)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "768 x 1344 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "816 x 1456 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "817 x 1920 (1:2.35)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "864 x 1536 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1080 x 1920 (9:16)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1920 x 1080 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1920 x 817 (2.35:1)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1536 x 864 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1456 x 816 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1344 x 768 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1280 x 720 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1024 x 768 (4:3)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "1024 x 576 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "960 x 544 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      },
+      {
+       "key": "832 x 480 (16:9)",
+       "inputs": {
+        "required": {
+         "resize_method": [
+          "COMBO",
+          {
+           "default": "stretch",
+           "multiselect": false,
+           "options": [
+            "stretch",
+            "resize",
+            "pad",
+            "pad (white)",
+            "pad_edge",
+            "pad_edge_pixel",
+            "crop",
+            "pillarbox_blur"
+           ]
+          }
+         ]
+        }
+       }
+      }
+     ]
+    }
+   ],
+   "format": [
+    "COMBO",
+    {
+     "default": "Wan",
+     "multiselect": false,
+     "options": [
+      "None",
+      "AnimateDiff",
+      "Mochi",
+      "LTXV",
+      "Hunyuan",
+      "Cosmos",
+      "Wan",
+      "MiniMax"
+     ]
+    }
+   ],
+   "track_data": [
+    "TRACK_DATA",
+    {}
+   ]
+  },
+  "optional": {
+   "prompt_override": [
+    "*",
+    {}
+   ],
+   "image": [
+    "IMAGE",
+    {
+     "lazy": true
+    }
+   ],
+   "audio": [
+    "AUDIO",
+    {
+     "lazy": true
+    }
+   ],
+   "video": [
+    "VIDEO",
+    {
+     "lazy": true
+    }
+   ]
+  }
+ }
+}

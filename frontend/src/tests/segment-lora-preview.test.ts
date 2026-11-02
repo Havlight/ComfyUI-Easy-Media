@@ -6,7 +6,7 @@ import type { ConnectedH3Project } from '@/lib/h3-project-snapshot'
 
 afterEach(() => { cleanup(); vi.useRealTimers() })
 const project: ConnectedH3Project = { id: '1', name: 'demo', tracks_info: { tracks: [], frame_rate: 24, total_length: 90 },
-  project_snapshot: { known: true, segment_loras: { version: 1, rules: [] }, recipe: { sampling_mode: 'single', first_pass_only: false }, start_segment: 1, segment_count: -1 } }
+  project_snapshot: { known: true, segment_loras: { version: 1, rules: [] }, recipe: { sampling_mode: 'single' }, start_segment: 1, segment_count: -1 } }
 function api() {
   const api = { addCustomEventListener: vi.fn(), removeCustomEventListener: vi.fn(), fetchApi: vi.fn() }
   api.fetchApi.mockResolvedValue({ ok: true, json: async () => ({ tasks: [], rules: [], conflicts: [] }) })

@@ -1,0 +1,304 @@
+{
+  "cases": [
+    {
+      "name": "muted and locked audio give no reference; images skip muted entries",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 120, "content": {"images": [
+        {"id": "img1", "source_type": "input", "file_path": "a.png", "shared_reference": true},
+        {"id": "img2", "source_type": "input", "file_path": "b.png", "muted": true},
+        {"id": "prev", "source_type": "previous_frame"}
+      ]}},
+      "next_start": 120,
+      "tracks": [
+        {"id": "v1", "type": "video", "segments": [
+          {"id": "v1a", "start_frame": 0, "end_frame": 200, "content": {"media_type": "video", "file_path": "v.mp4"}}]},
+        {"id": "a1", "type": "audio", "segments": [
+          {"id": "a1a", "start_frame": 0, "end_frame": 50, "content": {"media_type": "audio", "file_path": "a.wav"}}]},
+        {"id": "a2", "type": "audio", "muted": true, "segments": [
+          {"id": "a2a", "start_frame": 0, "end_frame": 120, "content": {"media_type": "audio", "file_path": "m.wav"}}]},
+        {"id": "a3", "type": "audio", "audio_locked": true, "segments": [
+          {"id": "a3a", "start_frame": 0, "end_frame": 120, "content": {"media_type": "audio", "file_path": "song.wav"}}]},
+        {"id": "s1", "type": "subtitle", "segments": [
+          {"id": "s1a", "start_frame": 0, "end_frame": 120, "content": {"media_type": "subtitle", "text": "hi"}}]}
+      ],
+      "expected": {
+        "images": ["img1", "prev"],
+        "videos": [{"key": "track:v1", "kind": "track", "start_frame": 0, "frames": 120, "soundtrack": true}],
+        "audios": [{"key": "track:a1", "kind": "track", "start_frame": 0, "frames": 50, "soundtrack": false}],
+        "labels": {"images": ["Picture 1", "Picture 2"], "videos": ["Video 1"],
+                   "video_soundtracks": ["Audio 1"], "audios": ["Audio 2"]}
+      }
+    },
+    {
+      "name": "shared clips come first, once per source, and a muted video has no soundtrack",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 100, "content": {}},
+      "next_start": null,
+      "tracks": [
+        {"id": "v1", "type": "video", "segments": [
+          {"id": "v1w", "start_frame": 0, "end_frame": 60, "content": {"media_type": "video", "file_path": "w.mp4"}},
+          {"id": "v1s", "start_frame": 300, "end_frame": 400, "content": {"media_type": "video", "source_type": "input", "file_path": "s.mp4", "shared_reference": true}}]},
+        {"id": "v2", "type": "video", "segments": [
+          {"id": "v2s", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "source_type": "input", "file_path": "s.mp4", "shared_reference": true}}]},
+        {"id": "v3", "type": "video", "muted": true, "segments": [
+          {"id": "v3w", "start_frame": 10, "end_frame": 90, "content": {"media_type": "video", "file_path": "x.mp4"}}]},
+        {"id": "a1", "type": "audio", "segments": [
+          {"id": "a1s", "start_frame": 500, "end_frame": 600, "content": {"media_type": "audio", "source_type": "input", "file_path": "voice.wav", "shared_reference": true}},
+          {"id": "a1w", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "bed.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [
+          {"key": "shared:v1s", "kind": "shared", "start_frame": 0, "frames": 100, "soundtrack": true},
+          {"key": "track:v1", "kind": "track", "start_frame": 0, "frames": 60, "soundtrack": true},
+          {"key": "track:v3", "kind": "track", "start_frame": 0, "frames": 90, "soundtrack": false}],
+        "audios": [
+          {"key": "shared:a1s", "kind": "shared", "start_frame": 0, "frames": 100, "soundtrack": false},
+          {"key": "track:a1", "kind": "track", "start_frame": 0, "frames": 100, "soundtrack": false}],
+        "labels": {"images": [], "videos": ["Video 1", "Video 2", "Video 3"],
+                   "video_soundtracks": ["Audio 1", "Audio 2", null], "audios": ["Audio 3", "Audio 4"]}
+      }
+    },
+    {
+      "name": "the last task window ends with the task; media after it is ignored",
+      "task": {"id": "t2", "start_frame": 100, "end_frame": 200, "content": {}},
+      "next_start": null,
+      "tracks": [
+        {"id": "a1", "type": "audio", "segments": [
+          {"id": "a1a", "start_frame": 150, "end_frame": 400, "content": {"media_type": "audio", "file_path": "long.wav"}}]},
+        {"id": "a2", "type": "audio", "segments": [
+          {"id": "a2a", "start_frame": 250, "end_frame": 300, "content": {"media_type": "audio", "file_path": "late.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [],
+        "audios": [{"key": "track:a1", "kind": "track", "start_frame": 100, "frames": 100, "soundtrack": false}],
+        "labels": {"images": [], "videos": [], "video_soundtracks": [], "audios": ["Audio 1"]}
+      }
+    },
+    {
+      "name": "a task window reaches the next task's start, covering a gap",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 100, "content": {}},
+      "next_start": 150,
+      "tracks": [
+        {"id": "a1", "type": "audio", "segments": [
+          {"id": "a1a", "start_frame": 120, "end_frame": 140, "content": {"media_type": "audio", "file_path": "gap.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [],
+        "audios": [{"key": "track:a1", "kind": "track", "start_frame": 0, "frames": 140, "soundtrack": false}],
+        "labels": {"images": [], "videos": [], "video_soundtracks": [], "audios": ["Audio 1"]}
+      }
+    },
+    {
+      "name": "a locked video comes first and the other videos follow",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 100, "content": {}},
+      "next_start": null,
+      "tracks": [
+        {"id": "v1", "type": "video", "segments": [
+          {"id": "v1s", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "s.mp4", "shared_reference": true}}]},
+        {"id": "v2", "type": "video", "audio_locked": true, "segments": [
+          {"id": "v2a", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "drive.mp4"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [
+          {"key": "locked:v2", "kind": "locked", "start_frame": 0, "frames": 100, "soundtrack": true},
+          {"key": "shared:v1s", "kind": "shared", "start_frame": 0, "frames": 100, "soundtrack": true}],
+        "audios": [],
+        "labels": {"images": [], "videos": ["Video 1", "Video 2"], "video_soundtracks": ["Audio 1", "Audio 2"], "audios": []}
+      }
+    },
+    {
+      "name": "audio-only projects keep the locked track as an ordinary window",
+      "audio_only": true,
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 100, "content": {}},
+      "next_start": null,
+      "tracks": [
+        {"id": "v1", "type": "video", "segments": [
+          {"id": "v1s", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "s.mp4", "shared_reference": true}}]},
+        {"id": "v2", "type": "video", "audio_locked": true, "segments": [
+          {"id": "v2s", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "drive.mp4", "shared_reference": true}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [
+          {"key": "shared:v1s", "kind": "shared", "start_frame": 0, "frames": 100, "soundtrack": true},
+          {"key": "track:v2", "kind": "track", "start_frame": 0, "frames": 100, "soundtrack": true}],
+        "audios": [],
+        "labels": {"images": [], "videos": ["Video 1", "Video 2"], "video_soundtracks": ["Audio 1", "Audio 2"], "audios": []}
+      }
+    },
+    {
+      "name": "uploads follow unplaced timeline references and fitting sets the audio length",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 48, "content": {"task_mode": "ref",
+        "videos": [{"id": "v1", "source_type": "input", "file_path": "clip.mp4", "soundtrack": false}],
+        "audios": [
+          {"id": "u1", "source_type": "input", "file_path": "voice.wav"},
+          {"id": "u2", "source_type": "local", "local_path": "C:/hum.wav", "fit": true},
+          {"id": "empty", "source_type": "input"}]}},
+      "next_start": 48,
+      "tracks": [
+        {"id": "cam", "type": "video", "segments": [
+          {"id": "cam-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "cam.mp4"}}]},
+        {"id": "bed", "type": "audio", "segments": [
+          {"id": "bed-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "bed.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [
+          {"key": "track:cam", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": true},
+          {"key": "upload:v1", "kind": "upload", "start_frame": 0, "frames": 48, "soundtrack": false}],
+        "audios": [
+          {"key": "track:bed", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": false},
+          {"key": "upload:u1", "kind": "upload", "start_frame": 0, "frames": 360, "soundtrack": false, "fit": false},
+          {"key": "upload:u2", "kind": "upload", "start_frame": 0, "frames": 48, "soundtrack": false}],
+        "labels": {"images": [], "videos": ["Video 1", "Video 2"],
+                   "video_soundtracks": ["Audio 1", null], "audios": ["Audio 2", "Audio 3", "Audio 4"]}
+      }
+    },
+    {
+      "name": "placeholders place timeline references, drop a soundtrack and lift the fit",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 48, "content": {"task_mode": "edit",
+        "videos": [{"id": "pc", "source_type": "track", "track_id": "cam", "soundtrack": false}],
+        "audios": [
+          {"id": "u", "source_type": "input", "file_path": "x.wav"},
+          {"id": "p2", "source_type": "track", "track_id": "a2", "fit": false},
+          {"id": "p2-copy", "source_type": "track", "track_id": "a2", "muted": true},
+          {"id": "gone", "source_type": "track", "track_id": "nope"}]}},
+      "next_start": 96,
+      "tracks": [
+        {"id": "cam", "type": "video", "segments": [
+          {"id": "cam-1", "start_frame": 0, "end_frame": 500, "content": {"media_type": "video", "file_path": "cam.mp4"}}]},
+        {"id": "a1", "type": "audio", "segments": [
+          {"id": "a1-1", "start_frame": 0, "end_frame": 500, "content": {"media_type": "audio", "file_path": "one.wav"}}]},
+        {"id": "a2", "type": "audio", "segments": [
+          {"id": "a2-1", "start_frame": 0, "end_frame": 500, "content": {"media_type": "audio", "file_path": "two.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [{"key": "track:cam", "kind": "track", "start_frame": 0, "frames": 96, "soundtrack": false}],
+        "audios": [
+          {"key": "track:a1", "kind": "track", "start_frame": 0, "frames": 96, "soundtrack": false},
+          {"key": "upload:u", "kind": "upload", "start_frame": 0, "frames": 360, "soundtrack": false, "fit": false},
+          {"key": "track:a2", "kind": "track", "start_frame": 0, "frames": 360, "soundtrack": false, "fit": false}],
+        "labels": {"images": [], "videos": ["Video 1"], "video_soundtracks": [null],
+                   "audios": ["Audio 1", "Audio 2", "Audio 3"]}
+      }
+    },
+    {
+      "name": "a muted placeholder excludes its track and at most three audios are used",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 50, "content": {"task_mode": "ref", "audios": [
+        {"id": "p2", "source_type": "track", "track_id": "t2", "muted": true},
+        {"id": "u", "source_type": "input", "file_path": "late.wav"}]}},
+      "next_start": null,
+      "tracks": [
+        {"id": "t1", "type": "audio", "segments": [
+          {"id": "t1-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "1.wav"}}]},
+        {"id": "t2", "type": "audio", "segments": [
+          {"id": "t2-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "2.wav"}}]},
+        {"id": "t3", "type": "audio", "segments": [
+          {"id": "t3-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "3.wav"}}]},
+        {"id": "t4", "type": "audio", "segments": [
+          {"id": "t4-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "4.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [],
+        "audios": [
+          {"key": "track:t1", "kind": "track", "start_frame": 0, "frames": 50, "soundtrack": false},
+          {"key": "track:t3", "kind": "track", "start_frame": 0, "frames": 50, "soundtrack": false},
+          {"key": "track:t4", "kind": "track", "start_frame": 0, "frames": 50, "soundtrack": false}],
+        "labels": {"images": [], "videos": [], "video_soundtracks": [], "audios": ["Audio 1", "Audio 2", "Audio 3"]}
+      }
+    },
+    {
+      "name": "tasks outside ref and edit ignore their own lists",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 50, "content": {"task_mode": "default",
+        "videos": [{"id": "v", "source_type": "input", "file_path": "clip.mp4"}],
+        "audios": [{"id": "p", "source_type": "track", "track_id": "bed", "muted": true}]}},
+      "next_start": null,
+      "tracks": [
+        {"id": "bed", "type": "audio", "segments": [
+          {"id": "bed-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "bed.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [],
+        "audios": [{"key": "track:bed", "kind": "track", "start_frame": 0, "frames": 50, "soundtrack": false}],
+        "labels": {"images": [], "videos": [], "video_soundtracks": [], "audios": ["Audio 1"]}
+      }
+    },
+    {
+      "name": "a shared-clip placeholder lifts its fit and uploads follow a locked video",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 48, "content": {"task_mode": "ref",
+        "videos": [{"id": "v", "source_type": "input", "file_path": "clip.mp4"}],
+        "audios": [{"id": "ps", "source_type": "track", "track_id": "s", "segment_id": "clip-s", "fit": false}]}},
+      "next_start": null,
+      "tracks": [
+        {"id": "lv", "type": "video", "audio_locked": true, "segments": [
+          {"id": "lv-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "locked.mp4"}}]},
+        {"id": "s", "type": "audio", "segments": [
+          {"id": "clip-s", "start_frame": 200, "end_frame": 300, "content": {"media_type": "audio", "file_path": "voice.wav", "shared_reference": true}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [
+          {"key": "locked:lv", "kind": "locked", "start_frame": 0, "frames": 48, "soundtrack": true},
+          {"key": "upload:v", "kind": "upload", "start_frame": 0, "frames": 48, "soundtrack": true}],
+        "audios": [{"key": "shared:clip-s", "kind": "shared", "start_frame": 0, "frames": 360, "soundtrack": false, "fit": false}],
+        "labels": {"images": [], "videos": ["Video 1", "Video 2"], "video_soundtracks": ["Audio 1", "Audio 2"],
+                   "audios": ["Audio 3"]}
+      }
+    },
+    {
+      "name": "a task includes muted and audio-locked audio tracks only when it asks",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 48, "content": {"task_mode": "ref", "audios": [
+        {"id": "p-song", "source_type": "track", "track_id": "song", "muted": false},
+        {"id": "p-quiet", "source_type": "track", "track_id": "quiet", "muted": false},
+        {"id": "p-hum", "source_type": "track", "track_id": "hum"}]}},
+      "next_start": null,
+      "tracks": [
+        {"id": "quiet", "type": "audio", "muted": true, "segments": [
+          {"id": "quiet-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "quiet.wav"}}]},
+        {"id": "song", "type": "audio", "audio_locked": true, "segments": [
+          {"id": "song-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "song.wav"}}]},
+        {"id": "hum", "type": "audio", "muted": true, "segments": [
+          {"id": "hum-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "hum.wav"}}]},
+        {"id": "bed", "type": "audio", "segments": [
+          {"id": "bed-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "audio", "file_path": "bed.wav"}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [],
+        "audios": [
+          {"key": "track:bed", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": false},
+          {"key": "track:song", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": false},
+          {"key": "track:quiet", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": false}],
+        "labels": {"images": [], "videos": [], "video_soundtracks": [], "audios": ["Audio 1", "Audio 2", "Audio 3"]}
+      }
+    },
+    {
+      "name": "silent videos give no soundtrack unless the task asks for one",
+      "task": {"id": "t1", "start_frame": 0, "end_frame": 48, "content": {"task_mode": "ref", "videos": [
+        {"id": "v", "source_type": "input", "file_path": "clip.mp4", "has_audio": false},
+        {"id": "p2", "source_type": "track", "track_id": "cam2", "soundtrack": true}]}},
+      "next_start": null,
+      "tracks": [
+        {"id": "cam", "type": "video", "segments": [
+          {"id": "cam-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "cam.mp4", "has_audio": false}}]},
+        {"id": "cam2", "type": "video", "segments": [
+          {"id": "cam2-1", "start_frame": 0, "end_frame": 100, "content": {"media_type": "video", "file_path": "cam2.mp4", "has_audio": false}}]}
+      ],
+      "expected": {
+        "images": [],
+        "videos": [
+          {"key": "track:cam", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": false},
+          {"key": "upload:v", "kind": "upload", "start_frame": 0, "frames": 48, "soundtrack": false},
+          {"key": "track:cam2", "kind": "track", "start_frame": 0, "frames": 48, "soundtrack": true}],
+        "audios": [],
+        "labels": {"images": [], "videos": ["Video 1", "Video 2", "Video 3"],
+                   "video_soundtracks": [null, null, "Audio 1"], "audios": []}
+      }
+    }
+  ]
+}

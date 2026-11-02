@@ -12,7 +12,8 @@ export const EMPTY_LORA_PLAN: SegmentLoraPlan = { version: 1, rules: [] }
 export interface LoraProjectSnapshot {
   known: boolean
   segment_loras: SegmentLoraPlan
-  recipe: { sampling_mode: string; first_pass_only: boolean }
+  /** `use_saved_1st_pass` when the run upscales each task's saved first pass. */
+  recipe: { sampling_mode: string; use_saved_1st_pass?: boolean }
   start_segment: number
   segment_count: number
 }

@@ -295,11 +295,7 @@
         1011859974239154,
         "randomize",
         "medium",
-        "single",
-        false,
-        false,
-        1.5,
-        "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+        "single"
       ],
       "widgets_values_named": {
         "project_name": "",
@@ -307,13 +303,9 @@
         "segment_start_number": 1,
         "segment_count": -1,
         "seed": 1011859974239154,
-        "fixed": "randomize",
+        "control_after_generate": "randomize",
         "sampling_plan": "medium",
-        "sampling_mode": "single",
-        "1st_pass_only": false,
-        "disable_2nd_noise": false,
-        "upscale_by": 1.25,
-        "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+        "sampling_mode": "single"
       }
     },
     {

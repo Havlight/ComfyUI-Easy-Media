@@ -1,0 +1,126 @@
+# H3 规划文件（导入／导出）
+
+MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「导入规划」两个按钮。规划文件是任务轨、时间轴影音轨与片段 LoRA 规则的 JSON，适合人工或会操作电脑的 agent 编辑后导回：导入时先显示变更预览，确认后才套用，套用算一步，可以 undo。导出的文件导入另一个工作流，会重建同样的任务与影音轨。
+
+字幕轨、系统提示词、提示词 B、分辨率与 Project 节点参数不在规划里，导入时保持原样。分辨率与 Project 参数可以在套用时用 `apply --sampling`、`--set` 改（见 [automation.md](automation.md) 第 5 步与「先预览再放大」）；其他的在 Editor 里改。
+
+## 格式
+
+```json
+{
+  "format": "easy-media-h3-plan",
+  "version": 1,
+  "frame_rate": 24,
+  "tasks": [
+    {
+      "id": "s01",
+      "seconds": 6,
+      "mode": "ref",
+      "continuity": "shot",
+      "prompt": "subject_definitions:\n<Subject 1> is the young woman in <Picture 1> ...\n\nsummary:\n[reference generation + audio reference] ...",
+      "images": ["C:/素材/alice.png", "C:/素材/castle.jpg"],
+      "audios": [{ "file": "D:/voice/line01.wav", "fit": false }]
+    },
+    {
+      "id": "导出时带上的既有任务 id",
+      "seconds": 5,
+      "continuity": "context_drift",
+      "images": ["C:/素材/alice.png"],
+      "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] ..."
+    }
+  ],
+  "tracks": [
+    { "type": "audio", "audio_locked": true, "clips": [{ "file": "D:/music/song.wav", "at": 1 }] }
+  ],
+  "loras": [
+    { "lora": "mmh3/style.safetensors", "strength": 0.8, "stage": "all", "at": "s01", "until": "s02" }
+  ]
+}
+```
+
+## 任务
+
+- 文件代表**完整的任务列表**，顺序就是时间轴上的顺序。
+  - 有 `id` 的任务更新原本那段；没有 `id` 的是新任务；文件里没出现的任务会被删除。
+  - 新任务也可以自己取 `id`（如 `s01`、`s02`）。已存的生成结果依 `id` 对应，agent 写的规划每段都要有固定的 `id`，修改时保留。
+  - 更新时没写的字段保持原值；新任务没写的字段用默认值（`mode: default`、`continuity: shot`、空提示词）。
+- `seconds`：新任务必填。会依 H3 的帧格对齐，例如 5 秒的独立镜头会变成 124 帧（约 5.17 秒），预览会列出调整。
+- `gap_before`：与前一段之间的空白秒数，默认 0；接续段（`context`、`context_drift`）一定紧接前一段。
+- `mode`：`default`、`ref`、`edit`、`l2v`、`passthrough`。
+- `continuity`：`shot`、`context`、`context_drift`；第一段只能是 `shot`。接着上一段时用 `context_drift`，`context` 只在用户要求时用。
+- `seam`（只用于 `context_drift`）：接缝的处理。新的 `context_drift` 任务不写时用 `"soft"`；用户要求接缝贴紧上一段时写 `"clean"`。导出文件里若是其他写法，保持原样。
+- `prompt`：写入目前选用的提示词，按 [writing.md](writing.md) 用对应 mode 的 H3 指南写。用 `<Picture N>`、`<Video N>`、`<Audio N>` 引用素材；编号规则与 Editor 相同，`apply` 报告的 `labels` 列出每个标签对应的素材，预览会提醒对不上的标签。
+- 导出文件里的 `ref_image_size` 保持原样。
+
+## 参考素材
+
+`images`、`videos`、`audios` 是列表；写了就整份取代，没写就保持原样。每一项可以是字符串或对象：
+
+| 写法 | 意思 |
+|---|---|
+| `"C:/素材/a.png"` 或 `{"file": "C:/素材/a.png"}` | 本机文件，复制到 `input/easy_media/imports/<内容哈希>/a.png`，重复导入只存一份 |
+| `"https://…"` 或 `{"file": "https://…"}` | 下载后同样存进 `input/easy_media/imports/` |
+| `{"input": "子目录/a.png"}`、`{"output": "a.mp4"}` | ComfyUI input／output 里已有的文件 |
+| `{"local": "C:/素材/a.png"}` | 本机文件留在原处，不复制 |
+| `{"url": "https://…"}` | 保留为网址，不下载 |
+| `"previous_frame"` | 上一段尾帧，要 Project 开 `allow_vae_fallback` 才能跑。规划不要新增；分页里已有的照原样保留 |
+| `{"track": "<轨道 id>"}`、`{"track": "<轨道 id>", "clip": "<公用片段 id>"}` | 时间轴参考的占位项（只用于 `videos`、`audios`），用来调整顺序与设置 |
+
+对象可以加：
+
+- `muted: true`：只在这一段排除。时间轴占位项的 `muted: false` 会让静音或锁定音频的音频轨也在这一段作参考。
+- `shared: true`：设为公用，加到所有片段（占位项不适用）。
+- `fit`（只用于音频）：`true` 截到片段长度；上传的音频默认整段、最长 15 秒，时间轴音频默认截到片段。
+- `soundtrack`（只用于视频）：默认带原声并占用一个 `<Audio N>`；`false` 时只参考画面，不用另做无声副本。
+
+音频用 WAV 或 MP3 最稳。本机路径必须是绝对路径。文件找不到、格式不支持或网址下载失败时，预览会列为错误并禁止套用。占位项的轨道或公用片段不存在时，这一项会略过并列为警告。
+
+## 时间轴影音轨
+
+`tracks` 列出全部视频与音频轨，顺序就是时间轴上的顺序（依序叫 Video 0、Video 1、Audio 0……）。没写 `tracks` 时影音轨完全不动；写了就整份取代：没列出的轨道与片段会被删除。每种最多 3 条。
+
+不锁定的轨道是参考素材：跟它重叠的任务各自参考自己那一段（从任务开头到下一个任务开头），所以一段影片要分给几个任务参考时，放上时间轴就好，不用自己剪。静音的视频轨照样参考画面、不带原声；静音的音频轨不作参考。
+
+agent 可以做的只有这些：
+
+- **放上整个文件**：在某条轨道的 `clips` 加 `{"file": "<路径或网址>", "at": <任务>}`。`at` 是任务 id，或任务在文件里的序号（1 是第一段，也就是专案开头）。片段从那一段的开头开始，长度是整个文件。
+- **搬动现有片段**：把它写成 `{"id": "<片段 id>", "at": <任务>}`，人做过的裁切与设置都保留。
+- **剪在某段结尾**：片段加 `"until": <任务>`（写法同 `at`），片段在那一段的结尾结束，素材后面的部分剪掉；新片段与现有片段（`{"id": …, "until": …}`）都可以。素材不够长时报错。任何轨道的片段都能用，例如参考影片只给到某段为止，或锁定视频要结束在最后一个被锁定的任务。
+- **删除**：把片段或整条轨道从列表拿掉。
+- **轨道设定**：`"audio_locked": true` 锁定这条轨道（音频轨提供锁定音频，视频轨锁定画面时间线；每种最多一条），`"muted": true` 静音。不写就是不锁定、不静音。锁定的视频轨可以加 `"soundtrack": "reference"`：画面照样锁定，原声只当参考（`<Audio N>`），输出的是生成的音频；不写或 `"output"` 时原声就是这段的声音。
+- **新轨道**：写 `type`（`"video"` 或 `"audio"`）和 `clips`；可以自己取一个 `id`，任务的占位项就能指向它。
+
+导出文件里片段的 `start`、`end`、`from`（从素材第几秒开始）、`volume`、`shared` 和轨道的 `volume` 是还原用的资料，保持原样，不要自行裁切或调整；除了 `until`，裁切、分割、音量这类编辑由人在 Editor 里做。同一条轨道的片段不能重叠，预览会列为错误；任务排到锁定音频的结尾之后时会警告。
+
+锁定视频轨在执行前有两个检查，预览就会列为错误：跟它重叠的任务要用 `ref` 或 `edit`（或 `passthrough`）；它要盖满每个重叠任务的整段，接续任务（`context`、`context_drift`）还要多盖前面 39 帧。所以第一个被锁定的任务用 `shot`，片段用 `until` 结束在最后一个被锁定的任务。
+
+## 片段 LoRA
+
+`loras` 列出接到 Project `segment_loras` 的 H3 Segment LoRA 节点的全部规则；写了就整份取代（`[]` 清空），没写就不动。agent 选 LoRA 与强度照 LoRA 说明档，见 [automation.md](automation.md)「LoRA 说明档」。
+
+| 字段 | 意思 |
+|---|---|
+| `lora` | LoRA 文件名，照 ComfyUI LoRA 列表的写法（如 `mmh3/style.safetensors`）；列表里没有时报错 |
+| `strength` | 强度，默认 1 |
+| `stage` | `all`（默认，一采二采都用）、`first`（只用在一采）、`second`（只用在二采） |
+| `at`、`until` | 第一个与最后一个套用的任务，写法同片段的 `at`／`until`（任务 id 或文件里的序号）；没写 `at` 从第一段开始，没写 `until` 套到最后 |
+| `enabled` | `false` 停用这条规则（保留但不套用），默认 `true` |
+| `id` | 导出时带上的规则 id，修改时保留；新规则不用写 |
+
+- 规则跟着任务走：用 `at`／`until` 写的规则，任务插入、删除或调换后，导入会重新换算成 LoRA 节点用的段号。没写 `loras` 而增删了任务时，节点上现有的规则也一样跟着原本的任务；规则涵盖的任务全被删掉时，那条规则跟着删除并警告。
+- 生成标记把一个任务切成几段时，规则若开始或结束在任务中间，导出会写成节点自己的 `start_segment`（第几段）与 `segment_count`（几段，`-1` 到最后）；这种规则保持段号，不跟任务移动。`at`／`until` 与这两个字段不能混用。
+- 节点要接到这个 Editor 所接的每一个 Project；没接 LoRA 节点而 `loras` 有规则时报错。几个 Project 接不同的 LoRA 节点或有的没接、LoRA 节点也接到别的 Editor 的 Project、规则由连线提供时，也会报错，`loras` 写不进去。
+- LoRA 节点被绕过（Bypass）或静音（Mute）时，规则照样写入，但执行时不会套用；`loras` 有启用的规则时导入会警告。
+- 同一段、同一阶段重复用了同一个 LoRA 时，执行会在采样前停下；`apply` 会把这种冲突和套用不到任何段的规则列在 `warnings`（LoRA 节点被绕过或静音时不检查）。
+
+## 导入到另一个工作流
+
+导出的文件可以导入别的工作流，重建同样的任务与影音轨。任务 id 都对不上时，全部任务作为新任务加入，现有任务被删除；预览会用一条警告说明。规划里没有视频轨时，目标工作流的第一条视频轨会保留并清空。
+
+## 建议流程
+
+agent 读分页、套用、执行与检查的流程见 [automation.md](automation.md)。在 Editor 画面上手动使用时：
+
+1. 在 Editor 按「导出规划」，以导出的文件为基础修改，保留既有任务与片段的 `id`，已存的生成结果才会沿用。
+2. 按「导入规划」选文件，检查预览：任务的变更、秒数、参考数量，影音轨的片段，LoRA 规则的变更，以及“已存结果需要重新生成”的提示。
+3. 有错误时修正文件后重新导入；只有警告时可以直接套用。

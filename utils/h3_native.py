@@ -128,7 +128,10 @@ def validate_native_context_contract(
     external_seed = meta["stage"] == "imported_seed" and meta["source_kind"] in {"imported_seed", "rebuilt_generated"}
     final_stages = {"single_final", "dual_high_final", "selflift_high_final"}
     compatible_final = meta["stage"] in final_stages and expected_stage in final_stages
-    if meta["stage"] != expected_stage and not external_seed and not compatible_final:
+    # A single result is a Dual first pass at the editor size, and the reverse.
+    first_pass_stages = {"single_final", "dual_low_prediction"}
+    compatible_first = meta["stage"] in first_pass_stages and expected_stage in first_pass_stages
+    if meta["stage"] != expected_stage and not external_seed and not compatible_final and not compatible_first:
         raise NativePlanError("STAGE_MISMATCH", f"Need {expected_stage}, found {meta['stage']}; regenerate the predecessor in the selected mode.", plan.segment_id)
     if expected_size is not None and actual_size != expected_size:
         raise NativePlanError("SIZE_MISMATCH", "The native source resolution changed; regenerate its stage.", plan.segment_id)

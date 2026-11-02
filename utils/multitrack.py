@@ -66,11 +66,7 @@ def canonicalize_multitrack_slot_content(content: dict) -> dict:
 
 
 def multitrack_is_shared_reference(content: dict) -> bool:
-    """Accept the unified flag and the legacy audio speaker-reference flag."""
-    return isinstance(content, dict) and (
-        content.get("shared_reference") is True
-        or content.get("speaker_reference") is True
-    )
+    return isinstance(content, dict) and content.get("shared_reference") is True
 
 
 def multitrack_is_muted_image(content: dict) -> bool:
@@ -114,7 +110,6 @@ def multitrack_shared_task_images(tracks: list) -> list[dict]:
                     continue
                 normalized = canonicalize_multitrack_slot_content(image)
                 normalized["shared_reference"] = True
-                normalized.pop("speaker_reference", None)
                 shared.append(normalized)
                 seen.add(identity)
     return shared[:MAX_MULTITRACK_TASK_IMAGES]
@@ -144,7 +139,6 @@ def multitrack_task_images_with_shared(
         if matching is None:
             normalized.pop("muted", None)
         normalized["shared_reference"] = True
-        normalized.pop("speaker_reference", None)
         prefixed.append(normalized)
     local = [
         canonicalize_multitrack_slot_content(image)
@@ -249,13 +243,16 @@ def multitrack_audio_lock_is_effective(
     """Return whether a locked track has audible media in a timeline window.
 
     Video timing remains independent from this decision. This helper only
-    answers whether the track is allowed to provide lock audio.
+    answers whether the track is allowed to provide lock audio. A locked video
+    whose soundtrack is "reference" still times the picture and is referenced,
+    but its sound is not delivered.
     """
     if (
         not isinstance(info, dict)
         or not isinstance(track, dict)
         or track.get("type") not in {"audio", "video"}
         or track.get("audio_locked") is not True
+        or (track.get("type") == "video" and track.get("soundtrack") == "reference")
         or audio_is_muted(info)
         or audio_is_muted(track)
     ):
@@ -662,3 +659,25 @@ def _trim_track_audio(
     if trimmed.shape[-1] < sample_count:
         trimmed = F.pad(trimmed, (0, sample_count - trimmed.shape[-1]))
     return {"waveform": trimmed, "sample_rate": sample_rate}
+
+
+def trim_reference_audio(audio: dict, frames: int, frame_rate: float, *, fit: bool = True) -> dict:
+    """Cut a reference audio from its start.
+
+    Fitted audio covers exactly ``frames``, padding with silence; unfitted audio keeps
+    at most that much of its source.
+    """
+    if fit:
+        return _trim_track_audio(audio, 0, max(1, frames), frame_rate)
+    waveform = audio.get("waveform")
+    if not isinstance(waveform, torch.Tensor):
+        return audio
+    sample_rate = int(audio.get("sample_rate", 44100))
+    return {"waveform": waveform[..., :max(1, round(frames * sample_rate / frame_rate))],
+            "sample_rate": sample_rate}
+
+
+def trim_reference_video(video, frames: int, frame_rate: float):
+    """Cut a reference video from its start; a source that cannot be trimmed stays whole."""
+    trimmed = video.as_trimmed(start_time=0.0, duration=max(1, frames) / frame_rate, strict_duration=False)
+    return trimmed if trimmed is not None else video

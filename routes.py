@@ -63,8 +63,13 @@ from .modules.asr.subtitle_recognition import (
     subtitle_recognition_options,
     validate_subtitle_recognition_method,
 )
+from .utils.plan_media import PlanMediaError, resolve_plan_media
+from .utils.review_frames import ReviewError, contact_sheet
 from .utils.speech import generate_voxcpm2_speech
-from .utils.workflow_submission import register_workflow_routes
+from .utils.agent_records import register_record_routes
+from .utils.lora_notes import register_lora_notes_routes
+from .utils.node_settings import register_settings_routes
+from .utils.workflow_submission import JOB_EVENT as WORKFLOW_JOB_EVENT, register_workflow_routes
 from .utils.video import (
     decode_multitrack_preview_frame,
     download_audio_to_temp,
@@ -84,6 +89,21 @@ _RUNNINGHUB_ACCOUNT_ENDPOINT = "https://www.runninghub.cn/uc/openapi/accountStat
 register_workflow_routes(
     PromptServer.instance.routes,
     lambda session_id: session_id in PromptServer.instance.sockets,
+    # Wake only the chosen page; a hidden tab's own polling may run once a minute.
+    lambda session_id, data: PromptServer.instance.send_sync(WORKFLOW_JOB_EVENT, data, session_id),
+)
+register_record_routes(
+    PromptServer.instance.routes,
+    lambda: Path(folder_paths.get_output_directory()).resolve() / "easy_media" / "agent",
+    safe_h3_project_name,
+)
+register_settings_routes(PromptServer.instance.routes)
+register_lora_notes_routes(
+    PromptServer.instance.routes,
+    # Beside the agent records folder, not in it, so no project name can collide with it.
+    lambda: Path(folder_paths.get_output_directory()).resolve() / "easy_media",
+    lambda: folder_paths.get_filename_list("loras"),
+    lambda name: folder_paths.get_full_path("loras", name),
 )
 
 
@@ -97,6 +117,24 @@ async def handle_h3_project(request: web.Request) -> web.Response:
     except Exception as error:
         traceback.print_exc()
         return web.json_response({"error": f"Failed to load H3 project: {error}"}, status=500)
+
+
+@PromptServer.instance.routes.get("/easy-media/project/versions")
+async def handle_h3_project_versions(request: web.Request) -> web.Response:
+    """Read-only: each task's saved versions, for agents that cannot see the Project widget."""
+    from .utils.h3_native_artifacts import read_native_manifest
+    from .utils.h3_native_status import native_project_versions
+    from .utils.h3_native_timing import NativePlanError
+    from .utils.h3_project import h3_project_directory
+
+    name = safe_h3_project_name(request.rel_url.query.get("project_name", ""))
+    try:
+        manifest = read_native_manifest(h3_project_directory(name))
+    except NativePlanError as error:
+        return web.json_response({"error": str(error)}, status=500)
+    if not manifest:
+        return web.json_response({"error": f"Project {name} has no saved results"}, status=404)
+    return web.json_response({"project_name": name, **native_project_versions(manifest)})
 
 
 @PromptServer.instance.routes.post("/easy-media/project/timeline-status")
@@ -124,7 +162,8 @@ async def handle_h3_timeline_status(request: web.Request) -> web.Response:
         if isinstance(snapshot, dict) and snapshot.get('known') is True:
             compiled = compile_project_loras(info, snapshot['segment_loras'], snapshot['recipe'])
             effects = preview_lora_effects(compiled)
-        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest, effects)})
+        reuse = isinstance(snapshot, dict) and bool((snapshot.get('recipe') or {}).get('use_saved_1st_pass'))
+        return web.json_response({"project_name": name, "tasks": native_timeline_status(info, manifest, effects, reuse)})
     except (OSError, KeyError, TypeError, ValueError) as error:
         return web.json_response({"error": str(error)}, status=400)
 
@@ -145,10 +184,7 @@ async def handle_h3_segment_loras_preview(request: web.Request) -> web.Response:
             {"resolution": "width x height (custom)", "width": 320, "height": 256},
             "MiniMax", materialize_media=False)[0]
         selected = select_h3_task_entries(h3_task_entries(info), snapshot['start_segment'] - 1, snapshot['segment_count'])
-        recipe = snapshot['recipe']
-        if recipe['sampling_mode'] == 'dual' and recipe.get('first_pass_only'):
-            selected = selected[:1]
-        compiled = compile_project_loras(info, snapshot['segment_loras'], recipe, [i for i, _ in selected])
+        compiled = compile_project_loras(info, snapshot['segment_loras'], snapshot['recipe'], [i for i, _ in selected])
         return web.json_response({'pending': False, **compiled})
     except (OSError, KeyError, TypeError, ValueError) as error:
         return web.json_response({'error': str(error)}, status=400)
@@ -221,13 +257,24 @@ async def handle_select_h3_project_video(request: web.Request) -> web.Response:
         project_name = payload.get("project_name")
         segment_index = payload.get("segment_index")
         file_path = payload.get("file_path")
-        if not isinstance(project_name, str) or not isinstance(file_path, str):
-            raise ValueError("project_name and file_path must be strings")
+        version = payload.get("version")
+        if not isinstance(project_name, str):
+            raise ValueError("project_name must be a string")
+        # The Project widget names the version's video; agents name its number.
+        if (file_path is None) == (version is None):
+            raise ValueError("Give either file_path or version")
+        if file_path is not None and not isinstance(file_path, str):
+            raise ValueError("file_path must be a string")
+        if version is not None and (type(version) is not int or version < 0):
+            raise ValueError("version must be a non-negative integer")
         if type(segment_index) is not int or segment_index < 0:
             raise ValueError("segment_index must be a non-negative integer")
-        return web.json_response(
-            select_h3_project_video(project_name, segment_index, file_path)
-        )
+        data = select_h3_project_video(project_name, segment_index, file_path, version)
+        if version is not None:
+            from .nodes.minimax import _notify_multitrack_project_refresh
+
+            _notify_multitrack_project_refresh(project_name, "select", segment_index)
+        return web.json_response(data)
     except FileNotFoundError as error:
         return web.json_response({"error": str(error)}, status=404)
     except (TypeError, ValueError) as error:
@@ -602,6 +649,94 @@ async def handle_video_source_fps(request: web.Request) -> web.Response:
                 temp_path.unlink(missing_ok=True)
             except OSError as error:
                 print(f"[Easy Media] Failed to remove frame rate probe temporary video: {error}")
+
+
+MAX_PLAN_MEDIA_ITEMS = 256
+
+
+def _resolve_plan_item(item: object) -> dict:
+    try:
+        return resolve_plan_media(item)
+    except PlanMediaError as error:
+        return {"error": str(error)}
+
+
+@PromptServer.instance.routes.post("/easy-media/plan/resolve-media")
+async def handle_plan_resolve_media(request: web.Request) -> web.Response:
+    """Copy or check the files an imported H3 plan names; one result or error per item."""
+    try:
+        data = await request.json()
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) > MAX_PLAN_MEDIA_ITEMS:
+            raise ValueError(f"items must be a list of at most {MAX_PLAN_MEDIA_ITEMS} references")
+        results = await asyncio.to_thread(lambda: [_resolve_plan_item(item) for item in items])
+        return web.json_response({"results": results})
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except Exception as error:
+        traceback.print_exc()
+        return web.json_response({"error": f"Plan media import failed: {error}"}, status=500)
+
+
+MAX_REVIEW_ITEMS = 32
+
+
+def _review_item(item: object, frames: object, width: object) -> dict:
+    try:
+        return contact_sheet(item.get("file_path") if isinstance(item, dict) else None, frames, width)
+    except ReviewError as error:
+        return {"error": str(error)}
+
+
+@PromptServer.instance.routes.post("/easy-media/review/contact-sheet")
+async def handle_review_contact_sheet(request: web.Request) -> web.Response:
+    """Contact sheets of output videos, for an agent that reviews its own runs."""
+    try:
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise ValueError("Request must contain a JSON object")
+        items = data.get("items")
+        if not isinstance(items, list) or not 0 < len(items) <= MAX_REVIEW_ITEMS:
+            raise ValueError(f"items must be a list of 1 to {MAX_REVIEW_ITEMS} videos")
+        frames, width = data.get("frames", 4), data.get("width", 1024)
+        results = await asyncio.to_thread(lambda: [_review_item(item, frames, width) for item in items])
+        return web.json_response({"results": results})
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except Exception as error:
+        traceback.print_exc()
+        return web.json_response({"error": f"Contact sheet failed: {error}"}, status=500)
+
+
+MAX_AUDIO_PROBE_ITEMS = 64
+
+
+def _video_has_audio(item: object) -> bool | None:
+    """Whether a video source carries an audio stream; None when it cannot be read."""
+    if not isinstance(item, dict):
+        return None
+    try:
+        info = ffprobe_info(str(resolve_segment_video_path(item)))
+    except (ValueError, FileNotFoundError, OSError, RuntimeError):
+        return None
+    return bool(info.get("has_audio")) if info else None
+
+
+@PromptServer.instance.routes.post("/easy-media/video/has-audio")
+async def handle_video_has_audio(request: web.Request) -> web.Response:
+    """Probe local video sources so the H3 reference plan can skip silent soundtracks."""
+    try:
+        data = await request.json()
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) > MAX_AUDIO_PROBE_ITEMS:
+            raise ValueError(f"items must be a list of at most {MAX_AUDIO_PROBE_ITEMS} video sources")
+        results = await asyncio.to_thread(lambda: [_video_has_audio(item) for item in items])
+        return web.json_response({"has_audio": results})
+    except ValueError as error:
+        return web.json_response({"error": str(error)}, status=400)
+    except Exception as error:
+        traceback.print_exc()
+        return web.json_response({"error": f"Video audio probe failed: {error}"}, status=500)
 
 
 @PromptServer.instance.routes.post("/easy-media/video/preview-frame")

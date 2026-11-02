@@ -34,14 +34,14 @@ After installing, open ComfyUI and find the bundled example workflows in the **T
 
 ### 🤖 Generate MultiTrack Workflows with a Skill
 
-The package includes the `easy-media-multitrack-workflow` Skill. Give Codex your assets and requirements in natural language to create a workflow from the bundled template or modify an existing one, automatically configuring the timeline, prompts, continuity modes, and sampling settings.
+The package includes the `easy-media-multitrack-workflow` Skill for coding agents such as Codex and Claude Code. Describe the video and give your assets in natural language: the agent writes the tasks, prompts, reference media, timeline tracks and segment LoRAs into the workflow tab open in ComfyUI (unsaved edits included), runs it when you ask, waits for the results and keeps project records. It can also patch workflow files.
 
 ```text
-Use $easy-media-multitrack-workflow to create three 5-second tasks from these reference images and prompts.
-Use Shot for the first segment and Context for the next two, then generate a new workflow JSON.
+Use $easy-media-multitrack-workflow on the open tab "MV": three 5-second tasks from these reference images,
+a Shot followed by two Context Drift tasks, then run it.
 ```
 
-By default, the Skill only generates JSON. When explicitly asked to run the workflow, it can upload assets and submit it to ComfyUI. See the [Skill documentation](./skills/easy-media-multitrack-workflow/README.md) for installation and detailed usage.
+The agent changes the tab like a person's edit, without saving it. It runs only when asked, and changes Project and Editor settings (sampling, save mode, seed, resolution) only when asked. See the [Skill documentation](./skills/easy-media-multitrack-workflow/README.md) for installation and detailed usage.
 
 ## ✨ Features
 
@@ -184,7 +184,7 @@ If an older workflow connects directly to the editor's media outputs, insert `Mu
 
 1. **Read and encode the task:** Load its prompts and media, build conditioning for text-to-video, first/last frames, last-frame-only, or multimedia references according to the task mode, and create audio/video latents. When audio is locked, encode it and apply sampling constraints.
 2. **First pass:** Both `sampling_mode = single` and `dual` generate at the editor's configured dimensions. The first-pass size is not reduced based on `upscale_by`.
-3. **Upscale and second pass (`dual` only):** Multiply each configured dimension by `upscale_by`, then align to the nearest multiple of 32 using `round(dimension * upscale_by / 32) * 32`. Upscale the first-pass video latent to this size, recombine it with the audio latent, and sample again. Rebuild reference conditioning when dimensions change. Setting `upscale_by = 1.000` skips resizing but still allows a second pass.
+3. **Upscale and second pass (`dual` only):** Multiply each configured dimension by `upscale_by`, then align to the nearest multiple of 32 using `round(dimension * upscale_by / 32) * 32`. Upscale the first-pass video latent to this size, recombine it with the audio latent, and sample again. Rebuild reference conditioning when dimensions change. Setting `upscale_by = 1.000` skips resizing but still allows a second pass. Context segments keep the first pass's audio through the second pass; `keep_1st_pass_audio` does the same for shot segments.
 4. **Decode and save:** Decode video and audio. For Context segments, trim the repeated guide prefix and extra trailing frames required by the temporal grid before saving the segment.
 5. **Continue to the next segment:** Save context and project records, then process subsequent tasks automatically. Shot starts a new shot; Context inherits the previous segment. Finally, output `PROJECT_NAME` for the combine node.
 
@@ -194,14 +194,17 @@ If an older workflow connects directly to the editor's media outputs, insert `Mu
 | `model_loader_2nd` | Optional second-pass H3 model; defaults to the first-pass model. Even when connected, encoding and VAEs still come from the first-pass loader |
 | `segment_loras` | Optional H3 Segment LoRA plan: additional MODEL LoRAs by absolute task number and sampling stage |
 | `sampling_plan` | Built-in presets such as `ultra_light`, `light`, `medium`, and `high` select samplers and sigmas for Turbo / non-Turbo models; use `custom` for manual settings |
-| `sampling_mode` | `single`, `dual`, or `selflift`; SelfLift expands `transition_ratio`, `lowres_scale`, and the optional `highres_tiling` switch. Uses a latent-only recipe (`rho=0`). SelfLift also saves separate low- and high-resolution context lineages |
-| `sampler` / `sigmas` | Connect both to override first-pass sampling. Second-pass overrides use `sampler_2nd` / `sigmas_2nd`, also as a pair. `custom` requires both inputs for every sampling pass that runs |
-| `upscale_by` | Second-pass scale relative to the editor dimensions; default `1.250`, three decimal places, step `0.001` |
+| `sampling_mode` | `single`, `dual`, `selflift`, or `passthrough`. Each mode shows only its own settings once selected: `dual` expands `use_saved_1st_pass`, `upscale_by`, `upscale_model`, `keep_1st_pass_audio`, `disable_2nd_noise`, and `enabled_tiling`; `selflift` expands `transition_ratio`, `lowres_scale`, `upscale_model`, and `enabled_tiling`. SelfLift uses a latent-only recipe (`rho=0`) and saves separate low- and high-resolution context lineages |
+| `sampler` / `sigmas` | Optional first-pass sampler and sigmas; whichever is unconnected comes from the sampling plan. `sampler_2nd` / `sigmas_2nd` do the same for the Dual second pass. Connected `sigmas_2nd` also replace the plan's lighter schedule for context segments. `custom` has no preset, so every sampling pass that runs needs both inputs |
+| `upscale_by` | Dual option: second-pass scale relative to the editor dimensions; default `1.250`, three decimal places, step `0.001` |
 | `allow_vae_fallback` | Defaults to off. Permit generated-media re-encoding when a compatible native source is unavailable; initial external encoding and output decoding are always allowed. Corrupt sources, stale dependencies and invalid Lock ranges still fail |
-| `disable_2nd_noise` | Disables added second-pass noise; it does not skip the second pass |
-| `1st_pass_only` | In `dual` mode, runs and checkpoints **only the first pass of the first selected segment**. Disabling this option regenerates both passes |
+| `disable_2nd_noise` | Dual option: disables added second-pass noise; it does not skip the second pass |
+| `use_saved_1st_pass` | Dual option: upscale each task's saved first pass instead of sampling it again (see below) |
+| `keep_1st_pass_audio` | Dual option: keep the first pass's audio through the second pass in shot segments too; context segments always keep it |
 
-Alignment uses Python `round`, matching [the H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py); it is not always upward, and exact ties round to the even integer. For example, `1344 × 768` at `1.250` becomes `1680 × 960` before alignment and **`1664 × 960`** for the second pass. Both upscaling paths use this size, and project records and combined exports retain the resulting dimensions. Single-pass generation and first-pass-only previews keep the editor dimensions; audio-only projects (`32 × 32`) do not upscale. Existing workflows retain their saved multiplier rather than automatically adopting the new default.
+**Preview first, upscale later.** A `single` run is a Dual first pass: same size, same default sigmas and the same continuation. Run tasks with `single` (save mode `new` keeps every take), compare the takes, and select the one to keep in MultiTrack Project Video Combine. Then run `dual` with `use_saved_1st_pass`: each task's active version is upscaled and refined with the seed it was made with, and the result is saved as a new version. A Dual version can be upscaled again from its own first pass, for example with other second-pass settings. The run stops before sampling when a task has no first pass at the editor size, its content or timing changed since, or the task it continues from has no second pass yet; upscale tasks in timeline order, or several in one run. Second-pass settings, models and LoRAs may change freely, and so may first-pass ones: the saved first pass is upscaled as it is, the new version records the Segment LoRAs it was made with, and changed first-stage LoRAs apply to the next `single` preview.
+
+Alignment uses Python `round`, matching [the H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py); it is not always upward, and exact ties round to the even integer. For example, `1344 × 768` at `1.250` becomes `1680 × 960` before alignment and **`1664 × 960`** for the second pass. Both upscaling paths use this size, and project records and combined exports retain the resulting dimensions. Single-pass generation keeps the editor dimensions; audio-only projects (`32 × 32`) do not upscale. ComfyUI saves only the selected mode's settings, so after a reload, switching to another mode starts from its defaults. Workflows saved before these settings moved under `sampling_mode` should have their Project settings checked and saved again.
 
 To customize presets, copy [h3_sample.json.example](./presets/h3_sample.json.example) to `presets/h3_sample.json` and edit it. **The current built-in dual-sampling presets use separate first- and second-pass sigma schedules.** Do not assume that `light` always splits sigmas and leaves the first pass incomplete. A custom preset with `split_step` explicitly splits one sigma schedule across both passes. Existing custom files take precedence, so review your configuration after upgrading.
 
@@ -212,7 +215,7 @@ To customize presets, copy [h3_sample.json.example](./presets/h3_sample.json.exa
 | An H3 latent upscaler model | Calls the bundled `easy minimaxH3LatentUpscaler` node to upscale the video latent directly to the scaled, aligned second-pass dimensions | Place the [H3 upscaler weights](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) in `ComfyUI/models/latent_upscale_models/`; the external custom-node package is not required |
 | `None` with `upscale_by > 1` | Decode the first-pass video with the VAE → Resize images → Re-encode with the VAE → Second pass; requires **Allow VAE fallback** | Requires `ImageResizeKJv2` from [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) |
 
-`upscale_model` selects **H3 latent upscaler weights**, which serve a different purpose from the H3 generation model in `model_loader_2nd`. Direct latent upscaling avoids the intermediate video VAE decode/encode round trip, but the second pass still runs at the target resolution; its VRAM requirements do not decrease proportionally. Easy Media includes the inference node and runtime; only the checkpoint is downloaded separately.
+`upscale_model` selects **H3 latent upscaler weights**, which serve a different purpose from the H3 generation model in `model_loader_2nd`. Direct latent upscaling avoids the intermediate video VAE decode/encode round trip, but the second pass still runs at the target resolution; its VRAM requirements do not decrease proportionally. Easy Media includes the inference node and runtime; only the checkpoint is downloaded separately. Under `dual`, `upscale_model` defaults to an installed upscaler whose file name contains `minimax_h3`.
 
 The standalone `easy minimaxH3LatentUpscaler` node exposes `enable_temporal_chunking` and `force_unload`. Both default to enabled; MultiTrack's internal latent-upscale path also enables both explicitly. Temporal chunking lowers peak memory for long latents, while forced unload releases the upscaler from VRAM after inference.
 
@@ -229,7 +232,7 @@ The advanced arrow on each row selects **All stages** (default), **First stage**
 | Mode | First stage | Second stage |
 |------|-------------|--------------|
 | Single | The sampling pass | Unused |
-| Dual | First pass | Second pass, unless first-pass-only preview is enabled |
+| Dual | First pass | Second pass |
 | SelfLift | Low-resolution part | High-resolution part of the same sigma schedule |
 | Passthrough | Unused | Unused |
 
@@ -264,7 +267,7 @@ Old MP4s remain usable in Video Combine. Old context-only artifacts may not sati
 | `segment_start_number` | Starting segment, **counting from 1**, unlike the zero-based `task_index` in MultiTrack Task Output |
 | `segment_count` | Maximum segments to generate in this run; `-1` processes all remaining segments from the start |
 | `project_save = new` | Preserves existing results in the same project and adds versions for regenerated segments, allowing comparison |
-| `project_save = override` | Adds a recoverable generation, just like `new`; the name is retained for saved-workflow compatibility, and no longer clears later results |
+| `project_save = override` | Replaces the regenerated segment's current version: the new version is saved first, then the old version's files are deleted |
 
 For example, to regenerate only segment 3, set `segment_start_number = 3` and `segment_count = 1`. Choose `project_save = new` to retain the old result for comparison. If segment 3 uses Context, the project must contain compatible context from segment 2. After accepting the new segment 3, regenerate any later Context segments that depend on it.
 

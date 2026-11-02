@@ -12,9 +12,7 @@ NATIVE_VERSION = 2
 CONTEXT_FRAMES = 39
 FRAME_STEP = 17
 MAX_RAW_FRAMES = 3592
-CONTINUITY_MODES = frozenset({"shot", "context", "context_drift", "context_masked"})
-# Legacy names; a former matched-Drift task keeps its schedule through its taper.
-CONTINUITY_ALIASES = {"context_swap": "context_drift", "context_drift_matched": "context_drift"}
+CONTINUITY_MODES = frozenset({"shot", "context", "context_drift"})
 
 
 class NativePlanError(ValueError):
@@ -30,11 +28,9 @@ def native_policy(info: dict[str, Any]) -> dict[str, Any] | None:
     value = info.get("h3_native")
     if value is None:
         return None
-    if not isinstance(value, dict) or value.get("version") not in {1, NATIVE_VERSION}:
+    if not isinstance(value, dict) or value.get("version") != NATIVE_VERSION:
         raise NativePlanError("POLICY_VERSION", "Unsupported native timing policy; upgrade the workflow.")
-    if "allow_vae_fallback" in value and not isinstance(value["allow_vae_fallback"], bool):
-        raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
-    return {"version": NATIVE_VERSION, "allow_vae_fallback": value.get("allow_vae_fallback", False)}
+    return {"version": NATIVE_VERSION}
 
 
 def round_ratio(numerator: int, denominator: int) -> int:
@@ -96,11 +92,10 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
             raise NativePlanError("RANGE", "Use nonnegative integer half-open frame ranges.", sid)
         content = segment.get("content", {})
         mode = content.get("continuity_mode", "shot")
-        mode = CONTINUITY_ALIASES.get(mode, mode)
         if mode not in CONTINUITY_MODES:
             raise NativePlanError("METHOD", f"Unsupported continuation method: {mode}.", sid)
         passthrough = content.get("task_mode") == "passthrough"
-        context = mode != "shot" and not passthrough and not (mode == "context_masked" and not result)
+        context = mode != "shot" and not passthrough
         previous = result[-1] if result else None
         if previous and start < previous.end_frame:
             raise NativePlanError("OVERLAP", "Generation tasks cannot overlap; context is managed internally.", sid)
@@ -147,17 +142,12 @@ def native_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
-    """Convert old H3 data at the boundary; all generated tasks use one geometry.
-
-    Keep media timing, historical preferences and retired method identities.
-    Validation of supported execution methods is a separate preflight step.
-    """
+    """Align H3 task timing at the boundary; all generated tasks use one geometry."""
     from copy import deepcopy
 
     output = {**data, "tracks": deepcopy(data.get("tracks", [])),
               "task_markers": deepcopy(data.get("task_markers", []))}
-    policy = native_policy(output) or {"version": NATIVE_VERSION, "allow_vae_fallback": False}
-    output["h3_native"] = policy
+    output["h3_native"] = native_policy(output) or {"version": NATIVE_VERSION}
     if float(output.get("frame_rate", 24)) != 24:
         raise NativePlanError("FORMAT", "H3 generation requires a 24 fps timeline; convert its frame rate first.")
     output.setdefault("frame_rate", 24)
@@ -183,7 +173,8 @@ def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
             raise NativePlanError("RANGE", "Use nonnegative integer half-open frame ranges.", sid)
         content = task.setdefault("content", {})
         mode = content.get("continuity_mode", "shot")
-        mode = {**CONTINUITY_ALIASES, "context_test": "context"}.get(mode, mode)
+        if mode not in CONTINUITY_MODES:
+            raise NativePlanError("METHOD", f"Unsupported continuation method: {mode}.", sid)
         passthrough = content.get("task_mode") == "passthrough"
         continuation = previous is not None and mode != "shot" and not passthrough
         duration = end - start
@@ -193,13 +184,10 @@ def normalize_native_timeline(data: dict[str, Any]) -> dict[str, Any]:
             duration = snap_duration(duration, continuation)
         new_start = previous["end_frame"] if continuation else max(previous["end_frame"] if previous else 0, start + shift)
         new_end = new_start + duration
-        new_mode = mode if continuation or mode == "context_masked" else "shot"
+        new_mode = mode if continuation else "shot"
         if track.get("locked") and (new_start != start or new_end != end or new_mode != content.get("continuity_mode", "shot")):
             raise NativePlanError("TRACK_LOCKED", "Unlock the task track before aligning its timing.", sid)
         task.update(start_frame=new_start, end_frame=new_end)
-        if content.get("continuity_mode") == "context_drift_matched":
-            # Renaming the alias must not change its schedule.
-            content.setdefault("drift_taper_steps", 0)
         content["continuity_mode"] = new_mode
         previous = task
         shift = new_end - end

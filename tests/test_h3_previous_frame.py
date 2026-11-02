@@ -41,10 +41,6 @@ def test_previous_frame_pins_version_and_rejects_overwritten_source(monkeypatch,
     checkpoint["previous_frame_source"]["revision"] = "overwritten"
     with pytest.raises(ValueError, match="overwritten"):
         previous_frame.load_previous_frame("demo", 1, resume=True)
-    active_version = "1"
-    record["sampling_pass"] = "first"
-    with pytest.raises(ValueError, match="first-pass"):
-        previous_frame.load_previous_frame("demo", 1)
 
 
 def test_old_version_extracts_tail_once_and_preserves_uint8(monkeypatch, tmp_path):

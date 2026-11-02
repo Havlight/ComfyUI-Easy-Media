@@ -10,6 +10,7 @@ import { useH3ProjectSnapshots } from '@/hooks/use-h3-project-snapshots'
 import { useSegmentLoraEditor } from '@/hooks/use-segment-lora-editor'
 import { useSegmentLoraPreview } from '@/hooks/use-segment-lora-preview'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
+import { h3NodeInactive } from '@/lib/h3-project-snapshot'
 import { LocaleContext, translate, useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import type { SegmentLoraPlan, SegmentLoraRule } from '@/types/segment-loras'
@@ -106,7 +107,10 @@ export function H3SegmentLorasWidget({ value, onChange, node, app }: Readonly<Re
   const [selected, setSelected] = useState('')
   const [expanded, setExpanded] = useState(false)
   const project = projects.find((item) => item.id === selected) ?? projects[0]
-  const preview = useSegmentLoraPreview(app, project, expanded)
+  // Runs leave a bypassed or muted node out; its summary shows what the rules would do once it is on.
+  const inactive = h3NodeInactive(node)
+  const preview = useSegmentLoraPreview(app, project && inactive
+    ? { ...project, project_snapshot: { ...project.project_snapshot, segment_loras: data } } : project, expanded)
   const summary = preview.summary
   if (!valid) return <p className="p-3 text-xs text-destructive">{t('invalid')}</p>
   return <LocaleContext.Provider value={locale}>
@@ -117,6 +121,7 @@ export function H3SegmentLorasWidget({ value, onChange, node, app }: Readonly<Re
         <Button variant="ghost" size="icon" className="size-7 shrink-0" aria-label={t('refresh')} onClick={editor.refresh}><RefreshCw className="size-3.5" /></Button>
       </div>
       {editor.error && <p role="alert" className="text-xs text-destructive">{editor.error}</p>}
+      {inactive && <p role="status" className="text-xs text-muted-foreground">{t('inactive')}</p>}
       {data.rules.map((rule, index) => {
         const usage = summary?.rules.find((item) => item.id === rule.id)
         const note = usage?.unused_reason ? t(usage.unused_reason) : usage ? t('range', { start: usage.start, end: usage.end }) : undefined

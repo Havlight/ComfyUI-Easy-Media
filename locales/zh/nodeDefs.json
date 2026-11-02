@@ -871,7 +871,9 @@
       "4": { "name": "图像" },
       "5": { "name": "音频" },
       "6": { "name": "视频" },
-      "7": { "name": "图像索引" }
+      "7": { "name": "图像索引" },
+      "8": { "name": "锁定音频" },
+      "9": { "name": "视频原声", "tooltip": "MiniMax：每个输出视频一个 1/0；1 表示该视频原声占用一个 <Audio N>。" }
     }
   },
   "easy multiTrackPromptEnhancer": {
@@ -1283,8 +1285,7 @@
     "description": "为局部替换创建一次性上下文，音频保持不变。",
     "inputs": {
       "context_latent": { "name": "上下文潜空间" },
-      "context_length": { "name": "上下文长度" },
-      "seed": { "name": "噪声种子" }
+      "context_length": { "name": "上下文长度" }
     },
     "outputs": {
       "0": { "name": "临时上下文潜空间" }
@@ -1399,8 +1400,14 @@
         "name": "多轨信息",
         "tooltip": "多轨编辑器输出的完整项目数据。"
       },
-      "sampler": { "name": "采样器" },
-      "sigmas": { "name": "Sigmas" },
+      "sampler": {
+        "name": "采样器",
+        "tooltip": "可选的一采采样器；不接时使用采样方案的预设。SelfLift 固定使用 Euler。"
+      },
+      "sigmas": {
+        "name": "Sigmas",
+        "tooltip": "可选的一采 Sigmas；不接时使用采样方案的预设。"
+      },
       "project_name": {
         "name": "项目名称",
         "tooltip": "项目目录位于 output/easy_media/projects/{项目名}/；留空时使用 default 项目目录。"
@@ -1416,7 +1423,7 @@
 
       "sampling_plan": {
         "name": "采样方案",
-        "tooltip": "选择采样调度方案，默认；外接采样器或 Sigmas 后，执行阶段会自动采用 custom。",
+        "tooltip": "选择采样器与 Sigmas 的预设，Turbo 与非 Turbo 模型各有一组；采样器或 Sigmas 接入后取代对应的预设。custom 没有预设：实际运行的每个采样阶段都要接入 Sigmas，single 与 dual 还要接入采样器（SelfLift 固定使用 Euler）。",
         "options": {
           "custom": "自定义",
           "light": "轻度",
@@ -1428,45 +1435,57 @@
       },
       "sampling_mode": {
         "name": "采样模式",
-        "tooltip": "single 单次采样效果最好；dual 使用原有两次独立采样；selflift 使用单条渐进分辨率调度；passthrough 直接输出第 0 个完整时间线参考视频，并保存下一段所需的上下文。",
+        "tooltip": "single 单次采样效果最好；dual 先以编辑器尺寸一采，放大后再二采；selflift 使用单条渐进分辨率调度；passthrough 直接输出第 0 个完整时间线参考视频，并保存下一段所需的上下文。dual 与 selflift 的参数在选中后展开。",
         "options": {"single": "单次采样", "dual": "两次采样", "selflift": "SelfLift", "passthrough": "直通"}
       },
-      "transition_ratio": {
+      "sampling_mode_transition_ratio": {
         "name": "步数过渡比例",
         "tooltip": "SelfLift 在低分辨率执行的去噪评估比例。"
       },
-      "lowres_scale": {
+      "sampling_mode_lowres_scale": {
         "name": "低分缩放比例",
         "tooltip": "SelfLift 前段低分辨率相对于目标潜空间的缩放比例。"
       },
-      "enabled_tiling": {
+      "sampling_mode_enabled_tiling": {
         "name": "启用分块",
         "tooltip": "为 Dual 二采或 SelfLift 高分辨率阶段启用空间分块。"
       },
-      "tile_count": { "name": "分块数量" },
+      "sampling_mode_enabled_tiling_tile_count": {
+        "name": "分块数量",
+        "tooltip": "高分辨率采样的空间分块数量。"
+      },
       "model_loader_2nd": {
         "name": "模型加载器(二采)",
         "tooltip": "可选；仅替换二采模型，编码与 VAE 保持一采配置以确保 latent 兼容。"
       },
       "sampler_2nd":{
-        "name": "采样器(二采)"
+        "name": "采样器(二采)",
+        "tooltip": "可选的 Dual 二采采样器；不接时使用采样方案的预设。"
       },
       "sigmas_2nd":{
-        "name": "Sigmas(二采)"
+        "name": "Sigmas(二采)",
+        "tooltip": "可选的 Dual 二采 Sigmas；不接时使用采样方案的预设。接入后续接片段也改用这组 Sigmas，不再使用预设中较轻的续接排程。"
       },
-      "1st_pass_only": {
-        "name": "仅执行一采预览",
-        "tooltip": "在二采模式下，仅执行首个选中片段的一采，用于快速预览。旧版时间轴可直接续跑二采；原生时间轴会重算两阶段以验证来源。"
+      "sampling_mode_use_saved_1st_pass": {
+        "name": "用已存一采",
+        "tooltip": "不重跑一采，直接放大每段使用中版本（single 或 dual）存下的一采再二采。有片段没有一采，或一采后改过内容、时间或一采 LoRA 时，在采样前报错。二采沿用该一采的种子。"
       },
-      "disable_2nd_noise": {
+      "sampling_mode_keep_1st_pass_audio": {
+        "name": "保留一采声音",
+        "tooltip": "二采时不重画声音，保留一采的声音。续接片段本来就保留；开启后新镜头片段也保留。"
+      },
+      "sampling_mode_disable_2nd_noise": {
         "name": "禁用二采噪声",
-        "tooltip": "在二采中禁用噪声。"
+        "tooltip": "二采时不加入新的噪声。"
       },
-      "upscale_by": {
+      "sampling_mode_upscale_by": {
         "name": "二采放大倍率",
-        "tooltip": "dual 模式下用于计算二采目标分辨率。"
+        "tooltip": "二采尺寸相对于编辑器尺寸的倍率，宽高各自对齐到 32 的倍数。"
       },
-      "upscale_model": { "name": "放大模型" },
+      "sampling_mode_upscale_model": {
+        "name": "放大模型",
+        "tooltip": "Dual：两次采样之间的潜空间放大模型；选 None 时改用 RTX VSR 放大像素并重新编码，需开启「允许 VAE 回退」。SelfLift：提升到完整分辨率时使用的潜空间放大模型；None 使用最近邻提升。"
+      },
       "segment_start_number": { "name": "片段开始编号" },
       "segment_count": {
         "name": "片段最大数量",
@@ -1474,7 +1493,15 @@
       },
       "seed": {
         "name": "种子",
-        "tooltip": "一采与二采共用的随机种子。"
+        "tooltip": "一采与二采共用的随机种子。使用已存一采时，二采改用该一采保存的种子。"
+      },
+      "allow_vae_fallback": {
+        "name": "允许 VAE 回退",
+        "tooltip": "原生来源不可用或不兼容时，允许重新编码已生成的媒体。关闭时，若整次运行无法保持原生来源，会在采样前停止。外部媒体的初次编码与预览、输出解码始终允许；时间与锁定规则始终生效。"
+      },
+      "segment_loras": {
+        "name": "片段 LoRA",
+        "tooltip": "按全项目片段编号与采样阶段追加的 MODEL LoRA。"
       }
     },
     "outputs": {
@@ -1512,43 +1539,6 @@
       }
     },
     "outputs": { "0": { "name": "潜空间" } }
-  },
-  "easy minimaxPromptOverride": {
-    "display_name": "MiniMax 提示词覆盖",
-    "description": "将每个 MiniMax H3 片段的提示词、生成时长、生成类型、衔接模式和轨道锁定组装为 prompt_override JSON 字符串。",
-    "inputs": {
-      "prompts": {
-        "name": "提示词列表",
-        "tooltip": "每个 MiniMax H3 片段对应一个提示词。可使用 @图片N/@音频N/@视频N 或 <Picture N>/<Audio N>/<Video N> 引用媒体输入；未使用的前置编号会自动向前递减。"
-      },
-      "duration": {
-        "name": "生成时长",
-        "tooltip": "每个片段的秒数。单个值如 10 会应用到所有片段；逗号分隔值如 10,5,10 会按顺序设置，少于片段数时复用最后一个值。每个值必须在 2～15 秒之间。"
-      },
-      "generation_type": {
-        "name": "生成类型",
-        "tooltip": "每个片段的生成类型。支持 r2v、t2v、i2v、v2v、l2v(尾帧)；单个值会应用到所有片段，逗号分隔值如 r2v,i2v,r2v 会按顺序设置，少于片段数时复用最后一个值。"
-      },
-      "continuity_mode": {
-        "name": "衔接模式",
-        "tooltip": "每个片段的衔接模式。支持 shot、context、context_drift（兼容旧值 context_swap）；context 使用 5 帧视频硬锚点且保持音频生成。单个值会应用到所有片段，逗号分隔值会按顺序设置，少于片段数时复用最后一个值。"
-      },
-      "system_prompt": {
-        "name": "系统提示词",
-        "tooltip": "可选。非空时会写入最终 tracks_info 中每个任务片段的 system_prompt。"
-      },
-      "video_track_lock": {
-        "name": "视频轨锁定",
-        "tooltip": "要锁定的视频轨序号（从 1 开始）；0 表示不锁定。"
-      },
-      "audio_track_lock": {
-        "name": "音频轨锁定",
-        "tooltip": "要锁定的音频轨序号（从 1 开始）；0 表示不锁定。"
-      }
-    },
-    "outputs": {
-      "0": { "name": "提示词覆盖" }
-    }
   },
   "easy minimaxH3ToVideo": {
     "display_name": "简易 MiniMax H3 视频生成",
@@ -1610,6 +1600,10 @@
           "match": "匹配生成尺寸",
           "max": "最大参考尺寸"
         }
+      },
+      "video_soundtracks": {
+        "name": "视频原声",
+        "tooltip": "内部使用：每个参考视频一个 1/0。1 让该视频的原声占用一个 <Audio N>，没有原声时以静音补齐；0 不附原声。留空则沿用各视频本身的原声。"
       }
     },
     "outputs": {

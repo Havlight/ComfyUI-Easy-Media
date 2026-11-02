@@ -1056,6 +1056,229 @@ describe('TaskSegmentEditor', () => {
     expect((chip as HTMLElement | null)?.style.color).toBe('var(--multitrack-task-bg)')
   })
 
+  it('lists MiniMax references as the plan numbers them and inserts official tags', () => {
+    const onContentChange = vi.fn()
+    const voice = { ...videoSegment(0, 3), id: 'voice', content: { media_type: 'audio' as const, file_path: 'voice.wav' } }
+    const hum = { ...videoSegment(0, 3), id: 'hum', content: { media_type: 'audio' as const, file_path: 'hum.wav' } }
+    render(
+      <TaskSegmentEditor
+        segment={taskSegment()}
+        format="MiniMax"
+        mediaTracks={[
+          mediaTrack('audio', [voice]),
+          { ...mediaTrack('audio', [hum]), id: 'muted-track', name: 'Muted track', muted: true },
+          mediaTrack('video', [videoSegment(0, 3)]),
+          { ...mediaTrack('video', [videoSegment(10, 20)]), id: 'later-video', name: 'Later video' },
+        ]}
+        onContentChange={onContentChange}
+      />,
+    )
+
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+    inputEditable(prompt, '@')
+
+    // The video soundtrack takes Audio 1; muted and out-of-range tracks give no reference.
+    expect(screen.getByRole('option', { name: /Audio 1 Source video track soundtrack/ })).not.toBeNull()
+    expect(screen.getByRole('option', { name: /Audio 2 Voice track/ })).not.toBeNull()
+    expect(screen.getByRole('option', { name: /Video 1 Source video track/ })).not.toBeNull()
+    const menu = screen.getByRole('listbox', { name: 'Reference resources' })
+    expect(menu.textContent).not.toContain('Muted track')
+    expect(menu.textContent).not.toContain('Later video')
+
+    fireEvent.keyDown(prompt, { key: 'Enter' })
+    expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '<Picture 1>' })
+  })
+
+  it('shows the reference tabs and explains that other modes use no reference media', () => {
+    render(
+      <TaskSegmentEditor
+        segment={taskSegment()}
+        format="MiniMax"
+        mediaTracks={[mediaTrack('audio', [{ ...videoSegment(0, 3), content: { media_type: 'audio', file_path: 'voice.wav' } }])]}
+        onContentChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('tab', { name: 'Images 2/9' })).not.toBeNull()
+    activateTab('Audio')
+    expect(screen.getByTestId('task-media-unused-audio').textContent).toContain('This mode does not use reference videos or audio.')
+  })
+
+  it('numbers timeline and uploaded references the way the sampler receives them', () => {
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      videos: [{ id: 'clip', source_type: 'input' as const, file_path: 'clip.mp4', file_name: 'clip.mp4' }],
+      audios: [{ id: 'line', source_type: 'input' as const, file_path: 'line.wav', file_name: 'line.wav' }],
+    } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[
+          mediaTrack('video', [videoSegment(0, 3)]),
+          mediaTrack('audio', [{ ...videoSegment(0, 3), content: { media_type: 'audio', file_path: 'voice.wav' } }]),
+        ]}
+        onContentChange={vi.fn()}
+      />,
+    )
+
+    activateTab('Videos 2/3')
+    expect(screen.getByTestId('task-media-index-track:video-track').textContent).toBe('Video 1')
+    expect(screen.getByTestId('task-media-index-upload:clip').textContent).toBe('Video 2')
+    activateTab('Audio 2/3')
+    // Both video soundtracks come first, then the voice track and the uploaded line.
+    expect(screen.getByTestId('task-media-index-soundtrack:track:video-track').textContent).toBe('Audio 1')
+    expect(screen.getByTestId('task-media-soundtrack:upload:clip').textContent).toContain('Video 2 · clip.mp4')
+    expect(screen.getByTestId('task-media-index-soundtrack:upload:clip').textContent).toBe('Audio 2')
+    expect(screen.getByTestId('task-media-index-track:audio-track').textContent).toBe('Audio 3')
+    expect(screen.getByTestId('task-media-index-upload:line').textContent).toBe('Audio 4')
+    expect(screen.getByTestId('task-media-upload:line').textContent).toContain('Whole clip, up to 15s')
+  })
+
+  it('stores timeline settings in the shown order and changes uploads in place', () => {
+    const onContentChange = vi.fn()
+    const line = { id: 'line', source_type: 'input' as const, file_path: 'line.wav' }
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const, audios: [line] } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[mediaTrack('audio', [{ ...videoSegment(0, 3), content: { media_type: 'audio', file_path: 'voice.wav' } }])]}
+        onContentChange={onContentChange}
+      />,
+    )
+    activateTab('Audio 2/3')
+
+    fireEvent.click(screen.getByTestId('task-media-fit-track:audio-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
+      { id: expect.any(String), source_type: 'track', track_id: 'audio-track', fit: false }, line,
+    ] })
+
+    fireEvent.click(screen.getByTestId('task-media-muted-upload:line'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [{ ...line, muted: true }] })
+
+    fireEvent.dragStart(screen.getByTestId('task-media-upload:line'))
+    fireEvent.dragOver(screen.getByTestId('task-media-track:audio-track'))
+    fireEvent.drop(screen.getByTestId('task-media-track:audio-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
+      line, { id: expect.any(String), source_type: 'track', track_id: 'audio-track' },
+    ] })
+  })
+
+  it('lists excluded timeline audio with its reason and includes it for this task only', () => {
+    const onContentChange = vi.fn()
+    const audio = (id: string) => ({ ...videoSegment(0, 3), id, content: { media_type: 'audio' as const, file_path: `${id}.wav` } })
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[
+          mediaTrack('audio', [audio('bed')]),
+          { ...mediaTrack('audio', [audio('song')]), id: 'song-track', name: 'Song', audio_locked: true },
+        ]}
+        onContentChange={onContentChange}
+      />,
+    )
+    activateTab('Audio 1/3')
+
+    const song = screen.getByTestId('task-media-track:song-track')
+    expect(song.dataset.status).toBe('excluded')
+    expect(song.textContent).toContain('Locked: generation audio')
+    fireEvent.click(screen.getByTestId('task-media-muted-track:song-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ audios: [
+      { id: expect.any(String), source_type: 'track', track_id: 'audio-track' },
+      { id: expect.any(String), source_type: 'track', track_id: 'song-track', muted: false },
+    ] })
+  })
+
+  it('turns a video soundtrack off from the audio tab and shows silent videos without one', () => {
+    const onContentChange = vi.fn()
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      videos: [{ id: 'quiet', source_type: 'input' as const, file_path: 'quiet.mp4', file_name: 'quiet.mp4', has_audio: false }] } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[mediaTrack('video', [videoSegment(0, 3)])]}
+        onContentChange={onContentChange}
+      />,
+    )
+    activateTab('Audio 0/3')
+
+    expect(screen.getByTestId('task-media-index-soundtrack:track:video-track').textContent).toBe('Audio 1')
+    expect(screen.getByTestId('task-media-soundtrack:upload:quiet').textContent).toContain('No audio track')
+    fireEvent.click(screen.getByTestId('task-media-soundtrack-soundtrack:track:video-track'))
+    expect(onContentChange).toHaveBeenLastCalledWith({ videos: [
+      { id: expect.any(String), source_type: 'track', track_id: 'video-track', soundtrack: false },
+      segment.content.videos[0],
+    ] })
+  })
+
+  it('keeps adding videos after a locked video, which stays first', () => {
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      videos: [{ id: 'clip', source_type: 'input' as const, file_path: 'clip.mp4' }] } }
+    render(
+      <TaskSegmentEditor
+        segment={segment}
+        format="MiniMax"
+        mediaTracks={[{ ...mediaTrack('video', [videoSegment(0, 3)]), audio_locked: true }]}
+        onContentChange={vi.fn()}
+      />,
+    )
+    activateTab('Videos 2/3')
+
+    expect(screen.getByTestId('task-media-index-locked:video-track').textContent).toBe('Video 1')
+    expect(screen.getByTestId('task-media-index-upload:clip').textContent).toBe('Video 2')
+    expect(screen.getByRole('button', { name: 'Add video' })).not.toBeNull()
+  })
+
+  it('shares and deletes an uploaded reference across tasks', () => {
+    const onTrackSegmentsContentChange = vi.fn()
+    const clip = { id: 'clip', source_type: 'input' as const, file_path: 'clip.mp4' }
+    const first = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const, videos: [clip] } }
+    const second = secondTaskSegment()
+    const editor = (segments: MultiTrackSegment[]) => (
+      <TaskSegmentEditor
+        segment={segments[0]}
+        trackSegments={segments}
+        format="MiniMax"
+        onContentChange={vi.fn()}
+        onTrackSegmentsContentChange={onTrackSegmentsContentChange}
+      />
+    )
+    const { rerender } = render(editor([first, second]))
+    activateTab('Videos 1/3')
+
+    fireEvent.click(screen.getByTestId('task-media-shared-upload:clip'))
+    expect(onTrackSegmentsContentChange).toHaveBeenLastCalledWith([
+      { segmentId: first.id, patch: { videos: [{ ...clip, shared_reference: true }] } },
+      { segmentId: second.id, patch: { videos: [
+        { ...clip, id: expect.any(String), shared_reference: true, shared_reference_copy: true },
+      ] } },
+    ])
+
+    rerender(editor([
+      { ...first, content: { ...first.content, videos: [{ ...clip, shared_reference: true }] } },
+      { ...second, content: { ...second.content, videos: [
+        { ...clip, id: 'copy', shared_reference: true, shared_reference_copy: true },
+      ] } },
+    ]))
+    fireEvent.click(screen.getByTestId('task-media-delete-upload:clip'))
+    expect(onTrackSegmentsContentChange).toHaveBeenLastCalledWith([
+      { segmentId: first.id, patch: { videos: [] } },
+      { segmentId: second.id, patch: { videos: [] } },
+    ])
+  })
+
+  it('lists uploaded MiniMax references in the @ menu by file name', () => {
+    const segment = { ...taskSegment(), content: { ...taskSegment().content, task_mode: 'ref' as const,
+      audios: [{ id: 'line', source_type: 'input' as const, file_path: 'line.wav', file_name: 'line.wav' }] } }
+    render(<TaskSegmentEditor segment={segment} format="MiniMax" onContentChange={vi.fn()} />)
+
+    inputEditable(screen.getByRole('textbox', { name: 'Prompt' }), '@')
+    expect(screen.getByRole('option', { name: /Audio 1 line\.wav/ })).not.toBeNull()
+  })
+
   it('shows the interactive MiniMax placeholder only for an empty prompt', () => {
     const onContentChange = vi.fn()
     const segment = taskSegment()
@@ -1067,14 +1290,14 @@ describe('TaskSegmentEditor', () => {
     )
 
     const prompt = screen.getByRole('textbox', { name: '提示词' })
-    expect(prompt.getAttribute('data-placeholder')).toBe('参考模式下最多支持9张图片，3个音频，3个视频， 输入文字或 @ 参考内容， 自由组合图、文、音，视频多元素，定义精彩互动。例如 @图片1 模仿 @视频1 的动作，音色参考 @音频1。')
+    expect(prompt.getAttribute('data-placeholder')).toBe('参考模式下最多支持9张图片，3个音频，3个视频， 输入文字或 @ 参考内容， 自由组合图、文、音，视频多元素，定义精彩互动。例如 <Picture 1> 模仿 <Video 1> 的动作，音色参考 <Audio 1>。')
     expect(prompt.textContent).toBe('')
 
     const placeholderTrigger = screen.getByRole('button', { name: '打开引用资源' })
     expect(placeholderTrigger.className).toContain('prompt-reference-chip')
     fireEvent.click(placeholderTrigger)
     fireEvent.click(screen.getByRole('option', { name: /图片1/ }))
-    expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '@图片1' })
+    expect(onContentChange).toHaveBeenLastCalledWith({ user_prompt: '<Picture 1>' })
 
     rerender(
       <LocaleContext.Provider value="zh">
@@ -1773,7 +1996,7 @@ it('accepts native seconds, steps legal durations and cancels with Escape', () =
   const segment = { ...taskSegment(), end_frame: 243, content: { ...taskSegment().content, continuity_mode: 'shot' as const } }
   const onDurationChange = vi.fn()
   render(<TooltipProvider><TaskSegmentEditor segment={segment} format="MiniMax" frameRate={24}
-    nativePolicy={{ version: 1, allow_vae_fallback: false }} onContentChange={vi.fn()} onDurationChange={onDurationChange} /></TooltipProvider>)
+    nativePolicy={{ version: 2 }} onContentChange={vi.fn()} onDurationChange={onDurationChange} /></TooltipProvider>)
   fireEvent.click(screen.getByRole('button', { name: 'Edit task duration' }))
   const input = screen.getByRole('textbox', { name: 'Duration' })
   fireEvent.change(input, { target: { value: '10s' } })

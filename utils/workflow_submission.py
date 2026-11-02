@@ -1,4 +1,13 @@
-"""In-memory handoff from API callers to a single ComfyUI browser page."""
+"""In-memory handoff from API callers to a single ComfyUI browser page.
+
+Four kinds of job go to a page:
+- workflow: a UI workflow to open in a new tab, and optionally run;
+- plan: an H3 plan to convert into Editor track data with the page's own importer (no tab changes);
+- tabs: list the open workflow tabs, and read one of them including unsaved edits;
+- apply: set an open tab's Editor track data and settings, its Project settings and LoRA rules, and
+  optionally run that tab. Settings arrive as checked by /easy-media/workflow/settings (the agent
+  scripts call it first); this only checks their shape, and the page fails on a widget it lacks.
+"""
 
 import hashlib
 import json
@@ -9,23 +18,50 @@ from collections.abc import Callable
 
 from aiohttp import web
 
+# A page polls every second, but a hidden browser tab may slow its timers to about once a
+# minute; while its WebSocket stays connected it is still there, and a job wakes it at once.
+HEARTBEAT_SECONDS = 300
+PAYLOAD_KEYS = ("workflow", "track_data", "plan", "changes")
+JOB_EVENT = "easy_media_workflow_job"
+
+
+RESULT_STATUSES = {
+    "plan": ("converted", "failed"),
+    "tabs": ("read", "failed"),
+    "apply": ("applied", "queued", "failed", "unknown"),
+    "workflow": ("loaded", "queued", "failed", "unknown"),
+}
+# What a page may report besides the status: the tabs it has and the saved workflows not open,
+# the tab it read or opened, and whether it opened a saved workflow for the job.
+RESULT_FIELDS = {"tabs": list, "saved": list, "tab": (dict, str), "opened": bool}
+
 
 class WorkflowSubmissions:
-    def __init__(self, connected: Callable[[str], bool]) -> None:
+    def __init__(
+        self,
+        connected: Callable[[str], bool],
+        notify: Callable[[str, dict], None] | None = None,
+    ) -> None:
         self.connected = connected
+        self.notify = notify
         self.clients: dict[str, dict] = {}
         self.jobs: dict[str, dict] = {}
 
     def _prune(self) -> None:
         now = time.time()
         self.clients = {key: value for key, value in self.clients.items()
-                        if now - value["last_seen"] < 30 and self.connected(value["session_id"])}
+                        if now - value["last_seen"] < HEARTBEAT_SECONDS and self.connected(value["session_id"])}
         for job in self.jobs.values():
             if job["status"] == "pending" and now - job["created_at"] > 60:
-                job.update(status="failed", error="Browser did not accept the workflow within 60 seconds")
-                job.pop("workflow", None)
+                job.update(status="failed", error="Browser did not accept the job within 60 seconds")
+                for key in PAYLOAD_KEYS:
+                    job.pop(key, None)
             if job["status"] == "loading" and now - job["claimed_at"] > 120:
-                job.update(status="unknown", error="Browser result unavailable; check queue/history before retrying")
+                # Only a job that may have queued a prompt is uncertain; the others can be retried.
+                if not job.get("auto_queue", job.get("queue")):
+                    job.update(status="failed", error="Browser did not finish the job within 120 seconds")
+                else:
+                    job.update(status="unknown", error="Browser result unavailable; check queue/history before retrying")
         self.jobs = {key: value for key, value in self.jobs.items()
                      if now - value["created_at"] < 3600 or value["status"] in {"loading", "unknown"}}
 
@@ -42,30 +78,16 @@ class WorkflowSubmissions:
     @staticmethod
     def summary(job: dict) -> dict:
         return {key: value for key, value in job.items()
-                if key not in {"workflow", "fingerprint", "claim_token"}}
+                if key not in {*PAYLOAD_KEYS, "fingerprint", "claim_token"}}
 
-    def submit(self, payload: dict) -> dict:
-        self._prune()
-        workflow = payload.get("workflow")
-        if not isinstance(workflow, dict) or not isinstance(workflow.get("nodes"), list) or not isinstance(workflow.get("links"), list):
-            raise ValueError("workflow must be UI workflow JSON with nodes and links; API prompt alone cannot preserve the editor layout")
-        if any(not isinstance(node, dict) or "id" not in node or not isinstance(node.get("type"), str) for node in workflow["nodes"]):
-            raise ValueError("Every workflow node must have an id and type")
-        mode = payload.get("mode", "new_tab")
-        if mode not in ("new_tab", "replace"):
-            raise ValueError("mode must be new_tab or replace")
-        auto_queue = payload.get("auto_queue", True)
-        if type(auto_queue) is not bool:
-            raise ValueError("auto_queue must be a boolean")
-        name = payload.get("name", "Skill workflow")
-        if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(c in name for c in "/\\\x00"):
-            raise ValueError("name must be a filename without directory separators, up to 200 characters")
+    def _create(self, payload: dict, kind: str, fields: dict) -> dict:
+        """Record a job for one page, or return the existing one for a repeated request."""
         request_id = self._identifier(payload.get("request_id", str(uuid.uuid4())), "request_id")
         client_id = payload.get("client_id")
         if client_id is not None:
             self._identifier(client_id, "client_id")
         fingerprint = hashlib.sha256(json.dumps(
-            [workflow, mode, auto_queue, name, client_id], sort_keys=True, allow_nan=False,
+            [kind, fields, client_id], sort_keys=True, allow_nan=False,
         ).encode()).hexdigest()
         previous = self.jobs.get(request_id)
         if previous:
@@ -82,11 +104,101 @@ class WorkflowSubmissions:
             raise web.HTTPConflict(text="This browser already has an unfinished submission; check its status before retrying")
         if len(self.jobs) >= 256:
             raise web.HTTPServiceUnavailable(text="Submission history is full; retry after old requests expire")
-        job = dict(request_id=request_id, client_id=client_id, workflow=workflow,
-                   mode=mode, auto_queue=auto_queue, name=name, status="pending",
+        job = dict(request_id=request_id, client_id=client_id, kind=kind, **fields, status="pending",
                    created_at=time.time(), fingerprint=fingerprint)
         self.jobs[request_id] = job
+        if self.notify:
+            try:
+                self.notify(self.clients[client_id]["session_id"], {"request_id": request_id})
+            except Exception as error:  # noqa: BLE001 - the page's own polling still delivers the job
+                print(f"[Easy Media] Could not wake the browser page: {error}")  # noqa: T201
         return self.summary(job)
+
+    def submit_plan(self, payload: dict) -> dict:
+        """Ask a page to convert an H3 plan into track data; nothing opens or runs."""
+        self._prune()
+        track_data = payload.get("track_data")
+        if not isinstance(track_data, dict) or not isinstance(track_data.get("tracks"), list):
+            raise ValueError("track_data must be Editor track data with a tracks list")
+        plan = payload.get("plan")
+        if not isinstance(plan, dict):
+            raise ValueError("plan must be an H3 plan object")
+        editor_format = payload.get("format", "MiniMax")
+        if not isinstance(editor_format, str) or not editor_format:
+            raise ValueError("format must be the Editor format, such as MiniMax")
+        # The tab and Editor the plan is for: their LoRA node's rules are what the plan's replace.
+        tab = self._tab_key(payload.get("tab"), False)
+        editor_id = payload.get("editor_id")
+        if (tab is None) != (editor_id is None) or (
+                editor_id is not None and (not isinstance(editor_id, (int, str)) or isinstance(editor_id, bool))):
+            raise ValueError("tab and editor_id go together: the tab key and the Editor's node id")
+        target = dict(tab=tab, editor_id=editor_id) if tab is not None else {}
+        return self._create(payload, "plan", dict(track_data=track_data, plan=plan, format=editor_format, **target))
+
+    @staticmethod
+    def _settings(value: object, field: str) -> list:
+        """Widget changes in the order to set them, as /easy-media/workflow/settings checked them."""
+        if not isinstance(value, list) or any(
+                not isinstance(item, list) or len(item) != 2 or not isinstance(item[0], str) or not item[0]
+                or not (item[1] is None or isinstance(item[1], (str, int, float, bool)))
+                for item in value):
+            raise ValueError(f"changes.{field} must be a list of [setting name, value] pairs")
+        return value
+
+    @staticmethod
+    def _tab_key(value: object, required: bool) -> str | None:
+        if value is None and not required:
+            return None
+        if not isinstance(value, str) or not value or len(value) > 1024 or "\x00" in value:
+            raise ValueError("tab must be the key of an open workflow tab, as listed by a tabs job")
+        return value
+
+    def read_tabs(self, payload: dict) -> dict:
+        """Ask a page for its open workflow tabs, and the content of one of them."""
+        self._prune()
+        return self._create(payload, "tabs", dict(tab=self._tab_key(payload.get("tab"), False)))
+
+    def apply(self, payload: dict) -> dict:
+        """Ask a page to change an open tab's Editor and Project, and optionally run it."""
+        self._prune()
+        tab = self._tab_key(payload.get("tab"), True)
+        queue = payload.get("queue", False)
+        if type(queue) is not bool:
+            raise ValueError("queue must be a boolean")
+        changes = payload.get("changes")
+        if changes is not None:
+            track_data = changes.get("track_data") if isinstance(changes, dict) else None
+            if not isinstance(track_data, dict) or not isinstance(track_data.get("tracks"), list):
+                raise ValueError("changes.track_data must be Editor track data with a tracks list")
+            project = self._settings(changes.get("project", []), "project")
+            if any(name == "track_data" for name, _value in self._settings(changes.get("editor", []), "editor")):
+                raise ValueError("changes.track_data sets the Editor's track data; changes.editor is for its settings")
+            loras = changes.get("segment_loras")
+            if loras is not None and not (isinstance(loras, dict) and loras.get("version") == 1
+                                          and isinstance(loras.get("rules"), list)
+                                          and all(isinstance(rule, dict) for rule in loras["rules"])):
+                raise ValueError("changes.segment_loras must be H3 Segment LoRA rules: {version: 1, rules: [...]}")
+            if any(not isinstance(changes.get(key), (int, str)) or isinstance(changes.get(key), bool)
+                   for key in ("editor_id", *(("project_id",) if project else ()))):
+                raise ValueError("changes need the editor_id (and project_id) of nodes in the tab")
+        if changes is None and not queue:
+            raise ValueError("apply needs changes, queue, or both")
+        return self._create(payload, "apply", dict(tab=tab, queue=queue, changes=changes))
+
+    def submit(self, payload: dict) -> dict:
+        self._prune()
+        workflow = payload.get("workflow")
+        if not isinstance(workflow, dict) or not isinstance(workflow.get("nodes"), list) or not isinstance(workflow.get("links"), list):
+            raise ValueError("workflow must be UI workflow JSON with nodes and links; API prompt alone cannot preserve the editor layout")
+        if any(not isinstance(node, dict) or "id" not in node or not isinstance(node.get("type"), str) for node in workflow["nodes"]):
+            raise ValueError("Every workflow node must have an id and type")
+        auto_queue = payload.get("auto_queue", True)
+        if type(auto_queue) is not bool:
+            raise ValueError("auto_queue must be a boolean")
+        name = payload.get("name", "Skill workflow")
+        if not isinstance(name, str) or not name.strip() or len(name) > 200 or any(c in name for c in "/\\\x00"):
+            raise ValueError("name must be a filename without directory separators, up to 200 characters")
+        return self._create(payload, "workflow", dict(workflow=workflow, auto_queue=auto_queue, name=name))
 
     def poll(self, payload: dict) -> dict | None:
         self._prune()
@@ -101,9 +213,24 @@ class WorkflowSubmissions:
         for job in self.jobs.values():
             if job["client_id"] == client_id and job["status"] == "pending":
                 job.update(status="loading", claimed_at=time.time(), claim_token=str(uuid.uuid4()))
-                delivery = {**self.summary(job), "workflow": job.pop("workflow"), "claim_token": job["claim_token"]}
-                return delivery
+                payload_fields = {key: job.pop(key) for key in PAYLOAD_KEYS if key in job}
+                return {**self.summary(job), **payload_fields, "claim_token": job["claim_token"]}
         return None
+
+    def leave(self, payload: dict) -> dict:
+        """A page that closed or reloaded; its waiting jobs fail now instead of after a minute."""
+        client_id = self._identifier(payload.get("client_id"), "client_id")
+        session_id = self._identifier(payload.get("session_id"), "session_id")
+        client = self.clients.get(client_id)
+        if client is None or client["session_id"] != session_id:
+            return {"left": False}
+        del self.clients[client_id]
+        for job in self.jobs.values():
+            if job["client_id"] == client_id and job["status"] == "pending":
+                job.update(status="failed", error="The browser page closed before taking the job")
+                for key in PAYLOAD_KEYS:
+                    job.pop(key, None)
+        return {"left": True}
 
     def get(self, request_id: str) -> dict:
         self._prune()
@@ -117,9 +244,21 @@ class WorkflowSubmissions:
         if not job.get("claim_token") or payload.get("claim_token") != job["claim_token"]:
             raise web.HTTPForbidden(text="Invalid claim token")
         status = payload.get("status")
-        if status not in ("loaded", "queued", "failed", "unknown"):
+        if status not in RESULT_STATUSES[job["kind"]]:
             raise ValueError("Invalid result status")
         result = {"status": status}
+        if status == "converted":
+            conversion = payload.get("conversion")
+            if not isinstance(conversion, dict):
+                raise ValueError("conversion must be an object")
+            result["conversion"] = conversion
+        if status == "read" and not isinstance(payload.get("tabs"), list):
+            raise ValueError("tabs must be a list")
+        for key, kind in RESULT_FIELDS.items():
+            if payload.get(key) is not None and status in {"read", "applied", "loaded", "queued"}:
+                if not isinstance(payload[key], kind):
+                    raise ValueError(f"{key} has the wrong type")
+                result[key] = payload[key]
         if status == "queued":
             result["prompt_id"] = self._identifier(payload.get("prompt_id"), "prompt_id")
         if status in ("failed", "unknown"):
@@ -136,8 +275,12 @@ class WorkflowSubmissions:
         return self.summary(job)
 
 
-def register_workflow_routes(routes: web.RouteTableDef, connected: Callable[[str], bool]) -> None:
-    submissions = WorkflowSubmissions(connected)
+def register_workflow_routes(
+    routes: web.RouteTableDef,
+    connected: Callable[[str], bool],
+    notify: Callable[[str, dict], None] | None = None,
+) -> None:
+    submissions = WorkflowSubmissions(connected, notify)
 
     async def read_payload(request: web.Request) -> dict:
         # Reject cross-site form posts even when the server permits broad CORS.
@@ -170,9 +313,25 @@ def register_workflow_routes(routes: web.RouteTableDef, connected: Callable[[str
     async def submit(request: web.Request) -> web.Response:
         return await respond(submissions.submit, await read_payload(request))
 
+    @routes.post("/easy-media/workflow/convert")
+    async def convert(request: web.Request) -> web.Response:
+        return await respond(submissions.submit_plan, await read_payload(request))
+
+    @routes.post("/easy-media/workflow/tabs")
+    async def tabs(request: web.Request) -> web.Response:
+        return await respond(submissions.read_tabs, await read_payload(request))
+
+    @routes.post("/easy-media/workflow/apply")
+    async def apply(request: web.Request) -> web.Response:
+        return await respond(submissions.apply, await read_payload(request))
+
     @routes.post("/easy-media/workflow/poll")
     async def poll(request: web.Request) -> web.Response:
         return await respond(lambda data: {"job": submissions.poll(data)}, await read_payload(request))
+
+    @routes.post("/easy-media/workflow/leave")
+    async def leave(request: web.Request) -> web.Response:
+        return await respond(submissions.leave, await read_payload(request))
 
     @routes.get("/easy-media/workflow/submissions/{request_id}")
     async def status(request: web.Request) -> web.Response:

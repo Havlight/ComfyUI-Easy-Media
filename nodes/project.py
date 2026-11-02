@@ -14,9 +14,9 @@ from comfy.utils import ProgressBar
 from ..utils import instrument_node_timing, log_node_info
 from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_preset
 from ..utils.h3_previous_frame import previous_frame_position
-from ..utils.h3_native_status import native_task_fingerprint
+from ..utils.h3_native_status import TASK_FINGERPRINT_VERSION, native_task_fingerprint
 from ..utils.h3_segment_loras import normalize_lora_plan
-from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, MATCHED_DRIFT_ALIAS, drift_stage_taper, drift_taper
+from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_stage_taper, drift_taper
 from ..utils.h3_lora_preflight import compile_project_loras
 from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
 from ..utils.h3_project import (
@@ -53,14 +53,14 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_swap"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift"}
 H3_CONTEXT_SOURCE_FRAMES = 39
 
 
 def _h3_native_output(
     graph: GraphBuilder, task_index: int, project_name: str, info: dict[str, Any],
     final_latent: Any, low_latent: Any, state: Any, vae: Any, audio_vae: Any,
-    locked_audio: Any, audio_only: bool, previous: Any, run_state: Any,
+    locked_audio: Any, audio_only: bool, previous: Any, run_state: Any, project_save: str,
 ) -> Any:
     """Decode a delivered view while publishing the untouched raw sampler source."""
     result = graph.node("easy h3NativeResult", id=f"native_result_{task_index}",
@@ -89,6 +89,7 @@ def _h3_native_output(
         media["locked_audio"] = locked_audio
     return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
                       segment_index=task_index, tracks_info=info, latent=result.out(0), raw_audio=decoded_audio, run_state=run_state,
+                      project_save=project_save,
                       **({"low_latent": result.out(1)} if low_latent is not None else {}),
                       **({"previous": previous} if previous is not None else {}), **media).out(0)
 
@@ -276,13 +277,14 @@ def _h3_resolve_pass_sampling(
     has_second_pass: bool,
     is_turbo: bool,
 ) -> tuple[Any, Any]:
-    if preset_name == "custom" or sampler is not None or sigmas is not None:
-        if sampler is None or sigmas is None:
-            raise ValueError(
-                f"Custom H3 {pass_name.replace('_', ' ')} sampling requires "
-                "both sampler and sigmas."
-            )
+    """Use the connected sampler and sigmas; the plan supplies whichever is unconnected."""
+    if sampler is not None and sigmas is not None:
         return sampler, sigmas
+    if preset_name == "custom":
+        raise ValueError(
+            f"The custom sampling plan requires both sampler and sigmas for the "
+            f"{pass_name.replace('_', ' ')}."
+        )
 
     preset = select_h3_preset(
         load_h3_presets(),
@@ -290,27 +292,28 @@ def _h3_resolve_pass_sampling(
         "dual" if has_second_pass else "single",
         is_turbo,
     )
-    sampler_key = "sampler_2nd" if pass_name == "second_pass" else "sampler"
-    sigmas_key = "sigmas_2nd" if pass_name == "second_pass" else "sigmas"
-    sampler = graph.node(
-        "KSamplerSelect",
-        id=f"{pass_name}_sampler",
-        sampler_name=preset.get(sampler_key, preset["sampler"]),
-    ).out(0)
-    sigma_node = graph.node(
-        "ManualSigmas",
-        id=f"{pass_name}_sigmas",
-        sigmas=preset.get(sigmas_key, preset["sigmas"]),
-    )
-    sigmas = sigma_node.out(0)
-    if has_second_pass and "split_step" in preset:
-        split = graph.node(
-            "SplitSigmas",
-            id=f"{pass_name}_split_sigmas",
-            sigmas=sigmas,
-            step=int(preset["split_step"]),
-        )
-        sigmas = split.out(1 if pass_name == "second_pass" else 0)
+    if sampler is None:
+        sampler_key = "sampler_2nd" if pass_name == "second_pass" else "sampler"
+        sampler = graph.node(
+            "KSamplerSelect",
+            id=f"{pass_name}_sampler",
+            sampler_name=preset.get(sampler_key, preset["sampler"]),
+        ).out(0)
+    if sigmas is None:
+        sigmas_key = "sigmas_2nd" if pass_name == "second_pass" else "sigmas"
+        sigmas = graph.node(
+            "ManualSigmas",
+            id=f"{pass_name}_sigmas",
+            sigmas=preset.get(sigmas_key, preset["sigmas"]),
+        ).out(0)
+        if has_second_pass and "split_step" in preset:
+            split = graph.node(
+                "SplitSigmas",
+                id=f"{pass_name}_split_sigmas",
+                sigmas=sigmas,
+                step=int(preset["split_step"]),
+            )
+            sigmas = split.out(1 if pass_name == "second_pass" else 0)
     return sampler, sigmas
 
 
@@ -319,10 +322,10 @@ def _h3_resolve_context_second_pass_sigmas(
     *,
     preset_name: str,
     is_turbo: bool,
-    has_custom_second_pass_sampling: bool,
+    has_custom_sigmas: bool,
 ) -> Any | None:
     """Build the preset-only sigma schedule used by context pass two."""
-    if has_custom_second_pass_sampling or preset_name == "custom":
+    if has_custom_sigmas or preset_name == "custom":
         return None
     preset = select_h3_preset(
         load_h3_presets(),
@@ -357,6 +360,47 @@ def _h3_sampling_mode_config(value: Any) -> tuple[str, dict[str, Any]]:
     if sampling_mode not in {"single", "dual", "selflift", "passthrough"}:
         raise ValueError("sampling_mode must be 'single', 'dual', 'selflift', or 'passthrough'")
     return sampling_mode, config
+
+
+def _h3_default_latent_upscaler() -> str:
+    """The installed H3 latent upscaler, so Dual does not default to the pixel path."""
+    return next(
+        (name for name in folder_paths.get_filename_list("latent_upscale_models")
+         if "minimax_h3" in name.lower()),
+        "None",
+    )
+
+
+def _h3_upscale_model_input(default: str, tooltip: str) -> io.Combo.Input:
+    return io.Combo.Input(
+        "upscale_model",
+        options=["None"] + folder_paths.get_filename_list("latent_upscale_models"),
+        default=default,
+        tooltip=tooltip,
+    )
+
+
+def _h3_tiling_input() -> io.DynamicCombo.Input:
+    return io.DynamicCombo.Input(
+        "enabled_tiling",
+        options=[
+            io.DynamicCombo.Option("false", []),
+            io.DynamicCombo.Option(
+                "true",
+                [
+                    io.Int.Input(
+                        "tile_count",
+                        default=2,
+                        min=2,
+                        max=8,
+                        step=1,
+                        tooltip="Number of spatial tiles for high-resolution sampling.",
+                    ),
+                ],
+            ),
+        ],
+        tooltip="Tile the Dual second pass or the SelfLift high-resolution stage spatially.",
+    )
 
 
 def _h3_tiling_config(value: Any) -> tuple[bool, int]:
@@ -611,6 +655,7 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                 io.Sigmas.Input("sigmas", optional=True, raw_link=True),
                 io.Sampler.Input("sampler_2nd", optional=True, raw_link=True),
                 io.Sigmas.Input("sigmas_2nd", optional=True, raw_link=True),
+                io.Boolean.Input("run_first_pass", default=True, optional=True),
                 io.Boolean.Input("run_second_pass", default=False, optional=True),
                 io.Boolean.Input("has_context_second_pass", default=False, optional=True),
                 io.Boolean.Input("turbo_hint", default=False, optional=True),
@@ -647,6 +692,7 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
         sigmas: Any | None = None,
         sampler_2nd: Any | None = None,
         sigmas_2nd: Any | None = None,
+        run_first_pass: bool = True,
         run_second_pass: bool = False,
         has_context_second_pass: bool = False,
         turbo_hint: bool = False,
@@ -693,8 +739,8 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                 )
                 task_info = prepare_multitrack_project_task_info(
                     project_static["task_tracks_info_base"], project_static["shared_images"],
-                    task_audio if generation_mode == "reference" else [],
-                    task_video if generation_mode == "reference" else [],
+                    task_audio if generation_mode == "reference" else {},
+                    task_video if generation_mode == "reference" else {},
                     task_entry=next(
                         (entry for index, entry in enumerate(h3_task_entries(project_static["task_tracks_info_base"]))
                          if index == int(task_index)),
@@ -790,7 +836,7 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                 second_is_turbo = detect_turbo_model(second_model).is_turbo
             graph = GraphBuilder()
             first_sampler = None
-            if sampling_mode == "passthrough":
+            if sampling_mode == "passthrough" or not run_first_pass:
                 first_sampler = first_sigmas = None
             elif sampling_mode == "selflift":
                 first_sigmas = _h3_resolve_selflift_sigmas(
@@ -805,7 +851,6 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                 )
             second_sampler = second_sigmas = context_sigmas = None
             if run_second_pass:
-                custom_second = sampler_2nd is not None or sigmas_2nd is not None
                 second_sampler, second_sigmas = _h3_resolve_pass_sampling(
                     graph, pass_name="second_pass", sampler=sampler_2nd,
                     sigmas=sigmas_2nd, preset_name=str(sampling_plan),
@@ -814,7 +859,7 @@ class EasyH3ProjectStaticPrepare(io.ComfyNode):
                 if has_context_second_pass:
                     context_sigmas = _h3_resolve_context_second_pass_sigmas(
                         graph, preset_name=str(sampling_plan), is_turbo=second_is_turbo,
-                        has_custom_second_pass_sampling=custom_second,
+                        has_custom_sigmas=sigmas_2nd is not None,
                     )
                 # The expanded graph always has a link to this output. A link
                 # cannot be tested for the None it will contain at runtime.
@@ -865,23 +910,26 @@ class EasyMultiTrackProject(io.ComfyNode):
                         "components remain from the first-pass loader."
                     ),
                 ),
-                io.Sampler.Input(
-                    "sampler", optional=True, raw_link=True, lazy=True,
-                ),
-                io.Sampler.Input("sampler_2nd", optional=True, raw_link=True, lazy=True, tooltip=(
-                    "Optional second-pass sampler. "
+                io.Sampler.Input("sampler", optional=True, raw_link=True, lazy=True, tooltip=(
+                    "Optional first-pass sampler; when unconnected the sampling plan's is used. "
+                    "SelfLift always samples with Euler."
                 )),
-                io.Sigmas.Input(
-                    "sigmas", optional=True, raw_link=True, lazy=True,
-                ),
+                io.Sampler.Input("sampler_2nd", optional=True, raw_link=True, lazy=True, tooltip=(
+                    "Optional Dual second-pass sampler; when unconnected the sampling plan's is used."
+                )),
+                io.Sigmas.Input("sigmas", optional=True, raw_link=True, lazy=True, tooltip=(
+                    "Optional first-pass sigmas; when unconnected the sampling plan's are used."
+                )),
                 io.Sigmas.Input("sigmas_2nd", optional=True, raw_link=True, lazy=True, tooltip=(
-                    "Optional second-pass sigmas. "
+                    "Optional Dual second-pass sigmas; when unconnected the sampling plan's are used. "
+                    "Connected sigmas also replace the plan's lighter schedule for context segments."
                 )),
                 io.String.Input("project_name", default=""),
                 io.Combo.Input(
                     "project_save",
                     options=["new", "override"],
                     default="override",
+                    tooltip="new keeps every version of a task; override replaces the task's current version.",
                 ),
                 io.Int.Input(
                     "segment_start_number",
@@ -919,7 +967,52 @@ class EasyMultiTrackProject(io.ComfyNode):
                     "sampling_mode",
                     options=[
                         io.DynamicCombo.Option("single", []),
-                        io.DynamicCombo.Option("dual", []),
+                        io.DynamicCombo.Option(
+                            "dual",
+                            [
+                                io.Boolean.Input(
+                                    "use_saved_1st_pass",
+                                    default=False,
+                                    tooltip=(
+                                        "Upscale each task's saved first pass (its active single or dual "
+                                        "version) instead of sampling it again, with the seed saved with it. "
+                                        "The run stops before sampling if a task has none or was edited since."
+                                    ),
+                                ),
+                                io.Float.Input(
+                                    "upscale_by",
+                                    default=1.250,
+                                    min=1.0,
+                                    max=8.0,
+                                    step=0.001,
+                                    round=0.001,
+                                    extra_dict={"precision": 3},
+                                    tooltip=(
+                                        "Second-pass size relative to the editor size; "
+                                        "each side is rounded to a multiple of 32."
+                                    ),
+                                ),
+                                _h3_upscale_model_input(
+                                    _h3_default_latent_upscaler(),
+                                    "Latent upscaler between the passes. None upscales pixels "
+                                    "with RTX VSR and re-encodes them, which needs allow_vae_fallback.",
+                                ),
+                                io.Boolean.Input(
+                                    "keep_1st_pass_audio",
+                                    default=False,
+                                    tooltip=(
+                                        "Keep the first pass's audio through the second pass. Context "
+                                        "tasks always keep it; this extends it to shot tasks."
+                                    ),
+                                ),
+                                io.Boolean.Input(
+                                    "disable_2nd_noise",
+                                    default=False,
+                                    tooltip="Run the second pass without adding new noise.",
+                                ),
+                                _h3_tiling_input(),
+                            ],
+                        ),
                         io.DynamicCombo.Option(
                             "selflift",
                             [
@@ -947,54 +1040,16 @@ class EasyMultiTrackProject(io.ComfyNode):
                                         "to the target latent."
                                     ),
                                 ),
+                                _h3_upscale_model_input(
+                                    "None",
+                                    "Optional latent upscaler for the lift to full resolution. "
+                                    "None lifts the latent by nearest sampling.",
+                                ),
+                                _h3_tiling_input(),
                             ],
                         ),
                         io.DynamicCombo.Option("passthrough", []),
                     ],
-                ),
-                io.Boolean.Input(
-                    "1st_pass_only",
-                    default=False,
-                    tooltip=(
-                        "Run and save only the first selected segment's first pass. "
-                        "Turn this off to regenerate both passes with verified stage lineage."
-                    ),
-                ),
-                io.Boolean.Input("disable_2nd_noise", default=False, tooltip="Disable noise in second-pass for dual-sampling"),
-                io.Float.Input(
-                    "upscale_by",
-                    default=1.250,
-                    min=1.0,
-                    max=8.0,
-                    step=0.001,
-                    round=0.001,
-                    extra_dict={"precision": 3},
-                ),
-                io.Combo.Input(
-                    "upscale_model",
-                    options=["None"]
-                    + folder_paths.get_filename_list("latent_upscale_models"),
-                    default="None",
-                ),
-                io.DynamicCombo.Input(
-                    "enabled_tiling",
-                    options=[
-                        io.DynamicCombo.Option("false", []),
-                        io.DynamicCombo.Option(
-                            "true",
-                            [
-                                io.Int.Input(
-                                    "tile_count",
-                                    default=2,
-                                    min=2,
-                                    max=8,
-                                    step=1,
-                                    tooltip="Spatial tile count shared by Dual and SelfLift high-res sampling.",
-                                ),
-                            ],
-                        ),
-                    ],
-                    tooltip="Enable shared high-resolution H3 spatial tiling.",
                 ),
                 io.Boolean.Input("allow_vae_fallback", default=False, optional=True, tooltip=(
                     "Allow generated media to be re-encoded when its native source is unavailable or incompatible. "
@@ -1057,14 +1112,10 @@ class EasyMultiTrackProject(io.ComfyNode):
         if not uses_linked_prepare:
             _require_minimax_h3_model(model)
         info = normalize_native_timeline(parse_tracks_info(kwargs.get("tracks_info")))
-        native_config = native_policy(info)
-        # Missing input in an old API workflow inherits its explicit Editor policy.
-        # A supplied Project value always wins, including an explicit false.
-        if kwargs.get("allow_vae_fallback") is not None:
-            value = _first_input(kwargs["allow_vae_fallback"])
-            if not isinstance(value, bool):
-                raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
-            native_config["allow_vae_fallback"] = value
+        allow_vae_fallback = _first_input(kwargs.get("allow_vae_fallback", False))
+        if not isinstance(allow_vae_fallback, bool):
+            raise NativePlanError("POLICY_VALUE", "allow_vae_fallback must be a boolean.")
+        native_config = {**native_policy(info), "allow_vae_fallback": allow_vae_fallback}
         info["h3_native"] = native_config
         native_plans = compile_native_plan(info)
         hidden_inputs = getattr(cls, "hidden", None)
@@ -1083,7 +1134,8 @@ class EasyMultiTrackProject(io.ComfyNode):
         has_second_pass = sampling_mode == "dual"
         transition_ratio = 0.6
         lowres_scale = 0.6
-        tiling_enabled, tile_count = _h3_tiling_config(kwargs.get("enabled_tiling"))
+        # Mode settings live under their sampling_mode option; other modes have none.
+        tiling_enabled, tile_count = _h3_tiling_config(sampling_config.get("enabled_tiling"))
         if is_selflift:
             transition_ratio = float(
                 _first_input(sampling_config.get("transition_ratio"), 0.6)
@@ -1091,35 +1143,16 @@ class EasyMultiTrackProject(io.ComfyNode):
             lowres_scale = float(
                 _first_input(sampling_config.get("lowres_scale"), 0.6)
             )
-            legacy_highres_tiling = bool(
-                _first_input(sampling_config.get("highres_tiling"), False)
-            )
-            if legacy_highres_tiling and not tiling_enabled:
-                tiling_enabled = True
-                tile_count = 0
-        first_pass_only = bool(
-            _first_input(
-                sampling_config.get("1st_pass_only"),
-                _first_input(kwargs.get("1st_pass_only"), False),
-            )
-        )
-        run_second_pass = has_second_pass and not first_pass_only
-        if is_selflift:
-            first_pass_only = False
-        disable_2nd_noise = bool(
-            _first_input(
-                sampling_config.get("disable_2nd_noise"),
-                _first_input(kwargs.get("disable_2nd_noise"), False),
-            )
-        )
+        run_second_pass = has_second_pass
+        use_saved_first_pass = has_second_pass and bool(_first_input(sampling_config.get("use_saved_1st_pass"), False))
+        keep_first_pass_audio = has_second_pass and bool(_first_input(sampling_config.get("keep_1st_pass_audio"), False))
+        dual_recipe = ({"use_saved_1st_pass": use_saved_first_pass, "keep_1st_pass_audio": keep_first_pass_audio}
+                       if has_second_pass else {})
+        disable_2nd_noise = bool(_first_input(sampling_config.get("disable_2nd_noise"), False))
         second_model = model
         second_model_loader = None
         if run_second_pass or is_selflift:
-            configured_second_loader = sampling_config.get("model_loader_2nd")
-            second_model_loader = _raw_project_input(
-                configured_second_loader if configured_second_loader is not None
-                else kwargs.get("model_loader_2nd")
-            )
+            second_model_loader = _raw_project_input(kwargs.get("model_loader_2nd"))
             if not uses_linked_prepare:
                 second_model = _h3_second_pass_model(second_model_loader, model=model)
                 _require_minimax_h3_model(second_model)
@@ -1147,12 +1180,7 @@ class EasyMultiTrackProject(io.ComfyNode):
         project_save = str(_first_input(kwargs.get("project_save"), "new"))
         if project_save not in {"new", "override"}:
             raise ValueError("project_save must be 'new' or 'override'")
-        upscale_by = float(
-            _first_input(
-                sampling_config.get("upscale_by"),
-                _first_input(kwargs.get("upscale_by"), 1.250),
-            )
-        )
+        upscale_by = float(_first_input(sampling_config.get("upscale_by"), 1.250))
         if not math.isfinite(upscale_by) or upscale_by < 1:
             raise ValueError(
                 "upscale_by must be a finite value greater than or equal to 1"
@@ -1189,8 +1217,6 @@ class EasyMultiTrackProject(io.ComfyNode):
             not h3_task_is_passthrough(entry) for _, entry in selected_entries
         )
 
-        if first_pass_only and has_second_pass:
-            selected_entries = selected_entries[:1]
         log_node_info(
             node_name,
             f"Found {len(all_entries)} segments; processing {len(selected_entries)}",
@@ -1198,12 +1224,7 @@ class EasyMultiTrackProject(io.ComfyNode):
         report_step(20)
         first_pass_seed = int(_first_input(kwargs.get("seed"), 42))
         second_pass_seed = first_pass_seed
-        selected_upscale_model = str(
-            _first_input(
-                sampling_config.get("upscale_model"),
-                _first_input(kwargs.get("upscale_model"), "None"),
-            )
-        )
+        selected_upscale_model = str(_first_input(sampling_config.get("upscale_model"), "None"))
         native_reference_reasons: list[str] = []
         from ..utils.h3_native_sources import generated_reference_paths
 
@@ -1213,8 +1234,6 @@ class EasyMultiTrackProject(io.ComfyNode):
                 raise NativePlanError("GENERATED_REFERENCE", "Generated project media would be encoded as a reference. Use its native context or allow VAE fallback: " + ", ".join(generated_paths))
             native_reference_reasons.append("GENERATED_REFERENCE")
         for task_index, entry in selected_entries:
-            if native_plans[task_index].continuity_mode == "context_masked" and not (h3_task_is_passthrough(entry) or is_passthrough):
-                raise NativePlanError("METHOD_RETIRED", "Masked is retired. Choose Context or Drift before generating.", native_plans[task_index].segment_id)
             if h3_task_is_passthrough(entry) or is_passthrough:
                 if native_plans[task_index].end_frame - native_plans[task_index].start_frame < 39:
                     raise NativePlanError("SEED_SHORT", "Native passthrough requires at least 39 delivered frames.", native_plans[task_index].segment_id)
@@ -1251,8 +1270,7 @@ class EasyMultiTrackProject(io.ComfyNode):
         )
         if uses_linked_prepare:
             def raw_sampling_input(name: str) -> Any:
-                value = sampling_config.get(name)
-                return _raw_project_input(value if value is not None else kwargs.get(name))
+                return _raw_project_input(kwargs.get(name))
 
             project_media_static = graph.node(
                 "easy h3ProjectStaticPrepare",
@@ -1263,6 +1281,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 "model_loader": selected_model_loader,
                 "sampling_plan": preset_name,
                 "sampling_mode": sampling_mode if has_sampling_tasks else "passthrough",
+                "run_first_pass": not use_saved_first_pass,
                 "run_second_pass": run_second_pass and has_sampling_tasks,
                 "has_context_second_pass": has_context_second_pass,
                 "turbo_hint": first_is_turbo,
@@ -1293,7 +1312,7 @@ class EasyMultiTrackProject(io.ComfyNode):
             (task_tracks_info_base, shared_images, shared_audio, shared_video,
              full_locked_audio) = prepare_multitrack_project_media(info)
             first_pass_sampler = first_pass_sigmas = None
-            if has_sampling_tasks and any(
+            if has_sampling_tasks and not use_saved_first_pass and any(
                 not h3_task_is_passthrough(entry)
                 for task_index, entry in selected_entries
             ):
@@ -1308,19 +1327,17 @@ class EasyMultiTrackProject(io.ComfyNode):
                         has_second_pass=has_second_pass, is_turbo=first_is_turbo)
             second_pass_sampler = second_pass_sigmas = context_second_pass_sigmas = None
             if run_second_pass and has_sampling_tasks:
-                configured_sampler = _first_input(sampling_config.get("sampler_2nd"), _first_input(kwargs.get("sampler_2nd")))
-                configured_sigmas = _first_input(sampling_config.get("sigmas_2nd"), _first_input(kwargs.get("sigmas_2nd")))
-                custom_second = configured_sampler is not None or configured_sigmas is not None
+                configured_sigmas = _first_input(kwargs.get("sigmas_2nd"))
                 second_pass_sampler, second_pass_sigmas = _h3_resolve_pass_sampling(
-                    graph, pass_name="second_pass", sampler=configured_sampler,
+                    graph, pass_name="second_pass", sampler=_first_input(kwargs.get("sampler_2nd")),
                     sigmas=configured_sigmas, preset_name=preset_name,
                     has_second_pass=True, is_turbo=second_is_turbo)
                 if has_context_second_pass:
                     context_second_pass_sigmas = _h3_resolve_context_second_pass_sigmas(
                         graph, preset_name=preset_name, is_turbo=second_is_turbo,
-                        has_custom_second_pass_sampling=custom_second)
+                        has_custom_sigmas=configured_sigmas is not None)
         report_step(31)
-        run_recipe = {"sampling_mode": sampling_mode, "first_pass_only": first_pass_only,
+        run_recipe = {"sampling_mode": sampling_mode, **dual_recipe,
                       "first_width": first_pass_width, "first_height": first_pass_height,
                       "target_width": target_width, "target_height": target_height,
                       "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
@@ -1425,8 +1442,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 )
                 task_tracks_info = prepare_multitrack_project_task_info(
                     task_tracks_info_base, shared_images,
-                    task_shared_audio if generation_mode == "reference" or task_is_passthrough else [],
-                    task_shared_video if generation_mode == "reference" or task_is_passthrough else [],
+                    task_shared_audio if generation_mode == "reference" or task_is_passthrough else {},
+                    task_shared_video if generation_mode == "reference" or task_is_passthrough else {},
                     task_entry=entry,
                 )
                 task_output = graph.node(
@@ -1461,7 +1478,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 previous_artifact = last_project_output = graph.node(
                     "easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=safe_project_name,
                     segment_index=task_index, tracks_info=output_info, latent=seeded.out(0), low_latent=seeded.out(1),
-                    video_path=passthrough.out(0), raw_audio=seeded.out(2), run_state=run_state,
+                    video_path=passthrough.out(0), raw_audio=seeded.out(2), run_state=run_state, project_save=project_save,
                     last_frame=graph.node("easy h3LastFrame", id=f"tail_frame_{task_index}", images=passthrough.out(1)).out(0),
                     **({"previous": previous_artifact} if previous_artifact is not None else {})).out(0)
                 previous_hires_context_latent = previous_low_context_latent = None
@@ -1474,10 +1491,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 else "shot"
             )
             taper = drift_taper(content, native_plans[task_index].segment_id)
-            continuity_mode = {"context_test": "context", MATCHED_DRIFT_ALIAS: "context_drift"}.get(
-                continuity_mode, continuity_mode)
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
-            uses_swap = continuity_mode in {"context_drift", "context_swap"}
+            uses_swap = continuity_mode == "context_drift"
             # The default taper keeps the original Drift graphs; low-only tapers
             # leave the high-resolution stage on the plain schedule.
             drift_low_inputs: dict[str, Any] = {}
@@ -1514,6 +1529,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 conditioning_inputs.update({
                     "audios": task_output.out(5),
                     "videos": task_output.out(6),
+                    "video_soundtracks": task_output.out(9),
                 })
                 if fit_locked_video_timing:
                     raw_video_info = graph.node("easy h3NativeLockedVideoInfo", id=f"native_video_window_{task_index}",
@@ -1521,7 +1537,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                                                 track_id=locked_video_track["id"])
                     raw_video = graph.node("easy multiTrackTaskOutput", id=f"native_video_output_{task_index}",
                                            tracks_info=raw_video_info.out(0), task_index=0, prompt_format="default")
-                    conditioning_inputs["videos"] = raw_video.out(6)
+                    # The plan keeps the first reference video for the locked one.
+                    conditioning_inputs["locked_video"] = raw_video.out(6)
                     conditioning_inputs["locked_video_timing_frames"] = task_length
                     conditioning_inputs["native_locked_video"] = True
             encoded_conditioning = graph.node(
@@ -1568,14 +1585,14 @@ class EasyMultiTrackProject(io.ComfyNode):
                 fallback_reasons.append("GENERATED_IMAGE")
             if run_second_pass and upscale_by > 1 and selected_upscale_model == "None" and not audio_only:
                 fallback_reasons.append("PIXEL_UPSCALE")
-            recipe = {"sampling_mode": sampling_mode, "first_pass_only": first_pass_only,
+            recipe = {"sampling_mode": sampling_mode, **dual_recipe,
                       "first_width": first_pass_width, "first_height": first_pass_height,
                       "target_width": target_width, "target_height": target_height,
                       "lowres_scale": lowres_scale, "transition_ratio": transition_ratio,
                       "upscale_model": selected_upscale_model, "upscale_by": upscale_by,
                       "seed": first_pass_seed, "sampling_plan": preset_name,
-                      "task_content": content, "task_fingerprint": native_task_fingerprint(info, task_index), "disable_2nd_noise": disable_2nd_noise,
-                      "parent_index": task_index - 1,
+                      "task_content": content, "task_fingerprint": native_task_fingerprint(info, task_index),
+                      "task_fingerprint_version": TASK_FINGERPRINT_VERSION, "disable_2nd_noise": disable_2nd_noise,
                       "previous_segment_id": native_plans[task_index - 1].segment_id if task_index else None,
                       **({"parent_plan": native_plans[task_index - 1].as_dict()} if uses_context else {}),
                       "fallback_reasons": fallback_reasons, "rho": 0.0,
@@ -1591,7 +1608,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                                          project_name=safe_project_name,
                                          plan_json=json.dumps(native_plans[task_index].as_dict()), recipe_json=json.dumps(recipe),
                                          run_state=run_state,
-                                         sigmas=first_pass_sigmas,
+                                         **({"sigmas": first_pass_sigmas} if first_pass_sigmas is not None else {}),
                                          vae=vae, audio_vae=audio_vae,
                                          **({"previous_frame_source": previous_frame_source} if previous_frame_source is not None else {}),
                                          **({"second_sigmas": context_second_pass_sigmas if uses_context and context_second_pass_sigmas is not None else second_pass_sigmas} if run_second_pass else {}),
@@ -1608,6 +1625,7 @@ class EasyMultiTrackProject(io.ComfyNode):
             has_context_continuity = (
                 uses_context
                 and first_pass_context_latent is not None
+                and not use_saved_first_pass
             )
             # Apply external audio locks after copying context, on the inherited clock.
 
@@ -1623,7 +1641,6 @@ class EasyMultiTrackProject(io.ComfyNode):
                         context_latent=first_pass_context_latent,
                         sigmas=first_pass_sigmas,
                         context_length=str(context_source_frames),
-                        seed=(first_pass_seed + task_index) & 0xFFFFFFFFFFFFFFFF,
                         continue_audio=True,
                         freeze_audio=False,
                         **drift_low_inputs,
@@ -1655,11 +1672,13 @@ class EasyMultiTrackProject(io.ComfyNode):
                                           [segment["start_frame"], segment["end_frame"]]
                                           for segment in locked_audio_track.get("segments", [])
                                           if not segment.get("content", {}).get("muted", False)])}
-                native_audio_lock = graph.node("easy h3NativeAudioLock", id=f"native_audio_lock_{task_index}",
-                                              latent=initial_latent, **native_lock_inputs)
-                initial_latent, task_locked_audio = native_audio_lock.out(0), native_audio_lock.out(1)
+                if not use_saved_first_pass:
+                    native_audio_lock = graph.node("easy h3NativeAudioLock", id=f"native_audio_lock_{task_index}",
+                                                  latent=initial_latent, **native_lock_inputs)
+                    initial_latent, task_locked_audio = native_audio_lock.out(0), native_audio_lock.out(1)
             report_segment_step(0.28)
             selflift_low_latent: Any | None = None
+            segment_seed = second_pass_seed
             if is_selflift:
                 report_segment_step(0.38)
                 selflift_inputs: dict[str, Any] = {
@@ -1707,6 +1726,17 @@ class EasyMultiTrackProject(io.ComfyNode):
                 )
                 first_pass_latent = selflift_sample.out(0)
                 selflift_low_latent = selflift_sample.out(1)
+            elif use_saved_first_pass:
+                saved_first_pass = graph.node(
+                    "easy h3NativeSavedFirstPass",
+                    id=f"saved_first_pass_{task_index}",
+                    project_name=safe_project_name,
+                    plan_json=json.dumps(native_plans[task_index].as_dict()),
+                    run_state=run_state,
+                    **({"previous": previous_artifact} if previous_artifact is not None else {}),
+                )
+                first_pass_latent = saved_first_pass.out(0)
+                segment_seed = saved_first_pass.out(1)
             else:
                 first_pass_guider = graph.node(
                     "BasicGuider",
@@ -1859,13 +1889,19 @@ class EasyMultiTrackProject(io.ComfyNode):
                             **drift_high_inputs).out(0)
 
                 if native_lock_inputs is not None:
-                    upscaled_latent = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",
-                                                 latent=upscaled_latent, **native_lock_inputs).out(0)
+                    second_audio_lock = graph.node("easy h3NativeAudioLock", id=f"native_second_audio_lock_{task_index}",
+                                                   latent=upscaled_latent, **native_lock_inputs)
+                    upscaled_latent = second_audio_lock.out(0)
+                    if use_saved_first_pass:
+                        task_locked_audio = second_audio_lock.out(1)
+                if keep_first_pass_audio:
+                    upscaled_latent = graph.node("easy h3NativeKeepAudio", id=f"keep_first_pass_audio_{task_index}",
+                                                 latent=upscaled_latent).out(0)
                 report_segment_step(0.62)
                 second_pass_noise = graph.node(
                     "DisableNoise" if disable_2nd_noise else "RandomNoise",
                     id=f"second_pass_noise_{task_index}",
-                    **({} if disable_2nd_noise else {"noise_seed": second_pass_seed}),
+                    **({} if disable_2nd_noise else {"noise_seed": segment_seed}),
                 )
                 report_segment_step(0.66)
                 second_pass_guider = graph.node(
@@ -1931,7 +1967,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                 graph, task_index, safe_project_name, output_info, final_latent,
                 low_stage_context_latent if has_second_pass or is_selflift else None,
                 native_state, vae, audio_vae, task_locked_audio if has_task_locked_audio else None,
-                audio_only, previous_artifact, run_state)
+                audio_only, previous_artifact, run_state, project_save)
             previous_hires_context_latent = previous_low_context_latent = None
             segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
             report_segment_step(1.0)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -123,6 +124,21 @@ def native_dependents(manifest: dict[str, Any], artifact_ids: set[str]) -> list[
     return found
 
 
+def dropped_version_dependents(manifest: dict[str, Any], segment: dict[str, Any], keys: list[str]) -> list[str]:
+    """Tasks with versions that continue from data only these versions of a task hold.
+
+    An upscaled version carries its first pass on, so that first pass stays while
+    another version of the task still holds it.
+    """
+    generations = segment["generations"]
+    kept = {d["metadata"]["artifact_id"] for key, generation in generations.items() if key not in keys
+            for d in generation.get("native", {}).values()}
+    identities = {media_version_id(segment["segment_id"], key, generations[key]) for key in keys}
+    identities.update(d["metadata"]["artifact_id"] for key in keys for d in generations[key].get("native", {}).values()
+                      if d["metadata"]["artifact_id"] not in kept)
+    return native_dependents(manifest, identities)
+
+
 def native_parent_ids(metadata: dict[str, Any]) -> list[str]:
     return [value for value in [metadata.get("parent_artifact_id"), *metadata.get("reference_artifact_ids", [])] if value]
 
@@ -133,8 +149,11 @@ def media_version_id(segment_id: str, generation_id: str, generation: dict[str, 
     return "media:" + hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
 
 
-def refresh_native_dependencies(manifest: dict[str, Any]) -> None:
-    """A version is valid only while its exact parent versions are active and valid."""
+def refresh_native_dependencies(manifest: dict[str, Any]) -> set[str]:
+    """A version is valid only while its exact parent versions are active and valid.
+
+    Returns the artifact and media ids of the valid active versions.
+    """
     active = [(s.get("segment_id", ""), str(s.get("active_generation")),
                s.get("generations", {}).get(str(s.get("active_generation")), {}))
               for s in manifest.get("segments", {}).values()]
@@ -153,17 +172,38 @@ def refresh_native_dependencies(manifest: dict[str, Any]) -> None:
             remaining.remove(item)
     for _, _, generation in remaining:
         generation["native_stale"] = True
+    return valid_ids
+
+
+GENERATION_FILE_FIELDS = ("context_latent", "context_latent_low", "video", "audio", "raw_audio", "last_frame", "locked_audio")
+
+
+def _delete_unreferenced_files(directory: Path, manifest: dict[str, Any], generation: dict[str, Any]) -> None:
+    """Delete a dropped version's files that no remaining version uses."""
+    kept = {name for segment in [*manifest.get("segments", {}).values(), *manifest.get("detached_segments", {}).values()]
+            for other in segment.get("generations", {}).values() for field in GENERATION_FILE_FIELDS
+            if (name := other.get(field))}
+    for field in GENERATION_FILE_FIELDS:
+        name = generation.get(field)
+        if not name or name in kept:
+            continue
+        try:
+            native_child_path(directory, name).unlink(missing_ok=True)
+        except (OSError, NativePlanError) as error:
+            # The manifest no longer lists the file, so a leftover only costs disk space.
+            logging.warning("Replaced H3 version saved; could not remove %s: %s", name, error)
 
 
 def commit_native_generation(
     directory: Path, segment_index: int, project_fields: dict[str, Any],
     record: dict[str, Any], latents: dict[str, dict[str, Any]],
-    media: dict[str, Path],
+    media: dict[str, Path], replace: bool = False,
 ) -> dict[str, Any]:
-    """Publish new files, then switch one manifest atomically. Never evict an old version.
+    """Publish new files, then switch one manifest atomically.
 
-    Override is intentionally a new recoverable generation for native projects.
-    Source staging media remain available if any write fails.
+    Other versions are kept unless ``replace`` (project_save override): then the task's
+    previously active version is dropped, and its files are deleted once the new manifest
+    is in place. Source staging media remain available if any write fails.
     """
     if set(latents) - {"high", "low"} or "high" not in latents:
         raise NativePlanError("STAGE", "A generation needs a high stage and at most one low stage.")
@@ -185,11 +225,7 @@ def commit_native_generation(
         segments: dict[str, Any] = {}
         for index, task in enumerate(tasks):
             sid = task["segment_id"]
-            prior = by_id.pop(sid, None)
-            if prior is None:
-                # Legacy versions remain visible during a first explicit migration.
-                prior = old_segments.get(str(index), {}) if not manifest.get("h3_native") else {}
-            segments[str(index)] = {**prior, "segment_id": sid}
+            segments[str(index)] = {**by_id.pop(sid, {}), "segment_id": sid}
         manifest["detached_segments"] = detached = by_id
         target = segments[str(segment_index)]
         if target["segment_id"] != meta["segment_id"]:
@@ -213,7 +249,9 @@ def commit_native_generation(
                 name = f"{field}_{segment_index}_{generation}{source.suffix}"
                 shutil.copyfile(source, staging / name)
                 saved[field] = name
-            target.setdefault("generations", {})[str(generation)] = saved
+            generations = target.setdefault("generations", {})
+            replaced = generations.pop(str(target.get("active_generation")), None) if replace else None
+            generations[str(generation)] = saved
             target.update({"active_generation": generation, "updated_at": saved["updated_at"],
                            "continuity_mode": record.get("continuity_mode", "shot")})
             manifest.update({**project_fields, "version": 3, "segments": segments, "updated_at": time.time()})
@@ -233,6 +271,8 @@ def commit_native_generation(
                 os.fsync(output.fileno())
             temporary.replace(directory / "project.json")
             committed = True
+            if isinstance(replaced, dict):
+                _delete_unreferenced_files(directory, manifest, replaced)
             return saved
         finally:
             if not committed:

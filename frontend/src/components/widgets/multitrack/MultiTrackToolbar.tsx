@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { GalleryHorizontalEnd, Magnet, Maximize2, Minimize2, Redo2, Trash2, Undo2, ZoomOut } from 'lucide-react'
+import { FileDown, FileUp, GalleryHorizontalEnd, Magnet, Maximize2, Minimize2, Redo2, Trash2, Undo2, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SplitCenterIcon, SplitLeftDotsIcon, SplitRightDotsIcon, TaskMarkerIcon } from '@/components/ui/custom-lucide-icon'
 import { Slider } from '@/components/ui/slider'
@@ -38,6 +38,9 @@ interface MultiTrackToolbarProps {
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
+  /** H3 plan files; the buttons show only when given. */
+  onExportPlan?: () => void
+  onImportPlan?: () => void
 }
 
 export function MultiTrackToolbar({
@@ -68,6 +71,8 @@ export function MultiTrackToolbar({
   canRedo,
   onUndo,
   onRedo,
+  onExportPlan,
+  onImportPlan,
 }: Readonly<MultiTrackToolbarProps>) {
   const t = useT()
 
@@ -241,6 +246,36 @@ export function MultiTrackToolbar({
       </div>
 
       <div className="ml-auto flex h-6 max-h-6 min-h-6 items-center gap-0.5 overflow-hidden">
+        {onExportPlan && renderTooltip(t('h3Plan.exportTooltip'), (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={`${TOOLBAR_ICON_BUTTON_CLASS} text-muted-foreground cursor-pointer`}
+            aria-label={t('h3Plan.export')}
+            onClick={(event) => {
+              event.stopPropagation()
+              onExportPlan()
+            }}
+          >
+            <FileDown className={TOOLBAR_ICON_CLASS} />
+          </Button>
+        ))}
+        {onImportPlan && renderTooltip(t('h3Plan.importTooltip'), (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={`${TOOLBAR_ICON_BUTTON_CLASS} text-muted-foreground cursor-pointer`}
+            aria-label={t('h3Plan.import')}
+            onClick={(event) => {
+              event.stopPropagation()
+              onImportPlan()
+            }}
+          >
+            <FileUp className={TOOLBAR_ICON_CLASS} />
+          </Button>
+        ))}
         {renderTooltip(t('multitrack.taskOverview'), (
           <Button
             type="button"

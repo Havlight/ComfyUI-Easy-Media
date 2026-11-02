@@ -1,10 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
+import type { LinkedChange } from '@/hooks/use-multitrack-history'
 import { H3NativeTimingError, reconcileH3NativeTimeline } from '@/lib/h3-native-timing'
 import { normalizeTrackData } from '@/lib/multitrack-utils'
 import type { TrackData } from '@/types/multitrack'
 
+/**
+ * Normalize an edit and, for MiniMax, apply native timing; throws H3NativeTimingError to
+ * reject it. Plan imports use the same rules as manual edits.
+ */
+export function prepareH3NativeEdit(current: TrackData, candidate: TrackData, format: string | undefined): TrackData {
+  const next = normalizeTrackData(candidate)
+  if (format !== 'MiniMax') return { ...next, h3_native: current.h3_native }
+  for (const track of normalizeTrackData(current).tracks.filter((item) => item.locked)) {
+    const updated = next.tracks.find((item) => item.id === track.id)
+    if ((!updated || updated.locked) && JSON.stringify(track.segments) !== JSON.stringify(updated?.segments)) {
+      throw new H3NativeTimingError('TRACK_LOCKED', 'Unlock the track before editing its contents.')
+    }
+  }
+  return reconcileH3NativeTimeline({ ...next, h3_native: { ...next.h3_native, version: 2 } })
+}
+
 /** One accepted edit, including native ripple adjustments, is one history entry. */
-export function useH3NativeEditing(current: TrackData, format: string | undefined, commit: (next: TrackData) => void) {
+export function useH3NativeEditing(
+  current: TrackData, format: string | undefined, commit: (next: TrackData, linked?: LinkedChange) => void,
+) {
   const [error, setError] = useState<{ code: string; message: string; segmentId?: string } | null>(null)
   const [notice, setNotice] = useState<number | null>(null)
   // Do not immediately redo an automatic conversion when the user undoes it.
@@ -15,15 +34,7 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
   commitRef.current = commit
 
   function prepare(candidate: TrackData): TrackData {
-    const next = normalizeTrackData(candidate)
-    if (format !== 'MiniMax') return { ...next, h3_native: current.h3_native }
-    for (const track of normalizeTrackData(current).tracks.filter((item) => item.locked)) {
-      const updated = next.tracks.find((item) => item.id === track.id)
-      if ((!updated || updated.locked) && JSON.stringify(track.segments) !== JSON.stringify(updated?.segments)) {
-        throw new H3NativeTimingError('TRACK_LOCKED', 'Unlock the track before editing its contents.')
-      }
-    }
-    return reconcileH3NativeTimeline({ ...next, h3_native: { ...next.h3_native, version: 2 } })
+    return prepareH3NativeEdit(current, candidate, format)
   }
 
   function report(cause: unknown) {
@@ -31,7 +42,7 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
       : { code: 'EDIT_FAILED', message: cause instanceof Error ? cause.message : String(cause) })
   }
 
-  function apply(next: TrackData, requested: TrackData) {
+  function apply(next: TrackData, requested: TrackData, linked?: LinkedChange) {
     const before = new Map(requested.tracks.flatMap((track) => track.type === 'task' ? track.segments.map((item) => [item.id, item] as const) : []))
     const count = next.tracks.flatMap((track) => track.type === 'task' ? track.segments : []).filter((item) => {
       const old = before.get(item.id)
@@ -39,13 +50,14 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
     }).length
     setError(null)
     setNotice(count || null)
-    commitRef.current(next)
+    commitRef.current(next, linked)
   }
 
-  function commitEdit(candidate: TrackData | (() => TrackData)) {
+  /** `linked` is another node's change made with this edit, undone and redone with it. */
+  function commitEdit(candidate: TrackData | (() => TrackData), linked?: LinkedChange) {
     try {
       const requested = typeof candidate === 'function' ? candidate() : candidate
-      apply(prepare(requested), requested)
+      apply(prepare(requested), requested, linked)
     } catch (cause: unknown) { report(cause) }
   }
 

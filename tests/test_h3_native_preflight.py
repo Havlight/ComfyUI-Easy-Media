@@ -71,14 +71,6 @@ def test_fallback_does_not_hide_corruption_or_changed_parent_range(tmp_path):
         check(tmp_path, moved, [1], recipe(allow_vae_fallback=True))
 
 
-def test_later_retired_task_stops_whole_run(tmp_path):
-    from dataclasses import replace
-    plans = [_plan(), replace(_plan('b', 243, 51, 'a'), continuity_mode='context_masked')]
-    with pytest.raises(timing.NativePlanError, match='Task 2.*METHOD_RETIRED'):
-        check(tmp_path, plans, [0, 1])
-    assert not (tmp_path / 'project.json').exists()
-
-
 def test_edited_parent_content_still_continues_from_its_saved_latent(tmp_path):
     # Prompt-level edits do not change the saved latent a continuation reads.
     plans = [_plan(), _plan('b', 243, 51, 'a')]
@@ -116,8 +108,8 @@ def test_source_fingerprint_ignores_materialization_but_tracks_source_edits():
     status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
     info = {'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90,
         'content': {'images': [{'id': 'image', 'file_path': 'portrait.png'}]}}]},
-        {'type': 'video', 'segments': [{'id': 'source', 'start_frame': 0, 'end_frame': 90,
-            'content': {'file_path': 'source.mp4', 'shared_reference': False}}]}]}
+        {'id': 'video', 'type': 'video', 'segments': [{'id': 'source', 'start_frame': 0, 'end_frame': 90,
+            'content': {'media_type': 'video', 'file_path': 'source.mp4', 'shared_reference': False}}]}]}
     materialized = copy.deepcopy(info)
     materialized['tracks'][0]['segments'][0]['content']['images'][0]['media_index'] = 3
     materialized['tracks'][1]['segments'][0]['content']['media_index'] = 1
@@ -125,3 +117,352 @@ def test_source_fingerprint_ignores_materialization_but_tracks_source_edits():
     assert status.native_task_fingerprint(info, 0) == status.native_task_fingerprint(materialized, 0)
     materialized['tracks'][1]['segments'][0]['content']['file_path'] = 'replacement.mp4'
     assert status.native_task_fingerprint(info, 0) != status.native_task_fingerprint(materialized, 0)
+
+
+def test_source_fingerprint_only_tracks_media_that_reaches_the_task():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    clip = lambda sid, start, end, **content: {'id': sid, 'start_frame': start, 'end_frame': end,
+                                               'content': {'media_type': 'audio', 'file_path': f'{sid}.wav', **content}}
+    info = {'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90, 'content': {}},
+                                      {'id': 'b', 'start_frame': 90, 'end_frame': 180, 'content': {}}]},
+        {'id': 'voice', 'type': 'audio', 'segments': [clip('near', 0, 60), clip('far', 400, 500)]},
+        {'id': 'later', 'type': 'audio', 'segments': [clip('late', 300, 350)]},
+        {'id': 'quiet', 'type': 'audio', 'muted': True, 'segments': [clip('hum', 0, 90)]}]}
+    before = status.native_task_fingerprint(info, 0)
+
+    edited = copy.deepcopy(info)
+    edited['tracks'][1]['segments'][1]['content']['file_path'] = 'other.wav'
+    edited['tracks'][2]['segments'][0]['content']['volume_db'] = -6
+    edited['tracks'][3]['segments'][0]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(edited, 0) == before
+
+    unmuted = copy.deepcopy(info)
+    unmuted['tracks'][3]['muted'] = False
+    assert status.native_task_fingerprint(unmuted, 0) != before
+    moved = copy.deepcopy(info)
+    moved['tracks'][1]['segments'][0]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(moved, 0) != before
+    # The shared clip reaches every task wherever it sits.
+    shared = copy.deepcopy(info)
+    shared['tracks'][1]['segments'][1]['content']['shared_reference'] = True
+    assert status.native_task_fingerprint(shared, 0) != before
+    shared_edit = copy.deepcopy(shared)
+    shared_edit['tracks'][1]['segments'][1]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(shared_edit, 0) != status.native_task_fingerprint(shared, 0)
+
+
+def test_source_fingerprint_counts_only_the_part_of_a_clip_inside_the_window():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    info = {'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90, 'content': {}},
+                                      {'id': 'b', 'start_frame': 90, 'end_frame': 180, 'content': {}}]},
+        {'id': 'song', 'type': 'audio', 'audio_locked': True, 'segments': [
+            {'id': 'track', 'start_frame': 0, 'end_frame': 400, 'content': {'media_type': 'audio', 'file_path': 'song.wav'}}]}]}
+    before = status.native_task_fingerprint(info, 0)
+
+    def edited(**fields):
+        changed = copy.deepcopy(info)
+        changed['tracks'][1]['segments'][0].update(fields)
+        return changed
+
+    # Trimming the song's end far past the task leaves the task's part, and the task, as it was.
+    trimmed = edited(end_frame=300)
+    assert status.native_task_fingerprint(trimmed, 0) == before
+    assert status.native_task_fingerprint(trimmed, 0, 1) != status.native_task_fingerprint(info, 0, 1)
+    # Cutting into the task's window, or sliding the source under it, changes what it heard.
+    assert status.native_task_fingerprint(edited(end_frame=60), 0) != before
+    assert status.native_task_fingerprint(edited(start_frame=0, origin_start_frame=-24), 0) != before
+
+
+def test_timeline_status_compares_each_version_with_its_own_fingerprint(tmp_path):
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    _commit(tmp_path, _latent(), plans)
+    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2}, 'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': plans[0].start_frame, 'end_frame': plans[0].end_frame,
+                                       'content': {'continuity_mode': plans[0].continuity_mode}}]},
+        {'id': 'song', 'type': 'audio', 'audio_locked': True, 'segments': [
+            {'id': 'track', 'start_frame': 0, 'end_frame': 600, 'content': {'media_type': 'audio', 'file_path': 'song.wav'}}]}]}
+    trimmed = copy.deepcopy(info)
+    trimmed['tracks'][1]['segments'][0]['end_frame'] = 500
+    manifest = artifacts.read_native_manifest(tmp_path)
+    generation = manifest['segments']['0']['generations']['0']
+
+    def status_after_trim(version):
+        recipe = {'task_fingerprint': status.native_task_fingerprint(info, 0, version or 1)}
+        generation['native_recipe'] = {**recipe, **({'task_fingerprint_version': version} if version else {})}
+        return status.native_timeline_status(trimmed, manifest)[0]['status']
+
+    # Versions saved before version 2 keep their old comparison, so their status does not move.
+    assert status_after_trim(None) == 'edited'
+    assert status_after_trim(2) == 'saved'
+
+
+def test_source_fingerprint_follows_the_task_reference_lists():
+    import copy
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    clip = lambda sid, start, end: {'id': sid, 'start_frame': start, 'end_frame': end,
+                                    'content': {'media_type': 'audio', 'file_path': f'{sid}.wav'}}
+    info = {'frame_rate': 24, 'tracks': [
+        {'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 90, 'content': {'task_mode': 'ref'}},
+                                      {'id': 'b', 'start_frame': 90, 'end_frame': 180, 'content': {}}]},
+        {'id': 'voice', 'type': 'audio', 'segments': [clip('near', 0, 60)]},
+        {'id': 'later', 'type': 'audio', 'segments': [clip('late', 300, 350)]}]}
+
+    def with_audios(*audios):
+        changed = copy.deepcopy(info)
+        changed['tracks'][0]['segments'][0]['content']['audios'] = list(audios)
+        return status.native_task_fingerprint(changed, 0), changed
+
+    base = status.native_task_fingerprint(info, 0)
+    # Placing a reference where the plan already puts it changes nothing.
+    assert with_audios({'id': 'p', 'source_type': 'track', 'track_id': 'voice'})[0] == base
+    assert with_audios({'id': 'u', 'source_type': 'input', 'file_path': 'line.wav'})[0] != base
+    assert with_audios({'id': 'p', 'source_type': 'track', 'track_id': 'voice', 'muted': True})[0] != base
+    # Unfitted audio reaches 15 s past the task start, so the late clip now counts.
+    unfitted, unfitted_info = with_audios({'id': 'p', 'source_type': 'track', 'track_id': 'later', 'fit': False})
+    assert unfitted != base
+    unfitted_info['tracks'][2]['segments'][0]['content']['file_path'] = 'other.wav'
+    assert status.native_task_fingerprint(unfitted_info, 0) != unfitted
+
+
+def _sized(plan, parent=None, stage='single_final', side=2):
+    import torch
+    meta = native.new_native_metadata(plan, stage, {'seed': 51, 'adapter': 'test'}, parent)
+    video = torch.zeros(1, 24, timing.video_steps(plan.raw_frames), side, side)
+    audio = torch.zeros(1, 32, 2, meta['audio_ticks'])
+    return native.stamp_native_result({'samples': native._official_nested_tensor((video, audio))}, meta)
+
+
+def _version(directory, plans, index, high, low=None, sampling_pass='single', seed=51, media=None, **fields):
+    from test_h3_native_artifacts import _fields
+    record = {'continuity_mode': plans[index].continuity_mode, 'sampling_pass': sampling_pass, 'seed': seed, **fields}
+    return artifacts.commit_native_generation(directory, index, _fields(plans), record,
+                                              {'high': high, **({'low': low} if low is not None else {})}, media or {})
+
+
+def saved_recipe(**kwargs):
+    return recipe('dual', use_saved_1st_pass=True, **kwargs)
+
+
+def test_saved_first_pass_selects_each_task_active_first_pass(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first, seed=7)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']), seed=9)
+    state = check(tmp_path, plans, [0, 1], saved_recipe())
+    assert {sid: (item['generation'], item['seed'], item['meta']['stage']) for sid, item in state['first_pass'].items()} == {
+        'a': ('0', 7, 'single_final'), 'b': ('1', 9, 'single_final')}
+    assert state['first_pass']['a']['meta']['artifact_id'] == first['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_reads_a_dual_version_low_stage(tmp_path):
+    plans = [_plan()]
+    low = _sized(plans[0], stage='dual_low_prediction')
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), low, sampling_pass='second')
+    state = check(tmp_path, plans, [0], saved_recipe(target_width=64, target_height=64))
+    assert state['first_pass']['a']['meta']['artifact_id'] == low['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_needs_a_first_pass_at_the_editor_size(tmp_path):
+    plans = [_plan()]
+    with pytest.raises(timing.NativePlanError, match='no saved first pass'):
+        check(tmp_path, plans, [0], saved_recipe())
+    _version(tmp_path, plans, 0, _sized(plans[0]))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_SIZE'):
+        check(tmp_path, plans, [0], saved_recipe(first_width=64, first_height=64, target_width=64, target_height=64))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='selflift_high_final'), sampling_pass='selflift')
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_MODE'):
+        check(tmp_path, plans, [0], saved_recipe())
+
+
+def test_saved_first_pass_needs_the_previous_task_upscaled(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_PARENT'):
+        check(tmp_path, plans, [1], saved_recipe(target_width=64, target_height=64))
+    # Upscaling both in one run is fine: the second continues from the first's new version.
+    state = check(tmp_path, plans, [0, 1], saved_recipe(target_width=64, target_height=64))
+    assert set(state['first_pass']) == {'a', 'b'}
+
+
+def test_saved_first_pass_in_one_run_must_continue_from_the_previous_first_pass(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    high = _sized(plans[0], stage='dual_high_final')
+    _version(tmp_path, plans, 0, high, _sized(plans[0], stage='dual_low_prediction'), sampling_pass='second')
+    # At the same size a single run continues from the Dual task's final stage.
+    _version(tmp_path, plans, 1, _sized(plans[1], high['h3_native']))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_CHAIN'):
+        check(tmp_path, plans, [0, 1], saved_recipe())
+    check(tmp_path, plans, [1], saved_recipe())
+
+
+def test_single_continues_from_a_dual_predecessor_first_pass(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4),
+             _sized(plans[0], stage='dual_low_prediction'), sampling_pass='second')
+    check(tmp_path, plans, [1], recipe('single'))
+    with pytest.raises(timing.NativePlanError, match='compatible high'):
+        check(tmp_path, plans, [1], recipe('selflift'))
+
+
+def test_an_upscaled_version_keeps_tasks_continued_from_its_first_pass_valid(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second')
+    manifest = artifacts.read_native_manifest(tmp_path)
+    assert manifest['segments']['0']['active_generation'] == 2
+    assert not manifest['segments']['1']['generations']['1'].get('native_stale')
+    state = check(tmp_path, plans, [1], recipe('single'))
+    assert state['existing']['a']['generation'] == '2'
+
+
+TASK_A = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
+          'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
+                                                     'content': {'continuity_mode': 'shot'}}]}]}
+LORA_A, LORA_B, LORA_C = ({'sha256': name, 'strength': 1.0} for name in 'abc')
+
+
+def test_a_first_stage_lora_change_is_reported_but_does_not_block_an_upscale(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    _version(tmp_path, plans, 0, _sized(plans[0]))
+    manifest = artifacts.read_native_manifest(tmp_path)
+    assert status.saved_first_pass_edits(TASK_A, manifest, [0]) == []
+    # The upscale keeps the saved first pass; the new first-stage rules apply to the next one.
+    assert status.saved_first_pass_lora_changes(TASK_A, manifest, [0], {'a': {'second': [LORA_A]}}) == []
+    assert status.saved_first_pass_lora_changes(TASK_A, manifest, [0], {'a': {'first': [LORA_A]}}) == [1]
+
+
+def test_an_upscaled_version_answers_for_its_second_pass_loras(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first, native_recipe={'segment_loras': {'first': [LORA_A]}})
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second',
+             first_pass_generation='0', native_recipe={'segment_loras': {'first': [LORA_A], 'second': [LORA_C]}})
+    manifest = artifacts.read_native_manifest(tmp_path)
+    # B in the first stage now: upscaling the same first pass again still matches it, and says it predates B.
+    [entry] = status.native_timeline_status(TASK_A, manifest, {'a': {'first': [LORA_B], 'second': [LORA_C]}}, True)
+    assert entry['status'] == 'saved' and entry['first_loras_changed'] is True
+    # A preview, or Dual from scratch, samples a new first pass with B: the version is out of date.
+    [entry] = status.native_timeline_status(TASK_A, manifest, {'a': {'first': [LORA_B], 'second': [LORA_C]}})
+    assert entry['status'] == 'edited'
+    [entry] = status.native_timeline_status(TASK_A, manifest, {'a': {'first': [LORA_A], 'second': [LORA_B]}}, True)
+    assert entry['status'] == 'edited' and 'first_loras_changed' not in entry
+    # A version that sampled its own first pass answers for both stages.
+    _version(tmp_path, plans, 0, _sized(plans[0]), native_recipe={'segment_loras': {'first': [LORA_A]}})
+    [entry] = status.native_timeline_status(TASK_A, artifacts.read_native_manifest(tmp_path), {'a': {'first': [LORA_B]}})
+    assert entry['status'] == 'edited' and entry['first_loras_changed'] is True
+
+
+def test_a_saved_first_pass_brings_the_loras_it_was_sampled_with(tmp_path):
+    plans = [_plan()]
+    files = {'first': [{'lora': 'mmh3/a.safetensors', 'sha256': 'a', 'strength': 1.0}]}
+    _version(tmp_path, plans, 0, _sized(plans[0]), native_recipe={'segment_loras': {'first': [LORA_A]},
+                                                                  'segment_lora_files': files})
+    state = check(tmp_path, plans, [0], saved_recipe())
+    assert state['first_pass']['a']['loras'] == {'segment_loras': [LORA_A], 'segment_lora_files': files['first']}
+
+
+def test_project_versions_say_how_each_version_was_made(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first, seed=7, native_recipe={'target_width': 32, 'target_height': 32})
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second',
+             seed=7, first_pass_generation='0', keep_1st_pass_audio=True,
+             native_recipe={'target_width': 64, 'target_height': 64, 'first_width': 32, 'first_height': 32})
+
+    summary = status.native_project_versions(artifacts.read_native_manifest(tmp_path))
+
+    single, upscaled = summary['tasks'][0]['versions']
+    assert (single['sampling_pass'], single['size'], single['seed']) == ('single', '32x32', 7)
+    assert 'upscaled_from' not in single and 'first_pass_size' not in single
+    assert {key: upscaled[key] for key in ('sampling_pass', 'size', 'first_pass_size', 'seed', 'upscaled_from',
+                                           'keep_1st_pass_audio')} == {
+        'sampling_pass': 'second', 'size': '64x64', 'first_pass_size': '32x32', 'seed': 7, 'upscaled_from': 0,
+        'keep_1st_pass_audio': True}
+    # b continued from the first pass a@0 made; the upscaled a@2 carries it on, so b is still valid.
+    [continued] = summary['tasks'][1]['versions']
+    assert continued['continued_from'] == 'a@0' and continued['stale'] is False
+
+
+def test_a_version_stale_only_through_its_second_pass_can_still_be_upscaled(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first_a = _sized(plans[0])
+    first_b = _sized(plans[1], first_a['h3_native'])
+    high_a = _sized(plans[0], stage='dual_high_final', side=4)
+    _version(tmp_path, plans, 0, first_a)
+    _version(tmp_path, plans, 1, first_b)
+    _version(tmp_path, plans, 0, high_a, first_a, sampling_pass='second')
+    _version(tmp_path, plans, 1, _sized(plans[1], high_a['h3_native'], stage='dual_high_final', side=4), first_b,
+             sampling_pass='second')
+    # Upscaling a again replaces its second pass and keeps its first pass.
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first_a, sampling_pass='second')
+    assert artifacts.read_native_manifest(tmp_path)['segments']['1']['generations']['3']['native_stale'] is True
+    state = check(tmp_path, plans, [1], saved_recipe(target_width=64, target_height=64))
+    assert state['first_pass']['b']['meta']['artifact_id'] == first_b['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_reports_a_stale_first_pass_and_a_passthrough_predecessor(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first_a = _sized(plans[0])
+    _version(tmp_path, plans, 0, first_a)
+    _version(tmp_path, plans, 1, _sized(plans[1], first_a['h3_native']))
+    # Every run imports a passthrough task again, so b's first pass would be stale afterwards.
+    with pytest.raises(timing.NativePlanError, match='Task 1 is passthrough.*Start the run at task 2'):
+        check(tmp_path, plans, [0, 1], saved_recipe(), passthrough={0})
+    _version(tmp_path, plans, 0, _sized(plans[0]))
+    with pytest.raises(timing.NativePlanError, match='SAVED_FIRST_PASS_STALE'):
+        check(tmp_path, plans, [1], saved_recipe())
+
+
+def test_saved_first_pass_accepts_a_former_first_pass_only_checkpoint(tmp_path):
+    plans = [_plan()]
+    checkpoint = _sized(plans[0], stage='dual_low_prediction')
+    _version(tmp_path, plans, 0, checkpoint, sampling_pass='first')
+    state = check(tmp_path, plans, [0], saved_recipe())
+    assert state['first_pass']['a']['meta']['artifact_id'] == checkpoint['h3_native']['artifact_id']
+
+
+def test_saved_first_pass_edits_leave_missing_versions_to_the_source_check(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
+            'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
+                                                       'content': {'continuity_mode': 'shot'}}]}]}
+    assert status.saved_first_pass_edits(info, {}, [0]) == []
+    assert status.saved_first_pass_lora_changes(info, {}, [0], {'a': {'first': [LORA_A]}}) == []
+
+
+def test_project_versions_omit_an_upscaled_from_version_that_was_replaced(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second',
+             first_pass_generation='7')
+    [version] = status.native_project_versions(artifacts.read_native_manifest(tmp_path))['tasks'][0]['versions']
+    assert 'upscaled_from' not in version
+
+
+def test_deleting_a_version_keeps_a_first_pass_another_version_still_holds(tmp_path):
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second')
+    manifest = artifacts.read_native_manifest(tmp_path)
+    segment = manifest['segments']['0']
+    # The upscaled a@2 still holds the first pass b continued from, so either version alone can go.
+    assert artifacts.dropped_version_dependents(manifest, segment, ['0']) == []
+    assert artifacts.dropped_version_dependents(manifest, segment, ['2']) == []
+    assert artifacts.dropped_version_dependents(manifest, segment, ['0', '2']) == ['b']

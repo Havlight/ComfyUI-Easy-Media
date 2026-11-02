@@ -4,9 +4,9 @@
 
 ## 动态分辨率
 
-`resolution` 是 `easy multiTrackEditor` 的 DynamicCombo widget。它不属于 TRACK_DATA；修改时必须按所选模式重建对应的子 widget，并同步工作流已有的 `widgets_values_named`。使用 `patch_workflow.py` 的 `editor.resolution` 写入，不要手工假设数组下标。
+`resolution` 是 `easy multiTrackEditor` 的 DynamicCombo widget，不属于 TRACK_DATA。改开着的分页用 `plan_workflow.py apply --set editor.resolution=标签 --set editor.resolution.子字段=值`，改工作流文件用 `patch_workflow.py` 补丁的 `editor` 区块，写法相同：标签写在 `resolution`，子字段写成 `resolution.子字段`（如 `resolution.width`）。ComfyUI 会按所选标签重建子 widget，不要手工假设数组下标。
 
-| 需求 | `resolution` 标签 | 必需子字段 |
+| 需求 | `resolution` 标签 | 子字段（`resolution.` 之后） |
 | --- | --- | --- |
 | 输出固定预设尺寸 | 如 `1344 x 768 (16:9)` | 可选 `resize_method`，默认 `stretch` |
 | 明确自定义宽高 | `width x height (custom)` | `width`、`height`，可选 `resize_method` |
@@ -36,8 +36,8 @@
 ```json
 {
   "resolution": "width x height (megapixels)",
-  "aspect_ratio": "16:9 (Widescreen)",
-  "megapixels": 0.9
+  "resolution.aspect_ratio": "16:9 (Widescreen)",
+  "resolution.megapixels": 0.9
 }
 ```
 
@@ -48,13 +48,13 @@ custom 示例：
 ```json
 {
   "resolution": "width x height (custom)",
-  "width": 1024,
-  "height": 576,
-  "resize_method": "crop"
+  "resolution.width": 1024,
+  "resolution.height": 576,
+  "resolution.resize_method": "crop"
 }
 ```
 
-可用 `resize_method` 为 `stretch`、`resize`、`pad`、`pad (white)`、`pad_edge`、`pad_edge_pixel`、`crop`、`pillarbox_blur`。需要保留完整画面时优先 pad/resize，需要铺满画布且允许裁边时选 crop；不要在用户未提出时擅自改变已有 resize method。
+宽高要是 8 的倍数。可用 `resize_method` 为 `stretch`、`resize`、`pad`、`pad (white)`、`pad_edge`、`pad_edge_pixel`、`crop`、`pillarbox_blur`。需要保留完整画面时优先 pad/resize，需要铺满画布且允许裁边时选 crop；不要在用户未提出时擅自改变已有 resize method。
 
 ## 时间语义
 
@@ -125,7 +125,7 @@ custom 示例：
 ```
 
 - `task_mode`: `default`、`l2v`、`ref`、`edit`。
-- `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）或 `context_drift`（上下文漂移控制）；旧值 `context_swap` 与 `context_drift_matched`（视为不渐变的漂移控制）仍可读取。
+- `continuity_mode`: `shot`（独立镜头）、`context`（普通上下文衔接）或 `context_drift`（上下文漂移控制）；其他值会被拒绝。
 - `drift_taper_steps`（可选，0–12 的整数，默认 4）、`drift_taper_floor`（可选，0–1，默认 0）与 `drift_taper_low_only`（可选布尔值，默认 false）：仅对 `context_drift` 生效，调整衔接处的渐变；4 步、权重 0 即原本的漂移控制，0 步为不渐变。保持默认值时删除字段；用户没有要求时不要添加。
 - `ref_image_size`: `match` 或 `max`。
 - `images` 最多 9 张，顺序决定 Picture 引用顺序。
@@ -146,6 +146,32 @@ custom 示例：
 `source_type` 可为 `input`、`output`、`local`、`url` 或 `slot`。字段必须与来源匹配：input/output 用 `file_path`，local 用 `local_path`，url 用 `url`，slot 用 `slot_name`。不要把本机绝对路径标成 `input`。
 
 上下文分段需要反复使用同一张参考图时，可在图片项上设置 `"shared_reference": true`。该图片会成为公用图片，自动排在每个任务片段的私有图片之前；公用和私有图片合计仍不得超过 9 张。不要为了共享而在每个任务中手工复制相同图片。
+
+### 任务参考视频与音频（仅 `ref`、`edit`）
+
+`content.videos` 与 `content.audios` 是该任务自己的参考列表，其他模式会忽略它们。项目格式与任务参考图相同，另有：
+
+- `fit`（仅音频，布尔值）：`true` 截到片段长度；上传项默认 `false`，即整段使用，最长 15 秒。视频一律截到片段长度。
+- `soundtrack`（仅视频，布尔值）：是否带原声，带原声时占用一个 `<Audio N>`；默认跟着素材：有音轨就带，`has_audio: false` 的视频不带。
+- `has_audio`（仅视频，布尔值）：素材是否有音轨。Editor 会自动检测并写入视频片段与上传项，通常不必手写。
+- `muted: true`：只在此片段排除该项。
+- `shared_reference: true`：上传项加到所有片段。设为公用时不移动任何项目：原片段位置不变，其他片段加在最后，已满 3 个的片段会超过上限而不使用它。
+
+时间轴上覆盖该片段的影音轨会自动成为参考。要调整它们的顺序或设置，写占位项 `{"id": "uuid", "source_type": "track", "track_id": "<轨道 id>"}`；对应公用片段时再加 `"segment_id"`。占位项可带 `muted`、`fit`（时间轴项默认 `true`；`false` 时从片段起点最多取 15 秒）与 `soundtrack`。没有占位项的时间轴参考排在最前，之后依列表顺序；每段最多使用 3 个视频与 3 个音频。上传的参考只作参考，不会混入输出音轨，也不参与音频锁定。
+
+静音或 `audio_locked` 的音频轨默认不作参考。占位项的 `muted` 可以覆盖默认值：`true` 排除，`false` 让这类轨道也在此片段作参考（例如锁定的台词轨同时当声音参考）。作为参考时不受输出静音影响。
+
+视频轨锁定时，锁定的视频固定为 `<Video 1>` 并对齐生成画布，其他参考视频照常排在后面，总数仍最多 3 个。
+
+```json
+{
+  "task_mode": "ref",
+  "audios": [
+    {"id": "uuid-1", "source_type": "input", "file_path": "voice/line01.wav", "file_name": "line01.wav"},
+    {"id": "uuid-2", "source_type": "track", "track_id": "bgm-track", "muted": true}
+  ]
+}
+```
 
 ## 上下文漂移控制模式
 
@@ -176,7 +202,7 @@ custom 示例：
 
 ## 音频锁定决策
 
-`audio_locked` 是 audio/video 轨道级字段。锁定 audio track 会沿用其音频；锁定 video track 会让生成画面遵循视频轨道时间线，并在没有锁定 audio track 时沿用视频原声。两种锁可以同时存在；此时 audio track 优先作为 `audio_lock` 的音频来源，video track 仍负责画面时间线。它与轨道的 `locked` 不同：`locked` 只禁止时间线编辑，不能代替 `audio_locked`。
+`audio_locked` 是 audio/video 轨道级字段。锁定 audio track 会沿用其音频；锁定 video track 会让生成画面遵循视频轨道时间线，并在没有锁定 audio track 时沿用视频原声。两种锁可以同时存在；此时 audio track 优先作为 `audio_lock` 的音频来源，video track 仍负责画面时间线。它与轨道的 `locked` 不同：`locked` 只禁止时间线编辑，不能代替 `audio_locked`。锁定的 video track 可设轨道级 `soundtrack: "reference"`：画面时间线照旧，原声仍作参考，但不沿用为输出音频（等于没有锁定音频）；不设时原声就是输出音频。
 
 ```json
 {
@@ -245,10 +271,9 @@ custom 示例：
 - 用户说“设为公用媒体”“所有上下文分段都参考这张图/这段音频/这个视频”或表达相同语义时，标记其指定媒体；不要只因文件名相同就自动共享。
 - 任务图片的标记写在 `content.images[]` 项上，可以有多张公用图片；它们会排在每个任务的私有图片之前，公用和私有图片总数仍最多为 9。
 - 音频/视频的标记写在对应媒体片段 `content` 上，同一音频轨或视频轨最多一个；切换时把该轨其他片段显式设为 `false`。
-- 公用音频从源文件开头使用，最多 15 秒；公用视频使用该源视频作为各任务的参考视频。
+- 公用音频与视频都从源文件开头使用，截到各任务的长度，并排在各任务的时间线参考之前。静音的音频轨与锁定音频的音频轨不提供参考音频；静音视频轨的参考视频不附原声。
 - 公用媒体是跨任务参考，不等于时间线原声复用。不要仅因为音频设为公用就同时设置 `audio_locked`；只有用户还要求原样保留音频并用它驱动时间线时，才分别评估 `audio_locked`。
 - 若用户既要某段音频/视频作为公用参考，又要它按普通时间线语义输出，应使用独立轨道或片段表达两个角色，并在交付摘要中说明。
-- `speaker_reference` 是旧版音频参考字段，只用于读取和迁移旧工作流；新建或更新工作流统一写 `shared_reference`。
 - 多个候选无法消歧时，列出媒体项或片段 ID、轨道名称、文件名、时长或帧范围，请用户指定；不要按第一项或最长片段选择。
 
 ## 自动编排决策
@@ -265,34 +290,32 @@ custom 示例：
 
 - `segment_start_number` 为从 1 开始的任务片段编号；执行逻辑使用 `segment_start_number - 1` 转换为内部索引。
 - `segment_count = -1` 表示从起始索引处理到末尾；非负数限制本次任务片段数量。
-- `project_save`: `new` 或 `override`。在 `override` 且 count 为 `-1` 时，执行逻辑会删除起始索引之后的已保存片段再生成；修改前向用户清楚说明。
-- `sampling_mode`: `single` 或 `dual`；`sampling_plan` 必须是当前节点可用预设。不要仅凭另一份流程中的值假设当前环境支持。
+- `project_save`: `new` 或 `override`。`new` 为重跑的片段另存新版本，旧版本保留；`override` 让重跑的片段取代它目前的版本，旧版本的文件在新版本存好后删除。由用户决定；要改成 `override` 前向用户清楚说明。
+- `sampling_mode` 是 DynamicCombo：`single`、`dual`、`selflift`、`passthrough`，选中模式的参数写成 `sampling_mode.名称`。`dual` 有 `use_saved_1st_pass`、`upscale_by`、`upscale_model`、`keep_1st_pass_audio`、`disable_2nd_noise`、`enabled_tiling`（为 `true` 时再有 `sampling_mode.enabled_tiling.tile_count`）；`selflift` 有 `transition_ratio`、`lowres_scale`、`upscale_model`、`enabled_tiling`。只改要改的项：同一模式没写的项保留原值；换模式时，新模式的项用 ComfyUI 的默认值（dual 的 `upscale_model` 默认是本机装的 H3 潜空间放大模型）。`sampling_plan` 的可用预设也由 ComfyUI 检查。
 - 编辑器分辨率是一采尺寸；`dual` 不会反算缩小一采。二采宽高分别为 `round(编辑器尺寸 * upscale_by / 32) * 32`，采用 Python `round` 就近对齐，恰好居中时取偶数，不是固定向上对齐。
-- `upscale_by` 是 Project 的独立参数，默认 `1.250`，三位小数，步长 `0.001`；旧工作流保留已保存的值。两条放大路径及合并导出均使用放大并对齐后的尺寸。例如 `1344 × 768`、倍率 `1.250` 的二采为 `1664 × 960`。若用户指定最终输出尺寸，应同时核对编辑器尺寸与倍率，不能将编辑器尺寸直接当作双采样的最终尺寸。
-- 单采样、仅一采预览保持编辑器尺寸；`upscale_by = 1.000` 不放大但可二采；纯音频项目（`32 × 32`）不放大。旧版反算缩小尺寸的一采检查点和上下文潜空间应重新生成后再按新规则续跑。
-- `1st_pass_only` 仅适用于显式的一阶段检查点流程；不要自动开启。
+- `upscale_by` 是 `dual` 的参数，默认 `1.250`，三位小数，步长 `0.001`。两条放大路径及合并导出均使用放大并对齐后的尺寸。例如 `1344 × 768`、倍率 `1.250` 的二采为 `1664 × 960`。若用户指定最终输出尺寸，应同时核对编辑器尺寸与倍率，不能将编辑器尺寸直接当作双采样的最终尺寸。
+- 单采样保持编辑器尺寸；`upscale_by = 1.000` 不放大但可二采；纯音频项目（`32 × 32`）不放大。旧版反算缩小尺寸的一采检查点和上下文潜空间应重新生成后再按新规则续跑。
 
 ## 补丁 Plan
 
-Plan 只包含实际变更。`node_id` 可省略并由拓扑定位；`editor.resolution` 是完整 DynamicCombo 设置，`editor.track_data` 是完整 TRACK_DATA。不要把整份节点或工作流放入 plan。
+Plan 只包含实际变更。`editor` 与 `project` 里写设置，名称与 `plan_workflow.py read` 列出的 `settings`、`apply --set` 相同（ComfyUI 存在工作流 `widgets_values_named` 里的名称），选项底下的设置写成 `选项名.设置名`。另外 `node_id` 可省略并由拓扑定位，`editor.track_data` 是完整 TRACK_DATA，`editor.recalculate_total_length: false` 保留原 `total_length`。不要把整份节点或工作流放入 plan。
 
 ```json
 {
   "editor": {
-    "resolution": {
-      "resolution": "width x height (megapixels)",
-      "aspect_ratio": "16:9 (Widescreen)",
-      "megapixels": 0.9
-    },
-    "track_data": { "tracks": [], "total_length": 120, "frame_rate": 24 },
-    "format": "MiniMax"
+    "resolution": "width x height (megapixels)",
+    "resolution.aspect_ratio": "16:9 (Widescreen)",
+    "resolution.megapixels": 0.9,
+    "track_data": { "tracks": [], "total_length": 120, "frame_rate": 24 }
   },
   "project": {
-    "project_save": "override",
+    "project_save": "new",
     "segment_start_number": 1,
-    "segment_count": -1,
     "sampling_plan": "medium",
-    "sampling_mode": "single"
+    "sampling_mode": "dual",
+    "sampling_mode.upscale_by": 1.25
   }
 }
 ```
+
+`patch_workflow.py` 把设置交给开着的 ComfyUI 照节点定义检查（与 `apply --set` 同一套），所以要连得到 ComfyUI（`--url`，默认照 `config.yaml`）。检查不过时返回码 2，`error` 说明原因：设置不存在、属于没选的选项、超出范围、不是步进的倍数或由连线提供。换选项时 widget 按 ComfyUI 的排法重排，`widgets_values` 与 `widgets_values_named` 一起写，不要手工改数组下标。工作流里两者对不上（旧版或手改过的文件）时拒绝修改，请用户在 ComfyUI 打开后另存。成功时 `settings_changes` 列出每项设置的 `from` 与 `to`。

@@ -1,15 +1,12 @@
 export type MultiTrackType = 'task' | 'video' | 'audio' | 'subtitle'
 
 export interface H3NativePolicy {
-  version: 1 | 2
-  /** Legacy editor preference, retained only for Project migration. */
-  allow_vae_fallback?: boolean
+  version: 2
 }
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
-// context_swap and context_drift_matched are legacy names that normalize to context_drift.
-export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_drift_matched' | 'context_swap' | 'context_masked'
+export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift'
 
 export type MultiTrackRefImageSize = 'match' | 'max'
 
@@ -42,6 +39,36 @@ export interface MultiTrackTaskImage {
   muted?: boolean
 }
 
+/** 'track' marks a placeholder that places or adjusts a timeline reference. */
+export type MultiTrackTaskMediaSource = MultiTrackSourceType | 'track'
+
+/** A task's own reference video or audio, or a placeholder for a timeline reference. */
+export interface MultiTrackTaskMedia {
+  id: string
+  source_type?: MultiTrackTaskMediaSource
+  file_path?: string
+  local_path?: string
+  url?: string
+  slot_name?: string
+  file_name?: string
+  /**
+   * Placeholders: the timeline track, plus the shared clip when the placeholder stands for one.
+   * A placeholder's `muted` overrides the default: true excludes, false includes a muted or
+   * audio-locked audio track.
+   */
+  track_id?: string
+  segment_id?: string
+  shared_reference?: boolean
+  shared_reference_copy?: boolean
+  muted?: boolean
+  /** Audio: cut to the task (timeline default) instead of taking up to 15 s (upload default). */
+  fit?: boolean
+  /** Video: give the video an <Audio N> soundtrack. */
+  soundtrack?: boolean
+  /** Video: whether the file has an audio stream; probed once, false makes the soundtrack default off. */
+  has_audio?: boolean
+}
+
 export interface MultiTrackSegmentContent {
   media_type: MultiTrackMediaType
   source_type?: MultiTrackSourceType
@@ -65,6 +92,11 @@ export interface MultiTrackSegmentContent {
   drift_taper_low_only?: boolean
   ref_image_size?: MultiTrackRefImageSize
   images?: MultiTrackTaskImage[]
+  /** Ref and edit tasks: reference videos and audios beside the timeline's. */
+  videos?: MultiTrackTaskMedia[]
+  audios?: MultiTrackTaskMedia[]
+  /** Video clips: whether the file has an audio stream; probed once, false means silent. */
+  has_audio?: boolean
   duration?: number
   volume_db?: number
   muted?: boolean
@@ -72,8 +104,6 @@ export interface MultiTrackSegmentContent {
   media_index?: number
   shared_reference?: boolean
   shared_media_index?: number
-  /** @deprecated Migrated to shared_reference when legacy workflows are loaded. */
-  speaker_reference?: boolean
   subtitle_style?: MultiTrackSubtitleStyle
   subtitle_speech?: MultiTrackSubtitleSpeechSettings
 }
@@ -124,6 +154,8 @@ export interface MultiTrack {
   volume_db?: number
   locked: boolean
   audio_locked?: boolean
+  /** A locked video track's sound: delivered as the task's audio (absent), or only referenced. */
+  soundtrack?: 'reference'
   media_index?: number
   segments: MultiTrackSegment[]
 }

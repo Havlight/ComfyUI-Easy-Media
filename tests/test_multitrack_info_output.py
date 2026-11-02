@@ -1009,39 +1009,6 @@ def test_multitrack_editor_minimax_total_length_sums_task_durations_and_skips_ga
     assert tracks_info["total_length"] == 112
 
 
-def test_multitrack_editor_removes_legacy_volume_fields():
-    module = _load_basic_module()
-    track_data = {
-        "volume": 0.5,
-        "volume_db": -8,
-        "tracks": [{
-            "id": "audio-track",
-            "type": "audio",
-            "volume": 0,
-            "volume_db": -2,
-            "segments": [{
-                "id": "audio-segment",
-                "volume": 0,
-                "content": {"media_type": "none", "volume": 0, "volume_db": -3},
-            }],
-        }],
-    }
-
-    result = module.MultiTrackEditor.execute(
-        {"resolution": "1280 x 720 (16:9)"},
-        "Wan",
-        track_data,
-    )
-
-    tracks_info = result.values[0]
-    track = tracks_info["tracks"][0]
-    assert tracks_info["volume_db"] == -8
-    assert "volume" not in tracks_info
-    assert "volume" not in track
-    assert "volume" not in track["segments"][0]
-    assert "volume" not in track["segments"][0]["content"]
-
-
 def test_multitrack_editor_uses_first_video_for_auto_and_rebuilds_all_videos():
     module = _load_basic_module()
     resize_calls = []
@@ -2761,6 +2728,7 @@ def test_multitrack_task_output_schema_and_task_media_selection():
         "SYSTEM_PROMPT", "USER_PROMPT", "TYPE", "LENGTH", "IMAGES", "AUDIO", "VIDEO",
         "IMAGE_INDEXES",
         "LOCKED_AUDIO",
+        "VIDEO_SOUNDTRACKS",
     ]
 
     images = [torch.zeros(1, 2, 2, 3), torch.ones(1, 2, 2, 3), torch.full((1, 2, 2, 3), 2.0)]
@@ -2807,7 +2775,9 @@ def test_multitrack_task_output_schema_and_task_media_selection():
         selected_video,
         image_indexes,
         locked_audio,
+        video_soundtracks,
     ) = result.values
+    assert video_soundtracks == ""
     assert system_prompt == ""
     assert user_prompt == "make it move"
     assert task_type == "rv2v"
@@ -2984,7 +2954,7 @@ def test_multitrack_task_output_outputs_none_for_empty_minimax_media_tracks():
     assert result.values[6] == [None]
 
 
-def test_minimax_speaker_reference_is_reused_in_every_task_and_capped_at_15_seconds(monkeypatch):
+def test_minimax_shared_audio_is_reused_in_every_task_from_its_start(monkeypatch):
     module = _load_basic_module()
     source_audio = {
         "waveform": torch.arange(30, dtype=torch.float32).reshape(1, 1, 30),
@@ -3005,7 +2975,7 @@ def test_minimax_speaker_reference_is_reused_in_every_task_and_capped_at_15_seco
                     "id": "speaker",
                     "start_frame": 0,
                     "end_frame": 5,
-                    "content": {"media_type": "audio", "speaker_reference": True},
+                    "content": {"media_type": "audio", "shared_reference": True},
                 },
                 {
                     "id": "other-audio",
@@ -3020,12 +2990,13 @@ def test_minimax_speaker_reference_is_reused_in_every_task_and_capped_at_15_seco
     first = module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
     second = module.MultiTrackTaskOutput.execute(tracks_info, task_index=1)
 
-    expected = list(range(15))
+    # Both tasks hear the clip from its start, cut to their own five-frame window.
+    expected = list(range(5))
     assert first.values[5][0]["waveform"].flatten().tolist() == expected
     assert second.values[5][0]["waveform"].flatten().tolist() == expected
 
 
-def test_multitrack_editor_materializes_a_dedicated_minimax_speaker_reference():
+def test_multitrack_editor_materializes_a_dedicated_minimax_shared_audio():
     module = _load_basic_module()
     source_audio = {
         "waveform": torch.arange(30, dtype=torch.float32).reshape(1, 1, 30),
@@ -3046,7 +3017,7 @@ def test_multitrack_editor_materializes_a_dedicated_minimax_speaker_reference():
                     "media_type": "audio",
                     "source_type": "slot",
                     "slot_name": "audio1",
-                    "speaker_reference": True,
+                    "shared_reference": True,
                 },
             }]},
         ],
@@ -3063,7 +3034,6 @@ def test_multitrack_editor_materializes_a_dedicated_minimax_speaker_reference():
 
     assert speaker_content["shared_reference"] is True
     assert speaker_content["shared_media_index"] == 1
-    assert "speaker_reference" not in speaker_content
     assert audio_output[1]["waveform"].flatten().tolist() == list(range(15))
 
     task_result = module.MultiTrackTaskOutput.execute(
@@ -3071,7 +3041,7 @@ def test_multitrack_editor_materializes_a_dedicated_minimax_speaker_reference():
         audio=audio_output,
         task_index=0,
     )
-    assert task_result.values[5][0]["waveform"].flatten().tolist() == list(range(15))
+    assert task_result.values[5][0]["waveform"].flatten().tolist() == list(range(5))
 
 
 def test_shared_task_images_are_prefixed_deduplicated_and_reused():
@@ -3770,6 +3740,101 @@ def test_multitrack_task_output_minus_one_reuses_eager_full_timeline_media():
     assert video.trim_calls == []
 
 
+def test_minimax_task_output_follows_the_reference_plan():
+    module = _load_basic_module()
+    sources = {name: {"waveform": torch.full((1, 1, 8), float(index)), "sample_rate": 1}
+               for index, name in enumerate(["bed.wav", "muted.wav", "song.wav", "voice.wav"])}
+    module._resolve_multitrack_audio = lambda content, _audio: sources.get(content.get("file_path"))
+    tracks_info = {
+        "media_loading": "deferred",
+        "format": "MiniMax",
+        "width": 2,
+        "height": 2,
+        "frame_rate": 1,
+        "tracks": [
+            {"id": "tasks", "type": "task", "segments": [
+                {"id": "t1", "start_frame": 0, "end_frame": 4, "content": {"task_mode": "ref"}},
+                {"id": "t2", "start_frame": 4, "end_frame": 8, "content": {"task_mode": "ref"}},
+            ]},
+            {"id": "bed", "type": "audio", "segments": [{"id": "bed-1", "start_frame": 0, "end_frame": 8,
+                "content": {"media_type": "audio", "file_path": "bed.wav"}}]},
+            {"id": "muted", "type": "audio", "muted": True, "segments": [{"id": "muted-1", "start_frame": 0,
+                "end_frame": 8, "content": {"media_type": "audio", "file_path": "muted.wav"}}]},
+            {"id": "song", "type": "audio", "audio_locked": True, "segments": [{"id": "song-1", "start_frame": 0,
+                "end_frame": 8, "content": {"media_type": "audio", "file_path": "song.wav"}}]},
+            {"id": "voice", "type": "audio", "segments": [{"id": "voice-1", "start_frame": 20, "end_frame": 30,
+                "content": {"media_type": "audio", "file_path": "voice.wav", "shared_reference": True}}]},
+        ],
+    }
+
+    result = module.MultiTrackTaskOutput.execute(tracks_info, task_index=1)
+
+    # Shared voice first, then the bed's window; muted and locked tracks give no reference.
+    assert [audio["waveform"].flatten().tolist() for audio in result.values[5]] == [[3.0] * 4, [0.0] * 4]
+    assert result.values[8]["waveform"].flatten().tolist() == [2.0] * 4
+    assert result.values[9] == ""
+
+
+def test_minimax_task_output_loads_task_uploads_in_plan_order():
+    module = _load_basic_module()
+    sources = {name: {"waveform": torch.full((1, 1, 30), float(index)), "sample_rate": 1}
+               for index, name in enumerate(["bed.wav", "voice.wav", "line.wav"])}
+    module._resolve_multitrack_audio = lambda content, _audio: sources.get(content.get("file_path"))
+    clip_video = _FakeVideo(_VideoComponents(torch.zeros(30, 2, 2, 3), None, Fraction(1)))
+    module._resolve_multitrack_video = lambda content, _video: clip_video if content.get("file_path") == "clip.mp4" else None
+    task = {"id": "t1", "start_frame": 0, "end_frame": 4, "content": {"task_mode": "ref", "audios": [
+        {"id": "voice", "source_type": "input", "file_path": "voice.wav"},
+        {"id": "line", "source_type": "input", "file_path": "line.wav", "fit": True},
+        {"id": "bed-slot", "source_type": "track", "track_id": "bed", "muted": True},
+    ], "videos": [{"id": "clip", "source_type": "input", "file_path": "clip.mp4", "soundtrack": False}]}}
+    tracks_info = {
+        "media_loading": "deferred", "format": "MiniMax", "width": 2, "height": 2, "frame_rate": 1,
+        "tracks": [
+            {"id": "tasks", "type": "task", "segments": [task]},
+            {"id": "bed", "type": "audio", "segments": [{"id": "bed-1", "start_frame": 0, "end_frame": 8,
+                "content": {"media_type": "audio", "file_path": "bed.wav"}}]},
+        ],
+    }
+
+    result = module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
+
+    # The muted placeholder drops the bed; the unfitted voice keeps up to 15 s, the fitted line
+    # covers the task, and the uploaded video keeps the task length without a soundtrack.
+    assert [audio["waveform"].flatten().tolist() for audio in result.values[5]] == [[1.0] * 15, [2.0] * 4]
+    assert result.values[6] == [clip_video] and clip_video.trim_calls == [(0.0, 4.0, False)]
+    assert result.values[9] == "0"
+    assert result.values[8] is None
+
+    task["content"]["videos"][0]["file_path"] = "missing.mp4"
+    with pytest.raises(ValueError, match="missing.mp4"):
+        module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
+
+
+def test_minimax_task_output_includes_muted_and_locked_tracks_when_the_task_asks():
+    module = _load_basic_module()
+    sources = {name: {"waveform": torch.full((1, 1, 8), float(index + 1)), "sample_rate": 1}
+               for index, name in enumerate(["quiet.wav", "song.wav"])}
+    module._resolve_multitrack_audio = lambda content, _audio: sources.get(content.get("file_path"))
+    clip = lambda name: [{"id": f"{name}-1", "start_frame": 0, "end_frame": 8,
+                          "content": {"media_type": "audio", "file_path": f"{name}.wav"}}]
+    tracks_info = {
+        "media_loading": "deferred", "format": "MiniMax", "width": 2, "height": 2, "frame_rate": 1, "muted": True,
+        "tracks": [
+            {"id": "tasks", "type": "task", "segments": [{"id": "t1", "start_frame": 0, "end_frame": 4, "content": {
+                "task_mode": "ref", "audios": [
+                    {"id": "p-quiet", "source_type": "track", "track_id": "quiet", "muted": False},
+                    {"id": "p-song", "source_type": "track", "track_id": "song", "muted": False}]}}]},
+            {"id": "quiet", "type": "audio", "muted": True, "segments": clip("quiet")},
+            {"id": "song", "type": "audio", "audio_locked": True, "segments": clip("song")},
+        ],
+    }
+
+    result = module.MultiTrackTaskOutput.execute(tracks_info, task_index=0)
+
+    # Output muting does not silence a reference the task asked for.
+    assert [audio["waveform"].flatten().tolist() for audio in result.values[5]] == [[1.0] * 4, [2.0] * 4]
+
+
 def test_multitrack_task_output_minus_one_does_not_stop_at_the_next_minimax_task():
     module = _load_basic_module()
     source_audio = {
@@ -3836,7 +3901,8 @@ def test_prepare_multitrack_project_media_extracts_shared_and_locked_audio(monke
                     "shared_reference": True,
                 }]},
             }]},
-            {"type": "audio", "segments": [{
+            {"id": "voice", "type": "audio", "segments": [{
+                "id": "shared-clip",
                 "start_frame": 0,
                 "end_frame": 8,
                 "content": {
@@ -3858,12 +3924,42 @@ def test_prepare_multitrack_project_media_extracts_shared_and_locked_audio(monke
     )
 
     assert images == [shared_image]
-    assert audios[0]["waveform"].flatten().tolist() == list(range(8))
-    assert videos == []
+    assert list(audios) == ["shared:shared-clip"]
+    assert audios["shared:shared-clip"]["waveform"].flatten().tolist() == list(range(8))
+    assert videos == {}
     assert locked["waveform"].flatten().tolist() == list(range(8))
     assert task_info["tracks"][0]["segments"][0]["content"]["images"] == []
-    assert task_info["tracks"][1]["segments"] == []
+    # Each task plans its references from the shared clip, which stays on its track.
+    assert [segment["id"] for segment in task_info["tracks"][1]["segments"]] == ["shared-clip"]
     assert task_info["tracks"][2]["segments"] == []
+
+
+def test_project_media_keeps_included_locked_audio_and_unmutes_shared_references(monkeypatch):
+    _load_basic_module()
+    project_module = sys.modules["easy_media.utils.h3_project"]
+    source_audio = {"waveform": torch.ones(1, 1, 8), "sample_rate": 2}
+    monkeypatch.setattr(project_module, "_resolve_multitrack_audio", lambda *_args: source_audio)
+    clip = lambda sid, **content: [{"id": sid, "start_frame": 0, "end_frame": 8,
+                                    "content": {"media_type": "audio", "file_path": f"{sid}.wav", **content}}]
+
+    def prepare(include):
+        audios = [{"id": "p", "source_type": "track", "track_id": "song", "muted": False}] if include else []
+        return project_module.prepare_multitrack_project_media({
+            "media_loading": "deferred", "frame_rate": 2, "timeline_total_length": 8, "width": 2, "height": 2,
+            "tracks": [
+                {"id": "tasks", "type": "task", "segments": [
+                    {"id": "t1", "start_frame": 0, "end_frame": 8, "content": {"task_mode": "ref", "audios": audios}}]},
+                {"id": "song", "type": "audio", "audio_locked": True, "segments": clip("song-1")},
+                {"id": "quiet", "type": "audio", "muted": True, "segments": clip("voice", shared_reference=True)},
+            ],
+        })
+
+    task_info, _images, audios, _videos, locked = prepare(include=False)
+    assert task_info["tracks"][1]["segments"] == [] and locked is not None
+    # A shared clip is a reference, so its track's output mute does not silence it.
+    assert audios["shared:voice"]["waveform"].abs().sum() > 0
+    task_info, *_rest = prepare(include=True)
+    assert [segment["id"] for segment in task_info["tracks"][1]["segments"]] == ["song-1"]
 
 
 def test_project_shared_image_respects_each_task_image_mute(monkeypatch):
@@ -4418,7 +4514,7 @@ def test_prepare_multitrack_project_media_muted_video_does_not_lock_audio(
     assert video.components_calls == 0
 
 
-def test_crop_multitrack_project_media_crops_reused_audio_and_video():
+def test_crop_multitrack_project_media_keeps_shared_clips_to_the_reference_limit():
     _load_basic_module()
     project_module = sys.modules["easy_media.utils.h3_project"]
     shared_audio = {
@@ -4430,17 +4526,18 @@ def test_crop_multitrack_project_media_crops_reused_audio_and_video():
     )
 
     audios, videos, locked = project_module.crop_multitrack_project_media(
-        [shared_audio],
-        [shared_video],
+        {"shared:audio": shared_audio},
+        {"shared:video": shared_video},
         shared_audio,
         2,
         4,
         2,
     )
 
-    assert audios[0]["waveform"].flatten().tolist() == [0, 1, 2, 3]
-    assert shared_video.trim_calls == [(0.0, 2.0, False)]
-    assert videos
+    # Shared clips keep up to 15 s unpadded, so each task's plan can cut or not cut them.
+    assert audios["shared:audio"]["waveform"].flatten().tolist() == list(range(8))
+    assert shared_video.trim_calls == [(0.0, 15.0, False)]
+    assert list(videos) == ["shared:video"]
     assert locked["waveform"].flatten().tolist() == [2, 3, 4, 5]
 
 
@@ -5895,238 +5992,6 @@ def test_multitrack_editor_preserves_audio_only_custom_resolution():
     assert (result.values[0]["width"], result.values[0]["height"]) == (32, 32)
 
 
-def test_minimax_prompt_override_renumbers_and_skips_unreferenced_slots():
-    module = _load_basic_module()
-    images = [torch.full((1, 2, 2, 3), float(value)) for value in (1, 2, 3)]
-    audios = [
-        {"waveform": torch.full((1, 1, 4), float(value)), "sample_rate": 2}
-        for value in (1, 2, 3)
-    ]
-    payload = json.dumps(
-        {
-            "type": "minimax_prompt_override",
-            "version": 1,
-            "prompts": ["@图片2 @音频2 first", "@图片3 @音频3 second", "third"],
-            "duration": "2,2,2",
-            "video_track_lock": 0,
-            "audio_track_lock": 0,
-        },
-        ensure_ascii=False,
-    )
-
-    result = module.MultiTrackEditor.execute(
-        {"resolution": "1344 x 768 (16:9)"},
-        "MiniMax",
-        {"total_length": 1, "frame_rate": 24, "tracks": []},
-        prompt_override=payload,
-        image=images,
-        audio=audios,
-    )
-
-    tracks_info, image_out, audio_out, _video_out = result.values
-    task_track = tracks_info["tracks"][0]
-    assert [segment["content"]["text"] for segment in task_track["segments"]] == [
-        "<Picture 1> <Audio 1> first",
-        "<Picture 2> <Audio 2> second",
-        "third",
-    ]
-    assert [
-        image_info["media_index"]
-        for segment in task_track["segments"]
-        for image_info in segment["content"]["images"]
-    ] == [0, 1]
-    assert len(image_out) == 2
-    assert torch.equal(image_out[0], images[1])
-    assert torch.equal(image_out[1], images[2])
-
-    audio_tracks = [
-        track for track in tracks_info["tracks"] if track["type"] == "audio"
-    ]
-    assert [track["name"] for track in audio_tracks] == ["Audio 2", "Audio 3"]
-    assert len(audio_out) == 4
-    assert audio_tracks[0]["segments"][0]["content"]["shared_reference"] is True
-    assert audio_tracks[1]["segments"][0]["content"]["shared_reference"] is True
-    assert audio_tracks[0]["segments"][0]["content"]["shared_media_index"] == 1
-    assert audio_tracks[1]["segments"][0]["content"]["shared_media_index"] == 3
-    assert audio_out[1]["waveform"].flatten().tolist() == [2.0, 2.0, 2.0, 2.0]
-    assert audio_out[3]["waveform"].flatten().tolist() == [3.0, 3.0, 3.0, 3.0]
-    assert audio_out[0]["waveform"].flatten().tolist() == [2.0, 2.0, 2.0, 2.0]
-    assert audio_out[2]["waveform"].flatten().tolist() == [
-        0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 3.0, 3.0,
-    ]
-
-
-def test_minimax_prompt_override_builds_locked_media_tracks():
-    module = _load_basic_module()
-    payload = json.dumps(
-        {
-            "type": "minimax_prompt_override",
-            "version": 1,
-            "prompts": ["@视频1 @音频1 first", "@视频2 @音频2 second"],
-            "duration": "10,10",
-            "video_track_lock": 2,
-            "audio_track_lock": 1,
-        },
-        ensure_ascii=False,
-    )
-
-    data = module.build_minimax_multitrack_data_from_prompt_override(
-        {"total_length": 1, "frame_rate": 24, "tracks": []},
-        payload,
-    )
-
-    video_tracks = [track for track in data["tracks"] if track["type"] == "video"]
-    audio_tracks = [track for track in data["tracks"] if track["type"] == "audio"]
-    assert [track["name"] for track in video_tracks] == ["Video 1", "Video 2"]
-    assert video_tracks[0].get("audio_locked") is not True
-    assert video_tracks[1]["audio_locked"] is True
-    assert [track["name"] for track in audio_tracks] == ["Audio 1", "Audio 2"]
-    assert audio_tracks[0]["audio_locked"] is True
-    assert audio_tracks[1].get("audio_locked") is not True
-
-
-def test_minimax_prompt_override_applies_generation_and_continuity_modes():
-    module = _load_basic_module()
-    payload = json.dumps(
-        {
-            "type": "minimax_prompt_override",
-            "version": 1,
-            "prompts": ["first", "second", "third"],
-            "duration": "10,5,10",
-            "generation_type": "r2v,i2v,l2v",
-            "continuity_mode": "shot,context,context",
-            "video_track_lock": 0,
-            "audio_track_lock": 0,
-        },
-        ensure_ascii=False,
-    )
-
-    data = module.build_minimax_multitrack_data_from_prompt_override(
-        {"total_length": 1, "frame_rate": 24, "tracks": []},
-        payload,
-    )
-    task_segments = data["tracks"][0]["segments"]
-
-    assert [
-        (
-            segment["content"]["task_type"],
-            segment["content"]["task_mode"],
-            segment["content"]["continuity_mode"],
-        )
-        for segment in task_segments
-    ] == [
-        ("r2v", "ref", "shot"),
-        ("i2v", "default", "context"),
-        ("l2v", "l2v", "context"),
-    ]
-
-
-def test_minimax_prompt_override_duration_values_are_bounded_to_2_through_15():
-    module = _load_basic_module()
-
-    def build_with_duration(duration):
-        payload = json.dumps(
-            {
-                "type": "minimax_prompt_override",
-                "version": 1,
-                "prompts": ["single prompt"],
-                "duration": duration,
-                "generation_type": "r2v",
-                "continuity_mode": "shot",
-                "video_track_lock": 0,
-                "audio_track_lock": 0,
-            },
-            ensure_ascii=False,
-        )
-        return module.build_minimax_multitrack_data_from_prompt_override(
-            {"total_length": 1, "frame_rate": 24, "tracks": []},
-            payload,
-        )
-
-    assert build_with_duration("2")["tracks"][0]["segments"][0]["end_frame"] == 48
-    assert build_with_duration("15")["tracks"][0]["segments"][0]["end_frame"] == 360
-    for invalid in ("1", "16", "10,1", "10,16"):
-        with pytest.raises(ValueError, match="between 2 and 15"):
-            build_with_duration(invalid)
-
-
-def test_minimax_prompt_override_applies_system_prompt_when_present():
-    module = _load_basic_module()
-    payload = json.dumps(
-        {
-            "type": "minimax_prompt_override",
-            "version": 1,
-            "prompts": ["first", "second"],
-            "duration": "10,5",
-            "generation_type": "r2v,i2v",
-            "continuity_mode": "shot,context",
-            "system_prompt": "custom system prompt",
-            "video_track_lock": 0,
-            "audio_track_lock": 0,
-        },
-        ensure_ascii=False,
-    )
-
-    data = module.build_minimax_multitrack_data_from_prompt_override(
-        {"total_length": 1, "frame_rate": 24, "tracks": []},
-        payload,
-    )
-    task_segments = data["tracks"][0]["segments"]
-
-    assert [
-        segment["content"]["system_prompt"]
-        for segment in task_segments
-    ] == ["custom system prompt", "custom system prompt"]
-
-
-def test_minimax_prompt_override_video_reference_keeps_source_duration():
-    module = _load_basic_module()
-    source_video = _FakeVideo(
-        _VideoComponents(
-            torch.zeros(4, 32, 32, 3),
-            None,
-            Fraction(1),
-        )
-    )
-    payload = json.dumps(
-        {
-            "type": "minimax_prompt_override",
-            "version": 1,
-            "prompts": ["@视频1 first"],
-            "duration": "2",
-            "generation_type": "r2v",
-            "continuity_mode": "shot",
-            "video_track_lock": 0,
-            "audio_track_lock": 0,
-        },
-        ensure_ascii=False,
-    )
-
-    result = module.MultiTrackEditor.execute(
-        {"resolution": "32 x 32 (1:1)"},
-        "MiniMax",
-        {"total_length": 1, "frame_rate": 24, "tracks": []},
-        prompt_override=payload,
-        video=[source_video],
-    )
-    tracks_info, _images, _audio, videos = result.values
-    video_track = next(
-        track for track in tracks_info["tracks"] if track["type"] == "video"
-    )
-    shared_content = video_track["segments"][0]["content"]
-
-    assert shared_content["shared_reference"] is True
-    assert shared_content["shared_media_index"] == 1
-
-    task_result = module.MultiTrackTaskOutput.execute(
-        tracks_info,
-        video=videos,
-        task_index=0,
-    )
-    assert task_result.values[6][0] is videos[1]
-    assert task_result.values[6][0].get_components().images.shape[0] == 4
-
-
 def test_build_shared_reference_video_caps_source_to_15_seconds():
     module = _load_basic_module()
     video = _FakeVideo(
@@ -6143,23 +6008,6 @@ def test_build_shared_reference_video_caps_source_to_15_seconds():
     assert video.trim_calls == [(0.0, 15.0, False)]
 
 
-def test_minimax_prompt_override_media_types_only_includes_referenced_media():
-    module = _load_basic_module()
-    payload = json.dumps(
-        {
-            "type": "minimax_prompt_override",
-            "version": 1,
-            "prompts": ["@图片2 first", "@视频1 second"],
-            "duration": "10,10",
-            "video_track_lock": 0,
-            "audio_track_lock": 0,
-        },
-        ensure_ascii=False,
-    )
-
-    assert module.minimax_prompt_override_media_types(payload) == {"image", "video"}
-    assert module.is_minimax_prompt_override(payload) is True
-    assert module.is_minimax_prompt_override("@图片1 legacy override") is False
 def test_multi_images_loader_resizes_ordered_image_list(monkeypatch):
     module = _load_basic_module()
     sources = {
@@ -6205,14 +6053,11 @@ def test_multi_images_loader_rejects_more_than_25_images():
 def test_native_policy_survives_editor_serialization_and_normalizes_unaligned_api_input():
     module = _load_basic_module()
     data = {"total_length": 243, "frame_rate": 24,
-            "h3_native": {"version": 1, "allow_vae_fallback": False},
+            "h3_native": {"version": 2},
             "tracks": [{"id": "task", "type": "task", "segments": [
                 {"id": "a", "start_frame": 0, "end_frame": 243, "content": {"media_type": "none"}}]}]}
     result = module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)
-    assert result.values[0]["h3_native"] == {**data["h3_native"], "version": 2}
+    assert result.values[0]["h3_native"] == {"version": 2}
     data["tracks"][0]["segments"][0]["end_frame"] = 240
-    for allow in (False, True):
-        data["h3_native"]["allow_vae_fallback"] = allow
-        aligned = module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)
-        assert aligned.values[0]['tracks'][0]['segments'][0]['end_frame'] == 243
-        assert aligned.values[0]['h3_native']['allow_vae_fallback'] is allow
+    aligned = module.MultiTrackEditor.execute({"resolution": "1280 x 720 (16:9)"}, "MiniMax", data)
+    assert aligned.values[0]['tracks'][0]['segments'][0]['end_frame'] == 243

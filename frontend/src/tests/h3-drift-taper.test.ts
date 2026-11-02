@@ -123,24 +123,15 @@ describe('Drift taper helpers', () => {
     const drift: MultiTrackSegmentContent = { media_type: 'none', continuity_mode: 'context_drift' }
     expect(normalizeDriftTaperContent({
       ...drift, drift_taper_steps: 3, drift_taper_floor: 0.25, drift_taper_low_only: true,
-    }, false)).toStrictEqual({ ...drift, drift_taper_steps: 3, drift_taper_floor: 0.25, drift_taper_low_only: true })
+    })).toStrictEqual({ ...drift, drift_taper_steps: 3, drift_taper_floor: 0.25, drift_taper_low_only: true })
     expect(normalizeDriftTaperContent({
       ...drift, drift_taper_steps: 4, drift_taper_floor: 0, drift_taper_low_only: false,
-    }, false)).toStrictEqual(drift)
-    expect(normalizeDriftTaperContent({ ...drift, drift_taper_steps: 99, drift_taper_floor: 3 }, false))
+    })).toStrictEqual(drift)
+    expect(normalizeDriftTaperContent({ ...drift, drift_taper_steps: 99, drift_taper_floor: 3 }))
       .toStrictEqual(drift)
     expect(normalizeDriftTaperContent({
       ...drift, continuity_mode: 'shot', drift_taper_steps: 3, drift_taper_floor: 0.25, drift_taper_low_only: true,
-    }, false)).toStrictEqual({ ...drift, continuity_mode: 'shot' })
-  })
-
-  it('turns a former matched task into Drift without a taper and drops its seam-cap fields', () => {
-    const drift: MultiTrackSegmentContent = { media_type: 'none', continuity_mode: 'context_drift' }
-    const legacy = { ...drift, drift_seam_steps: 2, drift_seam_noise: 0.3 } as MultiTrackSegmentContent
-    expect(normalizeDriftTaperContent(legacy, true)).toStrictEqual({ ...drift, drift_taper_steps: 0 })
-    expect(normalizeDriftTaperContent({ ...legacy, drift_taper_steps: 3 }, true))
-      .toStrictEqual({ ...drift, drift_taper_steps: 3 })
-    expect(normalizeDriftTaperContent(legacy, false)).toStrictEqual(drift)
+    })).toStrictEqual({ ...drift, continuity_mode: 'shot' })
   })
 
   it('parses Select values back to numbers', () => {

@@ -660,7 +660,7 @@ describe('ProjectVideoCombineWidget', () => {
             file_name: 'video_0_2.mp4',
             media_revision: '1000000002',
             source_frame_count: 96,
-            continuity_mode: 'context_swap',
+            continuity_mode: 'context_drift',
           },
           {
             file_path: 'easy_media/projects/demo/video_0_3.mp4',
@@ -704,7 +704,7 @@ describe('ProjectVideoCombineWidget', () => {
         media_revision: '1000000002',
         source_end_frame: 96,
         source_frame_count: 96,
-        continuity_mode: 'context_swap',
+        continuity_mode: 'context_drift',
       })],
     })
   })
@@ -714,7 +714,7 @@ describe('ProjectVideoCombineWidget', () => {
       file_path: 'easy_media/projects/demo/video_0_2.mp4',
       file_name: 'video_0_2.mp4',
       source_frame_count: 96,
-      continuity_mode: 'context_swap' as const,
+      continuity_mode: 'context_drift' as const,
     }
     const initial = {
       ...projectData,

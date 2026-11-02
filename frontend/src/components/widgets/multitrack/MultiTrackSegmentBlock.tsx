@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Lock, Share2, Unlock } from 'lucide-react'
+import { Check, Lock, Share2, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   ContextMenu,
@@ -63,6 +63,9 @@ interface MultiTrackSegmentBlockProps {
   audioLocked?: boolean
   audioLockEnabled?: boolean
   onAudioLockToggle?: (locked: boolean) => void
+  /** A locked video's sound is only referenced, not delivered as the task's audio. */
+  soundtrackReference?: boolean
+  onSoundtrackReferenceToggle?: (enabled: boolean) => void
   sharedReference?: boolean
   onSharedReferenceToggle?: (enabled: boolean) => void
 }
@@ -107,6 +110,8 @@ export function MultiTrackSegmentBlock({
   audioLocked = false,
   audioLockEnabled = false,
   onAudioLockToggle,
+  soundtrackReference = false,
+  onSoundtrackReferenceToggle,
   sharedReference = false,
   onSharedReferenceToggle,
 }: Readonly<MultiTrackSegmentBlockProps>) {
@@ -580,9 +585,11 @@ export function MultiTrackSegmentBlock({
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="max-w-72">
                   {t(
-                    trackType === 'video'
-                      ? 'multitrack.videoAudioLockTooltip'
-                      : 'multitrack.audioLockTooltip',
+                    trackType !== 'video'
+                      ? 'multitrack.audioLockTooltip'
+                      : audioLocked && soundtrackReference
+                        ? 'multitrack.videoAudioLockReferenceTooltip'
+                        : 'multitrack.videoAudioLockTooltip',
                   )}
                 </TooltipContent>
               </Tooltip>
@@ -591,6 +598,17 @@ export function MultiTrackSegmentBlock({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        {trackType === 'video' && audioLocked && onSoundtrackReferenceToggle ? (
+          // A plain item, aligned with the others, with its check mark on the right.
+          <ContextMenuItem
+            role="menuitemcheckbox"
+            aria-checked={soundtrackReference}
+            onClick={() => onSoundtrackReferenceToggle(!soundtrackReference)}
+          >
+            {t('multitrack.soundtrackReferenceOnly')}
+            {soundtrackReference ? <Check className="ml-auto size-4 pl-1" /> : null}
+          </ContextMenuItem>
+        ) : null}
         {trackType === 'video' && onSmartSplit ? (
           <ContextMenuItem onClick={() => onSmartSplit(segment.id)}>
             {t('multitrack.smartSplit')}

@@ -20,7 +20,6 @@ from utils.h3_project import (  # noqa: E402
     h3_locked_video_track,
     h3_second_pass_dimensions,
     has_h3_context_latent,
-    has_h3_first_pass_checkpoint,
     h3_project_filename_prefix,
     h3_task_entries,
     h3_task_type,
@@ -110,15 +109,15 @@ def test_prepare_project_task_info_attaches_preloaded_media_without_mutation():
     result = prepare_multitrack_project_task_info(
         info,
         [image],
-        [audio],
-        [video],
+        {"shared:audio": audio},
+        {"shared:video": video},
     )
 
     assert "_preloaded_media" not in info
     assert result["_preloaded_media"] == {
         "images": [image],
-        "audio": [audio],
-        "video": [video],
+        "audio": {"shared:audio": audio},
+        "video": {"shared:video": video},
     }
 
 
@@ -173,24 +172,6 @@ def test_compact_project_tasks_keep_only_modes_and_index():
     )
 
 
-def test_compact_project_tasks_migrate_context_swap_mode():
-    info = _tracks_info()
-    info["tracks"][0]["segments"][1]["content"]["continuity_mode"] = (
-        "context_swap"
-    )
-
-    assert compact_h3_task_segments(info)[1]["continuity_mode"] == "context_drift"
-
-
-def test_compact_project_tasks_migrate_context_test_to_context():
-    info = _tracks_info()
-    info["tracks"][0]["segments"][1]["content"]["continuity_mode"] = (
-        "context_test"
-    )
-
-    assert compact_h3_task_segments(info)[1]["continuity_mode"] == "context"
-
-
 def test_locked_audio_track_applies_when_it_overlaps_the_task_range():
     info = _tracks_info()
     info["tracks"].append({
@@ -235,6 +216,22 @@ def test_muted_locked_video_keeps_timing_without_locking_audio():
 
     assert h3_locked_audio_track(second, info) is None
     assert h3_locked_video_track(second, info) is video_track
+
+
+def test_reference_soundtrack_keeps_video_timing_and_is_heard_but_not_delivered():
+    from utils.h3_references import plan_task_references
+
+    info = _tracks_info()
+    video_track = next(track for track in info["tracks"] if track["type"] == "video")
+    video_track.update(audio_locked=True, soundtrack="reference")
+    video_track["segments"][0]["content"]["media_type"] = "video"
+    _, second = h3_task_entries(info)
+
+    assert h3_locked_audio_track(second, info) is None
+    assert h3_locked_video_track(second, info) is video_track
+    task = {"start_frame": 120, "end_frame": 240, "content": second["task"]["content"]}
+    [locked] = plan_task_references(info["tracks"], task).videos
+    assert locked.kind == "locked" and locked.soundtrack is True
 
 
 def test_locked_audio_track_takes_priority_without_disabling_video_timing():
@@ -300,30 +297,6 @@ def test_initialize_project_writes_manifest_before_segment_generation(tmp_path):
     manifest = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
     assert manifest["project_name"] == "demo"
     assert manifest["segments"] == {}
-
-
-def test_first_pass_checkpoint_requires_marker_and_existing_context_latent(tmp_path):
-    project_dir = initialize_h3_project("demo", _tracks_info(), tmp_path)
-    context_latent = project_dir / "context_latent_0_1.safetensors"
-    context_latent.write_bytes(b"checkpoint")
-    manifest_path = project_dir / "project.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["segments"] = {
-        "0": {
-            "active_generation": 1,
-            "generations": {
-                "1": {
-                    "context_latent": context_latent.name,
-                    "sampling_pass": "first",
-                }
-            },
-        }
-    }
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    assert has_h3_first_pass_checkpoint("demo", 0, tmp_path) is True
-    context_latent.unlink()
-    assert has_h3_first_pass_checkpoint("demo", 0, tmp_path) is False
 
 
 def test_context_latent_availability_checks_active_high_and_exact_low(tmp_path):
@@ -572,7 +545,7 @@ def test_select_video_makes_its_generation_supply_the_context_latent(
     manifest["segments"]["0"]["generations"]["2"] = {
         "video": "video_0_2.mp4",
         "context_latent": "context_latent_0_2.safetensors",
-        "continuity_mode": "context_swap",
+        "continuity_mode": "context_drift",
         "updated_at": 2000,
     }
     manifest["segments"]["0"]["active_generation"] = 2
@@ -591,6 +564,23 @@ def test_select_video_makes_its_generation_supply_the_context_latent(
     assert saved["segments"]["0"]["generations"]["1"]["context_latent"] == (
         "context_latent_0_1.safetensors"
     )
+
+
+def test_select_version_by_number_for_agents(monkeypatch, tmp_path):
+    project_dir = _write_render_project(tmp_path)
+    monkeypatch.setattr("utils.h3_project.folder_paths.get_output_directory", lambda: str(tmp_path))
+    monkeypatch.setattr("utils.video.ffprobe_info", lambda _path: {"frame_count": 120})
+    manifest_path = project_dir / "project.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["segments"]["0"]["generations"]["2"] = {"video": "video_0_2.mp4", "updated_at": 2000}
+    manifest["segments"]["0"]["active_generation"] = 2
+    manifest_path.write_text(json.dumps(manifest))
+    (project_dir / "video_0_2.mp4").write_bytes(b"newer")
+
+    select_h3_project_video("demo", 0, version=1)
+    assert json.loads(manifest_path.read_text())["segments"]["0"]["active_generation"] == 1
+    with pytest.raises(ValueError, match="Task 1 has no version 7"):
+        select_h3_project_video("demo", 0, version=7)
 
 
 def test_delete_last_video_removes_segment_and_keeps_shared_artifacts(monkeypatch, tmp_path):
@@ -670,28 +660,6 @@ def test_load_h3_project_data_marks_shot_and_context(monkeypatch, tmp_path):
     assert data["clips"][0]["video_files"][0]["locked_audio_path"] == (project_dir / "locked_audio_0_1.wav").relative_to(tmp_path).as_posix()
 
 
-def test_load_h3_project_data_migrates_context_swap(monkeypatch, tmp_path):
-    project_dir = _write_render_project(tmp_path)
-    manifest_path = project_dir / "project.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["segments"]["1"]["continuity_mode"] = "context_swap"
-    manifest_path.write_text(json.dumps(manifest))
-    monkeypatch.setattr(
-        "utils.h3_project.folder_paths.get_output_directory",
-        lambda: str(tmp_path),
-    )
-    monkeypatch.setattr(
-        "utils.video.ffprobe_info",
-        lambda path: {
-            "frame_count": 120 if path.endswith("video_0_1.mp4") else 96
-        },
-    )
-
-    data = load_h3_project_data("demo")
-
-    assert data["clips"][1]["continuity_mode"] == "context_drift"
-
-
 def test_load_h3_project_data_lists_all_video_files_for_the_same_index(monkeypatch, tmp_path):
     project_dir = _write_render_project(tmp_path)
     alternate = project_dir / "video_0_2.mp4"
@@ -703,7 +671,7 @@ def test_load_h3_project_data_lists_all_video_files_for_the_same_index(monkeypat
     manifest["segments"]["0"]["generations"]["2"] = {
         "video": alternate.name,
         "locked_audio": alternate_audio.name,
-        "continuity_mode": "context_swap",
+        "continuity_mode": "context_drift",
         "seed": 123,
     }
     manifest["segments"]["0"]["generations"]["3"] = {"video": alternate.name}
@@ -735,7 +703,7 @@ def test_load_h3_project_data_uses_active_generation_continuity_mode(monkeypatch
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["segments"]["0"]["generations"]["2"] = {
         "video": alternate.name,
-        "continuity_mode": "context_swap",
+        "continuity_mode": "context_drift",
         "seed": 456,
     }
     manifest["segments"]["0"]["active_generation"] = 2

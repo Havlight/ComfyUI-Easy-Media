@@ -75,7 +75,7 @@ interface TrackAreaProps {
   onDeleteTrack: (trackId: string) => void
   onReorderTrack?: (sourceTrackId: string, targetTrackId: string) => void
   onTrackVisibilityChange?: (trackId: string, visible: boolean) => void
-  onTrackAudioSettingsChange: (trackId: string, patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked'>>) => void
+  onTrackAudioSettingsChange: (trackId: string, patch: Partial<Pick<MultiTrack, 'muted' | 'solo' | 'audio_locked' | 'soundtrack'>>) => void
   onSharedReferenceChange?: (trackId: string, segmentId: string, enabled: boolean) => void
   onDistributeTaskSegments: (trackId: string) => void
   onCloneTaskSegment: (trackId: string, segmentId: string) => void
