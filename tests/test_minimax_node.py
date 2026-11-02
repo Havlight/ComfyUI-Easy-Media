@@ -1205,6 +1205,21 @@ def test_schema_exposes_list_media_inputs_without_image_position(monkeypatch):
     assert [output.name for output in schema.outputs] == ["positive", "latent"]
 
 
+def test_multitrack_h3_dual_defaults_to_the_installed_h3_latent_upscaler(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    monkeypatch.setattr(module.folder_paths, "get_filename_list",
+                        lambda category: ["other_upscaler.safetensors", "minimax_h3_latent_upscaler_3d_fp16.safetensors"])
+
+    schema = module.EasyMultiTrackProject.define_schema()
+    options = dict(next(port for port in schema.inputs if port.name == "sampling_mode").kwargs["options"])
+    upscale_models = {name: next(port for port in inputs if port.name == "upscale_model")
+                      for name, inputs in options.items() if name in ("dual", "selflift")}
+
+    assert upscale_models["dual"].kwargs["default"] == "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+    assert upscale_models["dual"].kwargs["options"][0] == "None"
+    assert upscale_models["selflift"].kwargs["default"] == "None"
+
+
 def test_multitrack_h3_project_schema_exposes_pipeline_configuration(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     assert module is not None
@@ -1233,11 +1248,6 @@ def test_multitrack_h3_project_schema_exposes_pipeline_configuration(monkeypatch
         "seed",
         "sampling_plan",
         "sampling_mode",
-        "1st_pass_only",
-        "disable_2nd_noise",
-        "upscale_by",
-        "upscale_model",
-        "enabled_tiling",
         "allow_vae_fallback",
         "segment_loras",
     ]
@@ -1272,25 +1282,37 @@ def test_multitrack_h3_project_schema_exposes_pipeline_configuration(monkeypatch
         "passthrough",
     ]
     assert sampling_mode_options[0][1] == []
-    assert sampling_mode_options[1][1] == []
     assert sampling_mode_options[3][1] == []
+    dual_inputs = {port.name: port for port in sampling_mode_options[1][1]}
+    assert list(dual_inputs) == [
+        "upscale_by",
+        "upscale_model",
+        "disable_2nd_noise",
+        "enabled_tiling",
+    ]
+    assert dual_inputs["upscale_by"].kwargs["default"] == 1.250
+    assert dual_inputs["upscale_by"].kwargs["step"] == 0.001
+    assert dual_inputs["upscale_by"].kwargs["round"] == 0.001
+    assert dual_inputs["upscale_by"].kwargs["extra_dict"] == {"precision": 3}
+    assert dual_inputs["upscale_model"].kwargs["default"] == "None"
+    assert dual_inputs["disable_2nd_noise"].kwargs["default"] is False
+    tiling_options = dual_inputs["enabled_tiling"].kwargs["options"]
+    assert [name for name, _ in tiling_options] == ["false", "true"]
+    assert [port.name for port in tiling_options[1][1]] == ["tile_count"]
     selflift_inputs = {port.name: port for port in sampling_mode_options[2][1]}
     assert list(selflift_inputs) == [
         "transition_ratio",
         "lowres_scale",
+        "upscale_model",
+        "enabled_tiling",
     ]
     assert selflift_inputs["transition_ratio"].kwargs["default"] == 0.6
     assert selflift_inputs["lowres_scale"].kwargs["default"] == 0.6
+    assert selflift_inputs["upscale_model"].kwargs["default"] == "None"
     for name in ("sampler_2nd", "sigmas_2nd", "model_loader_2nd"):
         assert inputs[name].kwargs["optional"] is True
         assert inputs[name].kwargs["raw_link"] is True
         assert inputs[name].kwargs["lazy"] is True
-    assert inputs["1st_pass_only"].kwargs["default"] is False
-    assert inputs["disable_2nd_noise"].kwargs["default"] is False
-    assert inputs["upscale_by"].kwargs["default"] == 1.250
-    assert inputs["upscale_by"].kwargs["step"] == 0.001
-    assert inputs["upscale_by"].kwargs["round"] == 0.001
-    assert inputs["upscale_by"].kwargs["extra_dict"] == {"precision": 3}
     assert inputs["segment_start_number"].kwargs["default"] == 1
     assert inputs["segment_start_number"].kwargs["min"] == 1
     assert inputs["segment_count"].kwargs["default"] == -1
@@ -1611,22 +1633,14 @@ def test_multitrack_h3_project_loads_segment_media_from_tracks_info(monkeypatch)
     }
 
 
-@pytest.mark.parametrize(
-    "sampling_mode,first_only",
-    [
-        ("single", False),
-        ("dual", False),
-        ("dual", True),
-        ("selflift", False),
-    ],
-)
-def test_project_memory_boundaries_follow_artifact_saves(monkeypatch, sampling_mode, first_only):
+@pytest.mark.parametrize("sampling_mode", ["single", "dual", "selflift"])
+def test_project_memory_boundaries_follow_artifact_saves(monkeypatch, sampling_mode):
     module = _load_minimax_node(monkeypatch)
     installed = []
     monkeypatch.setattr(module._project_module, "install_project_memory_cleanup", lambda: installed.append(True))
+    children = {"upscale_by": [1.0]} if sampling_mode == "dual" else {}
     result = module.EasyMultiTrackProject.execute(**_h3_project_inputs(
-        sampling_mode=_h3_sampling_mode(sampling_mode, **{"1st_pass_only": [first_only]}),
-        upscale_by=[1.0],
+        sampling_mode=_h3_sampling_mode(sampling_mode, **children),
     ))
     assert installed == [True]
     tagged = [node for node in result.expand.values() if "easy_media_segment" in node.get("_meta", {})]
@@ -2315,7 +2329,6 @@ def test_multitrack_h3_project_has_matching_chinese_localization():
         "enabled_tiling",
         "tile_count",
         "model_loader_2nd",
-        "1st_pass_only",
         "disable_2nd_noise",
         "upscale_by",
         "upscale_model",
@@ -2420,8 +2433,9 @@ def test_multitrack_project_tiles_inside_second_pass_sampler(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     module.comfy_nodes.NODE_CLASS_MAPPINGS["ImageResizeKJv2"] = _ImageResizeKJWithNvidia
     inputs = _h3_project_inputs(
-        sampling_mode=_h3_sampling_mode("dual"),
-        enabled_tiling=[{"enabled_tiling": ["true"], "tile_count": [4]}],
+        sampling_mode=_h3_sampling_mode(
+            "dual", enabled_tiling={"enabled_tiling": ["true"], "tile_count": [4]},
+        ),
     )
 
     result = module.EasyMultiTrackProject.execute(**inputs)
@@ -2609,10 +2623,8 @@ def test_multitrack_h3_selflift_uses_target_size_and_one_progressive_sample(
 
     result = module.EasyMultiTrackProject.execute(
         **_h3_project_inputs(
-            sampling_mode=_h3_sampling_mode("selflift"),
+            sampling_mode=_h3_sampling_mode("selflift", upscale_model=["None"]),
             sampling_plan=["medium"],
-            upscale_by=[1.25],
-            upscale_model=["None"],
         )
     )
 
@@ -2665,7 +2677,6 @@ def test_multitrack_h3_selflift_reads_nested_upscale_model(monkeypatch):
         **_h3_project_inputs(
             sampling_mode=_h3_sampling_mode(
                 "selflift",
-                upscale_by=[2.5],
                 upscale_model=["h3_upscale.safetensors"],
             ),
         )
@@ -2690,10 +2701,8 @@ def test_multitrack_h3_selflift_passes_dynamic_sampling_values(monkeypatch):
                 "selflift",
                 transition_ratio=[0.75],
                 lowres_scale=[0.5],
+                enabled_tiling={"enabled_tiling": ["true"], "tile_count": [4]},
             ),
-            enabled_tiling=[
-                {"enabled_tiling": ["true"], "tile_count": [4]}
-            ],
         )
     )
 
@@ -3083,15 +3092,16 @@ def test_selflift_sampler_keeps_audio_only_mask_on_selflift(monkeypatch):
     ("upscale_by", "expected_size"),
     [(None, (1664, 960)), ([1.0], (1344, 768)), ([1.234], (1664, 960)), (2.0, (2688, 1536))],
 )
-def test_multitrack_project_uses_flat_upscale_by(
+def test_multitrack_project_reads_dual_upscale_by(
     monkeypatch, tmp_path, upscale_model, upscale_by, expected_size
 ):
     module = _load_minimax_node(monkeypatch)
     module.comfy_nodes.NODE_CLASS_MAPPINGS["ImageResizeKJv2"] = _ImageResizeKJWithNvidia
     monkeypatch.setattr(module.folder_paths, "get_output_directory", lambda: str(tmp_path))
-    inputs = _h3_project_inputs(sampling_mode=["dual"], upscale_model=[upscale_model])
+    children = {"upscale_model": [upscale_model]}
     if upscale_by is not None:
-        inputs["upscale_by"] = upscale_by
+        children["upscale_by"] = upscale_by
+    inputs = _h3_project_inputs(sampling_mode=_h3_sampling_mode("dual", **children))
 
     result = module.EasyMultiTrackProject.execute(**inputs)
 
@@ -3173,8 +3183,7 @@ def test_multitrack_h3_medium_dual_uses_selected_latent_upscale_model(
 
     result = module.EasyMultiTrackProject.execute(
         **_h3_project_inputs(
-            sampling_mode=_h3_sampling_mode("dual"),
-            upscale_model=["h3_upscale.safetensors"],
+            sampling_mode=_h3_sampling_mode("dual", upscale_model=["h3_upscale.safetensors"]),
         )
     )
 
@@ -3231,8 +3240,7 @@ def test_multitrack_h3_selected_upscale_model_uses_bundled_node(monkeypatch):
 
     result = module.EasyMultiTrackProject.execute(
         **_h3_project_inputs(
-            sampling_mode=_h3_sampling_mode("dual"),
-            upscale_model=["h3_upscale.safetensors"],
+            sampling_mode=_h3_sampling_mode("dual", upscale_model=["h3_upscale.safetensors"]),
         )
     )
 
@@ -3302,12 +3310,9 @@ def test_multitrack_h3_dynamic_dual_sampler_and_sigmas_override_each_preset(
             sampler=[first_pass_sampler],
             sigmas=[first_pass_sigmas],
             seed=[12],
-                sampling_mode=_h3_sampling_mode(
-                    "dual",
-                    sampler_2nd=[second_pass_sampler],
-                    sigmas_2nd=[second_pass_sigmas],
-                    upscale_by=[1.0],
-                ),
+            sampler_2nd=[second_pass_sampler],
+            sigmas_2nd=[second_pass_sigmas],
+            sampling_mode=_h3_sampling_mode("dual", upscale_by=[1.0]),
         )
     )
 
@@ -3365,18 +3370,13 @@ def test_multitrack_h3_dynamic_dual_model_loader_uses_second_model_for_second_pa
                     "audio_vae": first_audio_vae,
                 }
             ],
-                sampling_mode=_h3_sampling_mode(
-                    "dual",
-                    model_loader_2nd=[
-                    {
-                        "model": second_model,
-                        "clip": object(),
-                        "vae": second_vae,
-                        "audio_vae": second_audio_vae,
-                        }
-                    ],
-                    upscale_by=[1.0],
-                ),
+            model_loader_2nd=[{
+                "model": second_model,
+                "clip": object(),
+                "vae": second_vae,
+                "audio_vae": second_audio_vae,
+            }],
+            sampling_mode=_h3_sampling_mode("dual", upscale_by=[1.0]),
         )
     )
 
@@ -3403,10 +3403,8 @@ def test_multitrack_h3_selflift_uses_second_model_only_for_high_resolution(monke
                 "vae": object(),
                 "audio_vae": object(),
             }],
-            sampling_mode=_h3_sampling_mode(
-                "selflift",
-                model_loader_2nd=[{"model": second_model}],
-            ),
+            model_loader_2nd=[{"model": second_model}],
+            sampling_mode=_h3_sampling_mode("selflift"),
         )
     )
 
@@ -3420,9 +3418,8 @@ def test_linked_selflift_forwards_second_model_loader(monkeypatch):
     result = module.EasyMultiTrackProject.execute(
         **_h3_project_inputs(
             model_loader=[["first-loader", 0]],
-            sampling_mode=_h3_sampling_mode(
-                "selflift", model_loader_2nd=[["second-loader", 0]]
-            ),
+            model_loader_2nd=[["second-loader", 0]],
+            sampling_mode=_h3_sampling_mode("selflift"),
         )
     )
 
@@ -3438,92 +3435,42 @@ def test_linked_selflift_forwards_second_model_loader(monkeypatch):
     assert selflift["inputs"]["highres_model"] == [model_id, 3]
 
 
-def test_multitrack_h3_rejects_incomplete_custom_sampling(monkeypatch):
+def test_multitrack_h3_custom_plan_requires_both_sampler_and_sigmas(monkeypatch):
     module = _load_minimax_node(monkeypatch)
     assert module is not None
 
     with pytest.raises(ValueError, match="both sampler and sigmas"):
         module.EasyMultiTrackProject.execute(
-            **_h3_project_inputs(sampler=[object()])
+            **_h3_project_inputs(sampling_plan=["custom"], sampler=[object()])
         )
 
 
-def test_multitrack_h3_first_pass_preview_skips_second_model_loader(monkeypatch):
+def test_multitrack_h3_unconnected_sampler_or_sigmas_use_the_plan(monkeypatch):
     module = _load_minimax_node(monkeypatch)
-    assert module is not None
+    custom_sampler = object()
+    custom_sigmas = torch.tensor([0.5, 0.0])
 
     result = module.EasyMultiTrackProject.execute(
         **_h3_project_inputs(
-            sampling_mode=_h3_sampling_mode(
-                "dual",
-                    **{"1st_pass_only": [True]},
-                model_loader_2nd=[{}],
-            )
+            sampling_plan=["medium"],
+            sampler=[custom_sampler],
+            sigmas_2nd=[custom_sigmas],
+            sampling_mode=_h3_sampling_mode("dual", upscale_by=[1.0]),
         )
     )
 
-    assert sum(
-        node["class_type"] == "SamplerCustomAdvanced"
+    starts = {
+        node["inputs"]["sampling_pass"]: node["inputs"]
         for node in result.expand.values()
-    ) == 1
-
-
-def test_multitrack_h3_first_pass_preview_only_builds_first_selected_task(monkeypatch):
-    module = _load_minimax_node(monkeypatch)
-    assert module is not None
-    info = _h3_project_inputs()["tracks_info"][0]
-    second = {
-        "start_frame": 120,
-        "end_frame": 240,
-        "content": {
-            "task_mode": "l2v",
-            "continuity_mode": "context",
-            "images": [{"media_index": 0}],
-            "user_prompt": "continue",
-        },
+        if node["class_type"] == "easy h3SegmentSamplingStart"
     }
-    info["tracks"][0]["segments"].append(second)
-
-    result = module.EasyMultiTrackProject.execute(
-        **_h3_project_inputs(
-            tracks_info=[info],
-                sampling_mode=_h3_sampling_mode("dual", **{"1st_pass_only": [True]}),
-            sampling_plan=["light"],
-        )
-    )
-
-    nodes = list(result.expand.values())
-    assert sum(node["class_type"] == "easy multiTrackTaskOutput" for node in nodes) == 1
-    assert sum(node["class_type"] == "SamplerCustomAdvanced" for node in nodes) == 1
-    assert not any(node["class_type"] == "ImageResizeKJv2" for node in nodes)
-    conditioning = next(
-        node for node in nodes if node["class_type"] == "easy minimaxH3ToVideo"
-    )
-    assert (conditioning["inputs"]["width"], conditioning["inputs"]["height"]) == (
-        1344,
-        768,
-    )
-    artifact = next(
-        node for node in nodes if node["class_type"] == "easy h3NativeArtifact"
-    )
-    assert json.loads(_graph_node(result, "easy h3NativePrepare")["inputs"]["recipe_json"])["first_pass_only"] is True
-    first_pass_sample_id = next(
-        node_id
-        for node_id, node in result.expand.items()
-        if node["class_type"] == "SamplerCustomAdvanced"
-    )
-    result_node = result.expand[artifact["inputs"]["latent"][0]]
-    assert result_node["class_type"] == "easy h3NativeResult"
-    assert result_node["inputs"]["latent"] == [first_pass_sample_id, 1]
-    assert result_node["inputs"]["low_latent"] == [first_pass_sample_id, 1]
-
-
-
-
-
-
-
-
+    assert starts["first"]["sampler"] is custom_sampler
+    assert starts["second"]["sigmas"] is custom_sigmas
+    preset_sigmas = result.expand[starts["first"]["sigmas"][0]]
+    assert preset_sigmas["class_type"] == "ManualSigmas"
+    assert preset_sigmas["inputs"]["sigmas"].startswith("1.0000, 0.9956")
+    preset_sampler = result.expand[starts["second"]["sampler"][0]]
+    assert preset_sampler["inputs"]["sampler_name"] == "sa_solver"
 
 
 def test_multitrack_h3_first_context_task_does_not_add_an_empty_prefix(monkeypatch):
@@ -3584,12 +3531,9 @@ def test_multitrack_h3_connected_second_pass_sampling_overrides_context_preset(
         **_h3_project_inputs(
             tracks_info=[info],
             sampling_plan=["medium"],
-            sampling_mode=_h3_sampling_mode(
-                "dual",
-                sampler_2nd=[second_pass_sampler],
-                sigmas_2nd=[second_pass_sigmas],
-                upscale_by=[1.0],
-            ),
+            sampler_2nd=[second_pass_sampler],
+            sigmas_2nd=[second_pass_sigmas],
+            sampling_mode=_h3_sampling_mode("dual", upscale_by=[1.0]),
         )
     )
 
@@ -3610,6 +3554,43 @@ def test_multitrack_h3_connected_second_pass_sampling_overrides_context_preset(
         and node["inputs"]["sigmas"] == "0.50, 0.30, 0.14, 0.06, 0.0"
         for node in result.expand.values()
     )
+
+
+def test_multitrack_h3_connected_second_pass_sampler_keeps_context_preset(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    info = _h3_project_inputs()["tracks_info"][0]
+    info["tracks"][0]["segments"].append({
+        "start_frame": 120,
+        "end_frame": 240,
+        "content": {
+            "task_mode": "l2v",
+            "continuity_mode": "context",
+            "images": [{"media_index": 0}],
+            "user_prompt": "continue",
+        },
+    })
+    second_pass_sampler = object()
+
+    result = module.EasyMultiTrackProject.execute(
+        **_h3_project_inputs(
+            tracks_info=[info],
+            sampling_plan=["medium"],
+            sampler_2nd=[second_pass_sampler],
+            sampling_mode=_h3_sampling_mode("dual", upscale_by=[1.0]),
+        )
+    )
+
+    second_pass_starts = [
+        node["inputs"]
+        for node in result.expand.values()
+        if node["class_type"] == "easy h3SegmentSamplingStart"
+        and node["inputs"]["sampling_pass"] == "second"
+    ]
+    assert all(start["sampler"] is second_pass_sampler for start in second_pass_starts)
+    assert [result.expand[start["sigmas"][0]]["inputs"]["sigmas"] for start in second_pass_starts] == [
+        "0.6316, 0.4877, 0.2857, 0.0837, 0.0000",
+        "0.50, 0.30, 0.14, 0.06, 0.0",
+    ]
 
 
 
@@ -4788,14 +4769,12 @@ def test_remove_h3_motion_context_latent_rejects_unsafe_paths(
         module.EasyRemoveH3MotionContextLatent.execute(object(), filename_path)
 
 
-@pytest.mark.parametrize("mode,first_only", [("single", False), ("dual", False), ("dual", True)])
+@pytest.mark.parametrize("mode", ["single", "dual"])
 @pytest.mark.parametrize("with_context", [False, True])
-def test_audio_only_project_never_decodes_or_saves_video(monkeypatch, mode, first_only, with_context):
+def test_audio_only_project_never_decodes_or_saves_video(monkeypatch, mode, with_context):
     module = _load_minimax_node(monkeypatch)
-    inputs = _h3_project_inputs(
-        sampling_mode=_h3_sampling_mode(mode, **{"1st_pass_only": first_only}),
-        upscale_model=["unused-upscaler"],
-    )
+    children = {"upscale_model": ["unused-upscaler"]} if mode == "dual" else {}
+    inputs = _h3_project_inputs(sampling_mode=_h3_sampling_mode(mode, **children))
     info = inputs["tracks_info"][0]
     info.update(width=32, height=32)
     if with_context:
@@ -4815,7 +4794,7 @@ def test_audio_only_project_never_decodes_or_saves_video(monkeypatch, mode, firs
     for artifact in artifacts:
         assert "audio" in artifact["inputs"]
         assert "video_path" not in artifact["inputs"]
-    if with_context and not first_only:
+    if with_context:
         assert "easy h3NativePrepare" in types_in_graph
         trims = [n for n in result.expand.values() if n["class_type"] == "easy h3NativeMediaView"]
         assert trims

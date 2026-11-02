@@ -12,7 +12,7 @@ export const EMPTY_LORA_PLAN: SegmentLoraPlan = { version: 1, rules: [] }
 export interface LoraProjectSnapshot {
   known: boolean
   segment_loras: SegmentLoraPlan
-  recipe: { sampling_mode: string; first_pass_only: boolean }
+  recipe: { sampling_mode: string }
   start_segment: number
   segment_count: number
 }

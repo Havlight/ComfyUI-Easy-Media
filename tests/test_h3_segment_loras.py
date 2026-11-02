@@ -43,11 +43,10 @@ def test_absolute_numbering_for_partial_run_and_clamped_ranges():
     assert plan["rules"][0]["end"] == 4
 
 
-@pytest.mark.parametrize("mode,preview,expected", [("single", False, ["first"]),
-    ("dual", False, ["first", "second"]), ("dual", True, ["first"]),
-    ("selflift", True, ["first", "second"]), ("passthrough", False, [])])
-def test_actual_stages_and_passthrough_keep_numbering(mode, preview, expected):
-    plan = compile_plan(rule(), mode=mode, first_pass_only=preview, passthrough={1})
+@pytest.mark.parametrize("mode,expected", [("single", ["first"]), ("dual", ["first", "second"]),
+    ("selflift", ["first", "second"]), ("passthrough", [])])
+def test_actual_stages_and_passthrough_keep_numbering(mode, expected):
+    plan = compile_plan(rule(), mode=mode, passthrough={1})
     assert list(plan["tasks"][0]["stages"]) == expected
     assert plan["tasks"][1]["stages"] == {}
     assert plan["tasks"][2]["number"] == 3

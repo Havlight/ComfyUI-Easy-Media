@@ -173,10 +173,7 @@ async def handle_h3_segment_loras_preview(request: web.Request) -> web.Response:
             {"resolution": "width x height (custom)", "width": 320, "height": 256},
             "MiniMax", materialize_media=False)[0]
         selected = select_h3_task_entries(h3_task_entries(info), snapshot['start_segment'] - 1, snapshot['segment_count'])
-        recipe = snapshot['recipe']
-        if recipe['sampling_mode'] == 'dual' and recipe.get('first_pass_only'):
-            selected = selected[:1]
-        compiled = compile_project_loras(info, snapshot['segment_loras'], recipe, [i for i, _ in selected])
+        compiled = compile_project_loras(info, snapshot['segment_loras'], snapshot['recipe'], [i for i, _ in selected])
         return web.json_response({'pending': False, **compiled})
     except (OSError, KeyError, TypeError, ValueError) as error:
         return web.json_response({'error': str(error)}, status=400)

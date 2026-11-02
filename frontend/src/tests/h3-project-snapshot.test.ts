@@ -21,7 +21,7 @@ describe('shared H3 Project graph snapshots', () => {
     const snapshot = snapshotH3Project(project)
     expect(snapshot).toMatchObject({ id: '3', name: 'test', tracks_info: { tracks: [] },
       project_snapshot: { known: true, start_segment: 1, segment_count: -1,
-        recipe: { sampling_mode: 'dual', first_pass_only: false }, segment_loras: { version: 1, rules: [] } } })
+        recipe: { sampling_mode: 'dual' }, segment_loras: { version: 1, rules: [] } } })
   })
   it('treats disconnected LoRA as known empty, unknown adapters as pending', () => {
     const { project, lora } = setup()
@@ -51,13 +51,12 @@ describe('shared H3 Project graph snapshots', () => {
     expect(snapshotH3Project(project).project_snapshot.known).toBe(true)
     expect(snapshotH3Project(other).name).toBe('other')
   })
-  it('uses the live Editor value and ignores first-pass-only in SelfLift', () => {
+  it('uses the live Editor value', () => {
     const { project, editor } = setup()
-    project.widgets!.push({ name: '1st_pass_only', value: true })
     project.widgets![1].value = 'selflift'
     const data = { tracks: [], frame_rate: 24, total_length: 90 }
     const result = snapshotH3Project(project, { node: editor, data })
     expect(result.tracks_info).toBe(data)
-    expect(result.project_snapshot.recipe.first_pass_only).toBe(false)
+    expect(result.project_snapshot.recipe).toEqual({ sampling_mode: 'selflift' })
   })
 })

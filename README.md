@@ -194,14 +194,13 @@ If an older workflow connects directly to the editor's media outputs, insert `Mu
 | `model_loader_2nd` | Optional second-pass H3 model; defaults to the first-pass model. Even when connected, encoding and VAEs still come from the first-pass loader |
 | `segment_loras` | Optional H3 Segment LoRA plan: additional MODEL LoRAs by absolute task number and sampling stage |
 | `sampling_plan` | Built-in presets such as `ultra_light`, `light`, `medium`, and `high` select samplers and sigmas for Turbo / non-Turbo models; use `custom` for manual settings |
-| `sampling_mode` | `single`, `dual`, or `selflift`; SelfLift expands `transition_ratio`, `lowres_scale`, and the optional `highres_tiling` switch. Uses a latent-only recipe (`rho=0`). SelfLift also saves separate low- and high-resolution context lineages |
-| `sampler` / `sigmas` | Connect both to override first-pass sampling. Second-pass overrides use `sampler_2nd` / `sigmas_2nd`, also as a pair. `custom` requires both inputs for every sampling pass that runs |
-| `upscale_by` | Second-pass scale relative to the editor dimensions; default `1.250`, three decimal places, step `0.001` |
+| `sampling_mode` | `single`, `dual`, `selflift`, or `passthrough`. Each mode shows only its own settings once selected: `dual` expands `upscale_by`, `upscale_model`, `disable_2nd_noise`, and `enabled_tiling`; `selflift` expands `transition_ratio`, `lowres_scale`, `upscale_model`, and `enabled_tiling`. SelfLift uses a latent-only recipe (`rho=0`) and saves separate low- and high-resolution context lineages |
+| `sampler` / `sigmas` | Optional first-pass sampler and sigmas; whichever is unconnected comes from the sampling plan. `sampler_2nd` / `sigmas_2nd` do the same for the Dual second pass. Connected `sigmas_2nd` also replace the plan's lighter schedule for context segments. `custom` has no preset, so every sampling pass that runs needs both inputs |
+| `upscale_by` | Dual option: second-pass scale relative to the editor dimensions; default `1.250`, three decimal places, step `0.001` |
 | `allow_vae_fallback` | Defaults to off. Permit generated-media re-encoding when a compatible native source is unavailable; initial external encoding and output decoding are always allowed. Corrupt sources, stale dependencies and invalid Lock ranges still fail |
-| `disable_2nd_noise` | Disables added second-pass noise; it does not skip the second pass |
-| `1st_pass_only` | In `dual` mode, runs and checkpoints **only the first pass of the first selected segment**. Disabling this option regenerates both passes |
+| `disable_2nd_noise` | Dual option: disables added second-pass noise; it does not skip the second pass |
 
-Alignment uses Python `round`, matching [the H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py); it is not always upward, and exact ties round to the even integer. For example, `1344 × 768` at `1.250` becomes `1680 × 960` before alignment and **`1664 × 960`** for the second pass. Both upscaling paths use this size, and project records and combined exports retain the resulting dimensions. Single-pass generation and first-pass-only previews keep the editor dimensions; audio-only projects (`32 × 32`) do not upscale. Existing workflows retain their saved multiplier rather than automatically adopting the new default.
+Alignment uses Python `round`, matching [the H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py); it is not always upward, and exact ties round to the even integer. For example, `1344 × 768` at `1.250` becomes `1680 × 960` before alignment and **`1664 × 960`** for the second pass. Both upscaling paths use this size, and project records and combined exports retain the resulting dimensions. Single-pass generation keeps the editor dimensions; audio-only projects (`32 × 32`) do not upscale. ComfyUI saves only the selected mode's settings, so after a reload, switching to another mode starts from its defaults. Workflows saved before these settings moved under `sampling_mode` should have their Project settings checked and saved again.
 
 To customize presets, copy [h3_sample.json.example](./presets/h3_sample.json.example) to `presets/h3_sample.json` and edit it. **The current built-in dual-sampling presets use separate first- and second-pass sigma schedules.** Do not assume that `light` always splits sigmas and leaves the first pass incomplete. A custom preset with `split_step` explicitly splits one sigma schedule across both passes. Existing custom files take precedence, so review your configuration after upgrading.
 
@@ -212,7 +211,7 @@ To customize presets, copy [h3_sample.json.example](./presets/h3_sample.json.exa
 | An H3 latent upscaler model | Calls the bundled `easy minimaxH3LatentUpscaler` node to upscale the video latent directly to the scaled, aligned second-pass dimensions | Place the [H3 upscaler weights](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) in `ComfyUI/models/latent_upscale_models/`; the external custom-node package is not required |
 | `None` with `upscale_by > 1` | Decode the first-pass video with the VAE → Resize images → Re-encode with the VAE → Second pass; requires **Allow VAE fallback** | Requires `ImageResizeKJv2` from [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) |
 
-`upscale_model` selects **H3 latent upscaler weights**, which serve a different purpose from the H3 generation model in `model_loader_2nd`. Direct latent upscaling avoids the intermediate video VAE decode/encode round trip, but the second pass still runs at the target resolution; its VRAM requirements do not decrease proportionally. Easy Media includes the inference node and runtime; only the checkpoint is downloaded separately.
+`upscale_model` selects **H3 latent upscaler weights**, which serve a different purpose from the H3 generation model in `model_loader_2nd`. Direct latent upscaling avoids the intermediate video VAE decode/encode round trip, but the second pass still runs at the target resolution; its VRAM requirements do not decrease proportionally. Easy Media includes the inference node and runtime; only the checkpoint is downloaded separately. Under `dual`, `upscale_model` defaults to an installed upscaler whose file name contains `minimax_h3`.
 
 The standalone `easy minimaxH3LatentUpscaler` node exposes `enable_temporal_chunking` and `force_unload`. Both default to enabled; MultiTrack's internal latent-upscale path also enables both explicitly. Temporal chunking lowers peak memory for long latents, while forced unload releases the upscaler from VRAM after inference.
 
@@ -229,7 +228,7 @@ The advanced arrow on each row selects **All stages** (default), **First stage**
 | Mode | First stage | Second stage |
 |------|-------------|--------------|
 | Single | The sampling pass | Unused |
-| Dual | First pass | Second pass, unless first-pass-only preview is enabled |
+| Dual | First pass | Second pass |
 | SelfLift | Low-resolution part | High-resolution part of the same sigma schedule |
 | Passthrough | Unused | Unused |
 

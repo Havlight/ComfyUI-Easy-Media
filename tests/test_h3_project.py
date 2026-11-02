@@ -20,7 +20,6 @@ from utils.h3_project import (  # noqa: E402
     h3_locked_video_track,
     h3_second_pass_dimensions,
     has_h3_context_latent,
-    has_h3_first_pass_checkpoint,
     h3_project_filename_prefix,
     h3_task_entries,
     h3_task_type,
@@ -298,30 +297,6 @@ def test_initialize_project_writes_manifest_before_segment_generation(tmp_path):
     manifest = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
     assert manifest["project_name"] == "demo"
     assert manifest["segments"] == {}
-
-
-def test_first_pass_checkpoint_requires_marker_and_existing_context_latent(tmp_path):
-    project_dir = initialize_h3_project("demo", _tracks_info(), tmp_path)
-    context_latent = project_dir / "context_latent_0_1.safetensors"
-    context_latent.write_bytes(b"checkpoint")
-    manifest_path = project_dir / "project.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["segments"] = {
-        "0": {
-            "active_generation": 1,
-            "generations": {
-                "1": {
-                    "context_latent": context_latent.name,
-                    "sampling_pass": "first",
-                }
-            },
-        }
-    }
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    assert has_h3_first_pass_checkpoint("demo", 0, tmp_path) is True
-    context_latent.unlink()
-    assert has_h3_first_pass_checkpoint("demo", 0, tmp_path) is False
 
 
 def test_context_latent_availability_checks_active_high_and_exact_low(tmp_path):

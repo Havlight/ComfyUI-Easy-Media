@@ -446,7 +446,7 @@ def test_template_metadata_matches_documented_asset():
     assert len(workflow["nodes"]) == 21
     assert len(workflow["links"]) == 26
     assert hashlib.sha256(TEMPLATE.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == (
-        "c1faea576b21694efad55c0488aa9bb6a6e99ad09a5634ea086e54b87980becc"
+        "ccc471874619a5f54bafb03768b274e5597b0fa6000c29cd00774f1c4184726a"
     )
     assert [51, 11, 0, 13, 0, "MODEL"] in workflow["links"]
     assert [56, 13, 0, 26, 0, "MODEL"] in workflow["links"]
@@ -463,3 +463,71 @@ def test_project_start_number_updates_positional_and_named_widgets(
     project = _node(result, report["project_node_id"])
     assert project["widgets_values"][2] == 2
     assert project["widgets_values_named"]["segment_start_number"] == 2
+
+
+def test_project_sampling_mode_writes_its_option_widgets(patch_workflow_module):
+    result, report = patch_workflow_module.apply_plan(
+        _template_workflow(),
+        {"project": {"sampling_mode": {"sampling_mode": "dual", "upscale_by": 1.5,
+                                       "enabled_tiling": True, "tile_count": 4}}},
+    )
+
+    project = _node(result, report["project_node_id"])
+    assert project["widgets_values"][7:] == [
+        "dual", 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors", False, "true", 4,
+    ]
+    named = project["widgets_values_named"]
+    assert named["sampling_mode"] == "dual"
+    assert named["sampling_mode.upscale_by"] == 1.5
+    assert named["sampling_mode.enabled_tiling"] == "true"
+    assert named["sampling_mode.enabled_tiling.tile_count"] == 4
+    assert report["project_changes"]["sampling_mode"]["to"]["upscale_model"] == (
+        "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+    )
+    inspected = patch_workflow_module.inspect_workflow(result)["projects"][0]
+    assert inspected["sampling_mode"] == {
+        "sampling_mode": "dual", "upscale_by": 1.5,
+        "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "disable_2nd_noise": False, "enabled_tiling": True, "tile_count": 4,
+    }
+
+
+def test_project_sampling_mode_keeps_saved_options_and_later_widgets(patch_workflow_module):
+    workflow = _template_workflow()
+    project = next(node for node in workflow["nodes"] if node["type"] == "easy multitrackProject")
+    project["widgets_values"][7:] = ["dual", 2.0, "custom.safetensors", True, "false", True]
+
+    kept, report = patch_workflow_module.apply_plan(
+        workflow, {"project": {"sampling_mode": {"sampling_mode": "dual", "disable_2nd_noise": False}}},
+    )
+    assert _node(kept, report["project_node_id"])["widgets_values"][7:] == [
+        "dual", 2.0, "custom.safetensors", False, "false", True,
+    ]
+
+    single, report = patch_workflow_module.apply_plan(workflow, {"project": {"sampling_mode": "single"}})
+    project = _node(single, report["project_node_id"])
+    assert project["widgets_values"][7:] == ["single", True]
+    assert not any(key.startswith("sampling_mode.") for key in project["widgets_values_named"])
+
+
+@pytest.mark.parametrize("plan, error", [
+    ({"sampling_mode": "triple"}, "sampling_mode must be one of"),
+    ({"sampling_mode": {"sampling_mode": "single", "upscale_by": 2}}, "does not use fields"),
+    ({"sampling_mode": {"sampling_mode": "dual", "upscale_by": 9}}, "upscale_by must be a number"),
+    ({"sampling_mode": {"sampling_mode": "dual", "tile_count": 3}}, "needs enabled_tiling true"),
+])
+def test_project_sampling_mode_rejects_invalid_settings(patch_workflow_module, plan, error):
+    with pytest.raises(patch_workflow_module.WorkflowError, match=error):
+        patch_workflow_module.apply_plan(_template_workflow(), {"project": plan})
+
+
+def test_project_sampling_mode_rejects_an_old_widget_layout(patch_workflow_module):
+    workflow = _template_workflow()
+    project = next(node for node in workflow["nodes"] if node["type"] == "easy multitrackProject")
+    project["widgets_values"][7:] = ["dual", False, False, 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors"]
+
+    with pytest.raises(patch_workflow_module.WorkflowError, match="do not match the current node layout"):
+        patch_workflow_module.apply_plan(workflow, {"project": {"sampling_mode": "single"}})
+    inspected = patch_workflow_module.inspect_workflow(workflow)["projects"][0]
+    assert inspected["sampling_mode"]["sampling_mode"] == "dual"
+    assert "do not match" in inspected["sampling_mode"]["error"]

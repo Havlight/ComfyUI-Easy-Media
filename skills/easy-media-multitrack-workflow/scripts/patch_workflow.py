@@ -26,10 +26,22 @@ PROJECT_WIDGETS = {
     "control_after_generate": 5,
     "sampling_plan": 6,
     "sampling_mode": 7,
-    "1st_pass_only": 8,
-    "disable_2nd_noise": 9,
-    "upscale_by": 10,
-    "upscale_model": 11,
+}
+# The selected sampling_mode's widgets follow it in widgets_values, in this order.
+# enabled_tiling "true" is followed by tile_count.
+H3_LATENT_UPSCALER = "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+SAMPLING_MODE_WIDGETS: dict[str, list[tuple[str, Any]]] = {
+    "single": [],
+    "dual": [("upscale_by", 1.25), ("upscale_model", H3_LATENT_UPSCALER),
+             ("disable_2nd_noise", False), ("enabled_tiling", False)],
+    "selflift": [("transition_ratio", 0.6), ("lowres_scale", 0.6),
+                 ("upscale_model", "None"), ("enabled_tiling", False)],
+    "passthrough": [],
+}
+SAMPLING_MODE_RANGES = {
+    "upscale_by": (1.0, 8.0),
+    "transition_ratio": (0.05, 0.95),
+    "lowres_scale": (0.25, 1.0),
 }
 RESIZE_METHODS = {
     "stretch",
@@ -490,14 +502,100 @@ def validate_track_data(
         raise WorkflowError("track_data.total_length must be a non-negative integer")
 
 
+def check_sampling_value(name: str, value: Any) -> None:
+    if name in SAMPLING_MODE_RANGES:
+        low, high = SAMPLING_MODE_RANGES[name]
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= high:
+            raise WorkflowError(f"sampling_mode.{name} must be a number from {low} to {high}")
+    elif name in {"disable_2nd_noise", "enabled_tiling"}:
+        if not isinstance(value, bool):
+            raise WorkflowError(f"sampling_mode.{name} must be true or false")
+    elif name == "upscale_model":
+        if not isinstance(value, str) or not value:
+            raise WorkflowError("sampling_mode.upscale_model must be a model file name or 'None'")
+    elif name == "tile_count":
+        if not isinstance(value, int) or isinstance(value, bool) or not 2 <= value <= 8:
+            raise WorkflowError("sampling_mode.tile_count must be an integer from 2 to 8")
+
+
+def read_sampling_mode(widgets: list[Any]) -> tuple[dict[str, Any], int]:
+    """The saved sampling_mode with its option widgets, and the index after them."""
+    index = PROJECT_WIDGETS["sampling_mode"]
+    mode = widgets[index]
+    if mode not in SAMPLING_MODE_WIDGETS:
+        raise WorkflowError(f"Project sampling_mode {mode!r} is unknown")
+    value: dict[str, Any] = {"sampling_mode": mode}
+    index += 1
+    try:
+        for name, _ in SAMPLING_MODE_WIDGETS[mode]:
+            saved = widgets[index]
+            index += 1
+            if name == "enabled_tiling":
+                if saved not in {"true", "false"}:
+                    raise WorkflowError(f"enabled_tiling {saved!r} is not 'true' or 'false'")
+                value[name] = saved == "true"
+                if value[name]:
+                    value["tile_count"] = widgets[index]
+                    check_sampling_value("tile_count", widgets[index])
+                    index += 1
+            else:
+                check_sampling_value(name, saved)
+                value[name] = saved
+    except (IndexError, WorkflowError) as error:
+        raise WorkflowError(
+            f"Project {mode} widgets do not match the current node layout ({error}); "
+            "open the workflow in ComfyUI, check the Project settings and save it again"
+        ) from error
+    return value, index
+
+
+def sampling_mode_patch(value: Any, current: dict[str, Any]) -> dict[str, Any]:
+    """The complete sampling_mode setting: patched fields, else the saved ones, else defaults."""
+    patch = {"sampling_mode": value} if isinstance(value, str) else copy.deepcopy(value)
+    if not isinstance(patch, dict):
+        raise WorkflowError("project.sampling_mode must be a mode name or an object")
+    mode = patch.get("sampling_mode")
+    if mode not in SAMPLING_MODE_WIDGETS:
+        raise WorkflowError(f"sampling_mode must be one of {sorted(SAMPLING_MODE_WIDGETS)}")
+    fields = {name for name, _ in SAMPLING_MODE_WIDGETS[mode]}
+    if "enabled_tiling" in fields:
+        fields.add("tile_count")
+    unused = sorted(set(patch) - fields - {"sampling_mode"})
+    if unused:
+        raise WorkflowError(f"sampling_mode {mode!r} does not use fields: {unused}")
+    saved = current if current["sampling_mode"] == mode else {}
+    result: dict[str, Any] = {"sampling_mode": mode}
+    for name, default in SAMPLING_MODE_WIDGETS[mode]:
+        result[name] = patch.get(name, saved.get(name, default))
+        check_sampling_value(name, result[name])
+    if result.get("enabled_tiling"):
+        result["tile_count"] = patch.get("tile_count", saved.get("tile_count", 2))
+        check_sampling_value("tile_count", result["tile_count"])
+    elif "tile_count" in patch:
+        raise WorkflowError("sampling_mode.tile_count needs enabled_tiling true")
+    return result
+
+
+def flatten_sampling_mode(value: dict[str, Any]) -> tuple[list[Any], dict[str, Any]]:
+    """widgets_values entries and widgets_values_named keys for a sampling_mode setting."""
+    flattened: list[Any] = [value["sampling_mode"]]
+    named: dict[str, Any] = {"sampling_mode": value["sampling_mode"]}
+    for name, _ in SAMPLING_MODE_WIDGETS[value["sampling_mode"]]:
+        saved = ("true" if value[name] else "false") if name == "enabled_tiling" else value[name]
+        flattened.append(saved)
+        named[f"sampling_mode.{name}"] = saved
+        if name == "enabled_tiling" and value[name]:
+            flattened.append(value["tile_count"])
+            named["sampling_mode.enabled_tiling.tile_count"] = value["tile_count"]
+    return flattened, named
+
+
 def validate_project_patch(patch: dict[str, Any]) -> None:
     unknown = sorted(set(patch) - ({"node_id"} | set(PROJECT_WIDGETS)))
     if unknown:
         raise WorkflowError(f"Unsupported project fields: {unknown}")
     if "project_save" in patch and patch["project_save"] not in {"new", "override"}:
         raise WorkflowError("project_save must be 'new' or 'override'")
-    if "sampling_mode" in patch and patch["sampling_mode"] not in {"single", "dual"}:
-        raise WorkflowError("sampling_mode must be 'single' or 'dual'")
     if "segment_start_number" in patch:
         value = patch["segment_start_number"]
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -616,7 +714,7 @@ def apply_plan(
     project_changes: dict[str, dict[str, Any]] = {}
     project_named = project.get("widgets_values_named")
     for field, index in PROJECT_WIDGETS.items():
-        if field not in project_patch:
+        if field not in project_patch or field == "sampling_mode":
             continue
         old = widgets[index]
         new = project_patch[field]
@@ -625,6 +723,19 @@ def apply_plan(
             project_named[field] = new
         if old != new:
             project_changes[field] = {"from": old, "to": new}
+    if "sampling_mode" in project_patch:
+        current_mode, mode_end = read_sampling_mode(widgets)
+        next_mode = sampling_mode_patch(project_patch["sampling_mode"], current_mode)
+        flattened, named_mode = flatten_sampling_mode(next_mode)
+        start = PROJECT_WIDGETS["sampling_mode"]
+        widgets[start:mode_end] = flattened
+        if isinstance(project_named, dict):
+            for key in list(project_named):
+                if key == "sampling_mode" or key.startswith("sampling_mode."):
+                    del project_named[key]
+            project_named.update(named_mode)
+        if next_mode != current_mode:
+            project_changes["sampling_mode"] = {"from": current_mode, "to": next_mode}
 
     original_without_targets = copy.deepcopy(workflow)
     result_without_targets = copy.deepcopy(result)
@@ -697,6 +808,12 @@ def inspect_workflow(workflow: dict[str, Any]) -> dict[str, Any]:
             name: widgets[index] if index < len(widgets) else None
             for name, index in PROJECT_WIDGETS.items()
         }
+        if len(widgets) > PROJECT_WIDGETS["sampling_mode"]:
+            try:
+                values["sampling_mode"] = read_sampling_mode(widgets)[0]
+            except WorkflowError as error:
+                values["sampling_mode"] = {"sampling_mode": widgets[PROJECT_WIDGETS["sampling_mode"]],
+                                           "error": str(error)}
         project_items.append({"id": project.get("id"), "editor_id": linked_id, **values})
     editor_items: list[dict[str, Any]] = []
     for editor in editors:

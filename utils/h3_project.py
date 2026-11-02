@@ -692,43 +692,6 @@ def initialize_h3_project(
     return project_dir
 
 
-def has_h3_first_pass_checkpoint(
-    project_name: Any,
-    segment_index: int,
-    output_directory: str | Path | None = None,
-) -> bool:
-    """Return whether the active segment generation can resume at pass two."""
-    safe_name = safe_h3_project_name(project_name)
-    project_dir = (
-        Path(output_directory).resolve() / "easy_media" / "projects" / safe_name
-        if output_directory is not None
-        else h3_project_directory(safe_name)
-    )
-    manifest_path = project_dir / "project.json"
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        segment = manifest["segments"][str(int(segment_index))]
-        generation = str(int(segment["active_generation"]))
-        checkpoint = segment["generations"][generation]
-        filename = checkpoint["context_latent"]
-    except (
-        KeyError,
-        OSError,
-        TypeError,
-        ValueError,
-        json.JSONDecodeError,
-    ):
-        return False
-    if checkpoint.get("sampling_pass") != "first":
-        return False
-    checkpoint_path = (project_dir / str(filename)).resolve()
-    try:
-        checkpoint_path.relative_to(project_dir.resolve())
-    except ValueError:
-        return False
-    return checkpoint_path.is_file()
-
-
 def has_h3_context_latent(
     project_name: Any,
     segment_index: int,

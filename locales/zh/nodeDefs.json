@@ -1400,8 +1400,14 @@
         "name": "多轨信息",
         "tooltip": "多轨编辑器输出的完整项目数据。"
       },
-      "sampler": { "name": "采样器" },
-      "sigmas": { "name": "Sigmas" },
+      "sampler": {
+        "name": "采样器",
+        "tooltip": "可选的一采采样器；不接时使用采样方案的预设。SelfLift 固定使用 Euler。"
+      },
+      "sigmas": {
+        "name": "Sigmas",
+        "tooltip": "可选的一采 Sigmas；不接时使用采样方案的预设。"
+      },
       "project_name": {
         "name": "项目名称",
         "tooltip": "项目目录位于 output/easy_media/projects/{项目名}/；留空时使用 default 项目目录。"
@@ -1417,7 +1423,7 @@
 
       "sampling_plan": {
         "name": "采样方案",
-        "tooltip": "选择采样调度方案，默认；外接采样器或 Sigmas 后，执行阶段会自动采用 custom。",
+        "tooltip": "选择采样器与 Sigmas 的预设，Turbo 与非 Turbo 模型各有一组；采样器或 Sigmas 接入后取代对应的预设。custom 没有预设，实际运行的每个采样阶段都要同时接入采样器与 Sigmas。",
         "options": {
           "custom": "自定义",
           "light": "轻度",
@@ -1429,7 +1435,7 @@
       },
       "sampling_mode": {
         "name": "采样模式",
-        "tooltip": "single 单次采样效果最好；dual 使用原有两次独立采样；selflift 使用单条渐进分辨率调度；passthrough 直接输出第 0 个完整时间线参考视频，并保存下一段所需的上下文。",
+        "tooltip": "single 单次采样效果最好；dual 先以编辑器尺寸一采，放大后再二采；selflift 使用单条渐进分辨率调度；passthrough 直接输出第 0 个完整时间线参考视频，并保存下一段所需的上下文。dual 与 selflift 的参数在选中后展开。",
         "options": {"single": "单次采样", "dual": "两次采样", "selflift": "SelfLift", "passthrough": "直通"}
       },
       "transition_ratio": {
@@ -1444,30 +1450,34 @@
         "name": "启用分块",
         "tooltip": "为 Dual 二采或 SelfLift 高分辨率阶段启用空间分块。"
       },
-      "tile_count": { "name": "分块数量" },
+      "tile_count": {
+        "name": "分块数量",
+        "tooltip": "高分辨率采样的空间分块数量。"
+      },
       "model_loader_2nd": {
         "name": "模型加载器(二采)",
         "tooltip": "可选；仅替换二采模型，编码与 VAE 保持一采配置以确保 latent 兼容。"
       },
       "sampler_2nd":{
-        "name": "采样器(二采)"
+        "name": "采样器(二采)",
+        "tooltip": "可选的 Dual 二采采样器；不接时使用采样方案的预设。"
       },
       "sigmas_2nd":{
-        "name": "Sigmas(二采)"
-      },
-      "1st_pass_only": {
-        "name": "仅执行一采预览",
-        "tooltip": "在二采模式下，仅执行首个选中片段的一采，用于快速预览。旧版时间轴可直接续跑二采；原生时间轴会重算两阶段以验证来源。"
+        "name": "Sigmas(二采)",
+        "tooltip": "可选的 Dual 二采 Sigmas；不接时使用采样方案的预设。接入后续接片段也改用这组 Sigmas，不再使用预设中较轻的续接排程。"
       },
       "disable_2nd_noise": {
         "name": "禁用二采噪声",
-        "tooltip": "在二采中禁用噪声。"
+        "tooltip": "二采时不加入新的噪声。"
       },
       "upscale_by": {
         "name": "二采放大倍率",
-        "tooltip": "dual 模式下用于计算二采目标分辨率。"
+        "tooltip": "二采尺寸相对于编辑器尺寸的倍率，宽高各自对齐到 32 的倍数。"
       },
-      "upscale_model": { "name": "放大模型" },
+      "upscale_model": {
+        "name": "放大模型",
+        "tooltip": "Dual：两次采样之间的潜空间放大模型；选 None 时改用 RTX VSR 放大像素并重新编码，需开启 allow_vae_fallback。SelfLift：提升到完整分辨率时使用的潜空间放大模型；None 使用最近邻提升。"
+      },
       "segment_start_number": { "name": "片段开始编号" },
       "segment_count": {
         "name": "片段最大数量",

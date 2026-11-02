@@ -242,7 +242,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                     raise NativePlanError("VAE_FALLBACK_REQUIRED", f"The predecessor has no {label} native source. Regenerate it or allow VAE fallback.", plan.segment_id)
                 if vae is None or audio_vae is None or "parent_plan" not in recipe:
                     raise NativePlanError("SOURCE_ADAPTER", "A delivered source rebuild needs the declared predecessor plan and first loader's VAEs.")
-                if not generation.get("video") or generation.get("sampling_pass") == "first":
+                if not generation.get("video"):
                     raise NativePlanError("SOURCE_ADAPTER", "This saved version has no completed delivered video to rebuild; regenerate it.")
                 source_plan = NativeTaskPlan(**recipe["parent_plan"])
                 path = native_child_path(directory, generation["video"])
@@ -465,7 +465,7 @@ class EasyH3NativeArtifact(io.ComfyNode):
                   "task_segments": [{**compact[index], **plan.as_dict()} for index, plan in enumerate(plans)]}
         recipe = meta["recipe"]
         record = {"continuity_mode": meta["continuity_mode"], "seed": recipe.get("seed", 0),
-                  "sampling_pass": "first" if recipe.get("first_pass_only") else "second" if recipe["sampling_mode"] == "dual" else "single",
+                  "sampling_pass": "second" if recipe["sampling_mode"] == "dual" else "single",
                   "audio_locked": locked_audio is not None,
                   "raw_audio_sample_rate": raw_audio["sample_rate"], "native_recipe": recipe,
                   **({"previous_frame_source": meta["previous_frame_source"]} if meta.get("previous_frame_source") else {}),

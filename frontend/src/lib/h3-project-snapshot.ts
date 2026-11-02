@@ -65,15 +65,13 @@ export function snapshotH3Project(project: SnapshotNode, editorOverride?: { node
   const rawPlan = lora && kind(lora) === 'easy h3SegmentLoras' ? decode(widget(lora, 'rules')) : EMPTY_LORA_PLAN
   if (lora === undefined || (lora && (kind(lora) !== 'easy h3SegmentLoras' || inputSource(lora, 'rules') !== null))) known = false
   if (!object(rawPlan) || rawPlan.version !== 1 || !Array.isArray(rawPlan.rules)) known = false
-  for (const name of ['project_name', 'sampling_mode', '1st_pass_only', 'segment_start_number', 'segment_count']) {
+  for (const name of ['project_name', 'sampling_mode', 'segment_start_number', 'segment_count']) {
     if (inputSource(project, name) !== null) known = false
   }
   const mode = widget(project, 'sampling_mode', 'single')
   const modeValue = object(mode) ? mode.sampling_mode : mode
-  const recipe = { sampling_mode: typeof modeValue === 'string' ? modeValue : 'single',
-    first_pass_only: Boolean(object(mode) ? mode['1st_pass_only'] ?? widget(project, '1st_pass_only', false) : widget(project, '1st_pass_only', false)) }
+  const recipe = { sampling_mode: typeof modeValue === 'string' ? modeValue : 'single' }
   if (!['single', 'dual', 'selflift', 'passthrough'].includes(recipe.sampling_mode)) known = false
-  if (recipe.sampling_mode === 'selflift') recipe.first_pass_only = false
   if (!object(tracks) || !Array.isArray(tracks.tracks)) known = false
   return { id: String(project.id), name: String(widget(project, 'project_name', 'default')),
     tracks_info: object(tracks) ? tracks as unknown as TrackData : undefined,

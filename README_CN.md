@@ -197,13 +197,12 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 | `model_loader_2nd` | 可选的二采 H3 模型；不接时复用一采模型，接入后也仍使用一采加载器的编码器和 VAE |
 | `segment_loras` | 可选的 H3 Segment LoRA 计划，按全项目任务编号及采样阶段追加 MODEL LoRA |
 | `sampling_plan` | 内置 `ultra_light`、`light`、`medium`、`high` 等预设，根据 Turbo / 非 Turbo 模型选择采样器和 sigmas；也可用 `custom` 自定义 |
-| `sampling_mode` | 可选 `single`、`dual` 或 `selflift`；SelfLift 会展开 `transition_ratio`、`lowres_scale` 和 `highres_tiling`。普通片段关闭像素/VAE 修正，上下文续接自动使用内部保守预设；同时分别保存低、高分辨率上下文 |
-| `sampler` / `sigmas` | 成对接入以覆盖一采采样设置；二采对应 `sampler_2nd` / `sigmas_2nd`，也需成对接入。`custom` 需要为实际运行的每个采样阶段提供这两个输入 |
-| `upscale_by` | 相对于编辑器尺寸的二采放大倍率；默认 `1.250`，三位小数，步长 `0.001` |
-| `disable_2nd_noise` | 控制是否禁用二采新增噪声，不代表跳过二采 |
-| `1st_pass_only` | 在 `dual` 下只执行所选范围中**第一段的一采**并保存检查点；下次关闭此项，可从该段已有检查点继续二采 |
+| `sampling_mode` | 可选 `single`、`dual`、`selflift` 或 `passthrough`，选中后只展开该模式用到的参数：`dual` 展开 `upscale_by`、`upscale_model`、`disable_2nd_noise`、`enabled_tiling`；`selflift` 展开 `transition_ratio`、`lowres_scale`、`upscale_model`、`enabled_tiling`。普通片段关闭像素/VAE 修正，上下文续接自动使用内部保守预设；同时分别保存低、高分辨率上下文 |
+| `sampler` / `sigmas` | 可选的一采采样器与 sigmas，没接的那个使用采样方案的预设；`sampler_2nd` / `sigmas_2nd` 对 Dual 二采同理。接入 `sigmas_2nd` 后，续接片段也改用它，不再使用预设中较轻的续接排程。`custom` 没有预设，实际运行的每个采样阶段都要同时接入这两个输入 |
+| `upscale_by` | Dual 参数：相对于编辑器尺寸的二采放大倍率；默认 `1.250`，三位小数，步长 `0.001` |
+| `disable_2nd_noise` | Dual 参数：控制是否禁用二采新增噪声，不代表跳过二采 |
 
-对齐使用 Python `round`，与 [H3 潜空间放大节点](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py) 一致，并非固定向上对齐；恰好居中时取偶数。例如 `1344 × 768`、倍率 `1.250`，相乘后为 `1680 × 960`，二采对齐尺寸为 **`1664 × 960`**。两条放大路径采用相同尺寸，项目记录与合并导出也保留实际输出尺寸。单采样和仅一采预览保持编辑器尺寸；纯音频项目（`32 × 32`）不放大。旧工作流保留已保存的倍率，不会自动改成新默认值。
+对齐使用 Python `round`，与 [H3 潜空间放大节点](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler/blob/main/nodes/minimax_h3_latent_upscaler_3d.py) 一致，并非固定向上对齐；恰好居中时取偶数。例如 `1344 × 768`、倍率 `1.250`，相乘后为 `1680 × 960`，二采对齐尺寸为 **`1664 × 960`**。两条放大路径采用相同尺寸，项目记录与合并导出也保留实际输出尺寸。单采样保持编辑器尺寸；纯音频项目（`32 × 32`）不放大。ComfyUI 只保存当前模式的参数，重新载入后切换到其他模式会从默认值开始。这些参数移入 `sampling_mode` 之前保存的工作流，请检查 Project 参数后重新保存。
 
 采样预设可参考仓库中的 [h3_sample.json.example](./presets/h3_sample.json.example)，复制为 `presets/h3_sample.json` 后修改。**当前内置双采样预设采用独立的一采、二采sigmas**；不应再将 `light` 一概理解成“拆分 sigmas、未完成一采”。如自定义预设使用 `split_step`，才会将同一sigmas拆到两个阶段。已有自定义文件会优先生效，升级后应检查自己的配置。
 
@@ -214,7 +213,7 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 | 选择 H3 潜空间放大模型 | 调用内置的 `easy minimaxH3LatentUpscaler`，直接把视频潜空间放大到乘倍率并对齐后的二采尺寸 | 只需将 [H3 放大模型权重](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) 放入 `ComfyUI/models/latent_upscale_models/`，不再需要安装外部自定义节点包 |
 | `None` | 一采视频 VAE 解码 → 图像缩放 → VAE 重新编码 → 二采 | 需要 [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) 的 `ImageResizeKJv2` 节点 |
 
-这里的 `upscale_model` 是 **H3 潜空间放大权重**，与 `model_loader_2nd` 中负责二采的 H3 生成模型用途不同。直接放大潜空间可以省去中间的视频 VAE 解码 / 编码步骤，但二采仍在目标分辨率运行，不意味着高分辨率采样的显存开销也会同比下降。Easy Media 已内置推理节点和运行时代码，只需另外下载模型权重。
+这里的 `upscale_model` 是 **H3 潜空间放大权重**，与 `model_loader_2nd` 中负责二采的 H3 生成模型用途不同。直接放大潜空间可以省去中间的视频 VAE 解码 / 编码步骤，但二采仍在目标分辨率运行，不意味着高分辨率采样的显存开销也会同比下降。Easy Media 已内置推理节点和运行时代码，只需另外下载模型权重。`dual` 下的 `upscale_model` 默认选用已安装、文件名含 `minimax_h3` 的放大模型。
 
 独立的 `easy minimaxH3LatentUpscaler` 节点提供 `enable_temporal_chunking` 和 `force_unload`，两项默认开启；多轨内部的潜空间放大路径也会显式开启两项。时序分块可降低长视频潜空间的峰值显存，强制卸载会在推理结束后释放放大模型占用的显存。
 
@@ -231,7 +230,7 @@ v1.3.0 新增多轨项目流水线，将时间线编排、逐段生成、上下�
 | 模式 | 第一阶段 | 第二阶段 |
 |------|----------|----------|
 | Single | 唯一采样 | 不使用 |
-| Dual | 一采 | 二采；仅一采预览时不使用 |
+| Dual | 一采 | 二采 |
 | SelfLift | 低分辨率部分 | 同一份 sigma schedule 的高分辨率部分 |
 | Passthrough | 不使用 | 不使用 |
 

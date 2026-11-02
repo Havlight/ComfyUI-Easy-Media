@@ -12,7 +12,7 @@ def compile_project_loras(info: dict[str, Any], value: Any, recipe: dict[str, An
                           identities: dict[str, str] | None = None) -> dict[str, Any]:
     plans = compile_native_plan(info)
     return compile_lora_plan(value, [plan.segment_id for plan in plans], recipe['sampling_mode'],
-        first_pass_only=bool(recipe.get('first_pass_only')), passthrough={i for i, plan in enumerate(plans) if plan.passthrough},
+        passthrough={i for i, plan in enumerate(plans) if plan.passthrough},
         selected=selected, identities=identities)
 
 

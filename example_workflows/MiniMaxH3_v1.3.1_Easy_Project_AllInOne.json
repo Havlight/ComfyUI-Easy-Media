@@ -829,11 +829,7 @@
         797204186153197,
         "randomize",
         "medium",
-        "single",
-        false,
-        false,
-        1.5,
-        "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+        "single"
       ],
       "widgets_values_named": {
         "project_name": "",
@@ -843,11 +839,7 @@
         "seed": 797204186153197,
         "fixed": "randomize",
         "sampling_plan": "medium",
-        "sampling_mode": "single",
-        "1st_pass_only": false,
-        "disable_2nd_noise": false,
-        "upscale_by": 1.5,
-        "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors"
+        "sampling_mode": "single"
       }
     },
     {

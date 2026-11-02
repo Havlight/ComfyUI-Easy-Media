@@ -20,8 +20,6 @@ def native_stage_layout(recipe: dict[str, Any]) -> dict[str, tuple[str, tuple[in
     mode = recipe['sampling_mode']
     size = (recipe['target_height'] // 16, recipe['target_width'] // 16)
     first = (recipe['first_height'] // 16, recipe['first_width'] // 16)
-    if recipe.get('first_pass_only'):
-        return {'high': ('dual_low_prediction', first), 'low': ('dual_low_prediction', first)}
     stages = {'high': ({'single': 'single_final', 'dual': 'dual_high_final',
                        'selflift': 'selflift_high_final'}[mode], size)}
     if mode == 'dual':
@@ -94,7 +92,7 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                 if parent.segment_id not in contracts:
                     source = existing(parent.segment_id)
                     record = source['record']
-                    if not record.get('video') or record.get('sampling_pass') == 'first':
+                    if not record.get('video'):
                         raise NativePlanError('PREVIOUS_FRAME', 'The predecessor needs a completed video.', plan.segment_id)
                     from .h3_previous_frame import read_video_frames, video_frame_count
                     path = native_child_path(directory, record['video'])
@@ -146,7 +144,7 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                                 raise
                     if not imported and not recipe['allow_vae_fallback']:
                         raise NativePlanError('VAE_FALLBACK_REQUIRED', f'The predecessor has no compatible {label} native stage; regenerate it or allow VAE fallback.', plan.segment_id)
-                    if parent.end_frame - parent.start_frame < 39 or (source and (not record.get('video') or record.get('sampling_pass') == 'first')):
+                    if parent.end_frame - parent.start_frame < 39 or (source and not record.get('video')):
                         raise NativePlanError('SOURCE_ADAPTER', 'A source rebuild needs a completed video containing at least 39 delivered frames.', plan.segment_id)
                     if source and not checked_video:
                         path = native_child_path(directory, record['video'])

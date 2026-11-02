@@ -260,7 +260,7 @@ def test_apply_converts_on_the_page_and_sets_the_tab_from_the_first_task_to_run(
                                   "Task 2: <Picture 3> has no matching image."]
     assert [task["labels"] for task in report["tasks"]] == [{"<Picture 1>": "first frame: alice.png"}, {}]
     assert fake.status_requests[0]["project_name"] == "mv-alice"
-    assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single", "first_pass_only": False}
+    assert fake.status_requests[0]["project_snapshot"]["recipe"] == {"sampling_mode": "single"}
     # The tab changed only where the agent writes; no workflow file or record was written.
     assert apply["kind"] == "apply" and apply["queue"] is False
     assert apply["changes"]["project"] == {"project_name": "mv-alice", "segment_start_number": 2, "segment_count": -1}

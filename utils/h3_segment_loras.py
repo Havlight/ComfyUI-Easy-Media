@@ -65,7 +65,7 @@ def normalize_lora_plan(value: Any) -> dict[str, Any]:
 
 
 def compile_lora_plan(value: Any, segment_ids: Sequence[str], sampling_mode: str,
-                      *, first_pass_only: bool = False, passthrough: set[int] | None = None,
+                      *, passthrough: set[int] | None = None,
                       selected: Sequence[int] | None = None,
                       identities: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Compile the full timeline; selection controls execution, never numbering.
@@ -79,7 +79,7 @@ def compile_lora_plan(value: Any, segment_ids: Sequence[str], sampling_mode: str
     selected_set = set(range(len(segment_ids)) if selected is None else selected)
     passthrough = passthrough or set()
     stages = [] if sampling_mode == "passthrough" else ["first"]
-    if sampling_mode == "selflift" or (sampling_mode == "dual" and not first_pass_only):
+    if sampling_mode in ("selflift", "dual"):
         stages.append("second")
     tasks: list[dict[str, Any]] = []
     usages: dict[str, int] = {rule["id"]: 0 for rule in plan["rules"]}

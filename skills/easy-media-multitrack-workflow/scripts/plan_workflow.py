@@ -247,7 +247,7 @@ def project_snapshot(workflow: dict, project: dict) -> dict:
     """What the Project's saved-result check needs: its LoRA rules and sampling recipe."""
     widgets = project.get("widgets_values") or []
     known = all(_link_origin(workflow, project, name) is None
-                for name in ("project_name", "sampling_mode", "1st_pass_only", "segment_start_number", "segment_count"))
+                for name in ("project_name", "sampling_mode", "segment_start_number", "segment_count"))
     rules: Any = {"version": 1, "rules": []}
     lora = _link_origin(workflow, project, "segment_loras")
     if lora is False or (isinstance(lora, dict) and (lora.get("type") != "easy h3SegmentLoras" or _link_origin(workflow, lora, "rules") is not None)):
@@ -263,9 +263,7 @@ def project_snapshot(workflow: dict, project: dict) -> dict:
     mode = widgets[PROJECT_WIDGETS["sampling_mode"]] if len(widgets) > PROJECT_WIDGETS["sampling_mode"] else "single"
     if mode not in ("single", "dual", "selflift", "passthrough"):
         known, mode = False, "single"
-    first_pass_only = bool(widgets[PROJECT_WIDGETS["1st_pass_only"]]) if len(widgets) > PROJECT_WIDGETS["1st_pass_only"] else False
-    return {"known": known, "segment_loras": rules,
-            "recipe": {"sampling_mode": mode, "first_pass_only": first_pass_only and mode != "selflift"}}
+    return {"known": known, "segment_loras": rules, "recipe": {"sampling_mode": mode}}
 
 
 def saved_tasks(base_url: str, project_name: str, track_data: dict, snapshot: dict) -> tuple[list[dict], set[str]]:
