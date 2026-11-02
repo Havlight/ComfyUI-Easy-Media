@@ -45,6 +45,20 @@ describe('H3 plan conversion for the skill', () => {
     expect(audio.segments.map((segment) => [segment.start_frame, segment.end_frame])).toEqual([[0, 216]])
   })
 
+  it("returns the LoRA node's rules after the import, checking names against ComfyUI's list", async () => {
+    const plan = { version: 1, tasks: [{ id: 's01', seconds: 5 }], loras: [{ lora: 'mmh3/a.safetensors', strength: 0.4 }] }
+    const target = { rules: { version: 1 as const, rules: [] } }
+    const listed = vi.fn(async (path: string) => new Response(JSON.stringify(path === '/models/loras' ? ['mmh3\\a.safetensors'] : { results: [] })))
+    const conversion = await convertH3Plan(template(), plan, 'MiniMax', t, listed, target)
+    expect(conversion.errors).toEqual([])
+    expect(conversion.segment_loras).toMatchObject({ changed: true, rules: { rules: [{ lora: 'mmh3/a.safetensors', strength: 0.4, start_segment: 1, segment_count: -1 }] } })
+    // Without the list the names go unchecked, and the conversion says so.
+    const unlisted = vi.fn(async (path: string) => (path === '/models/loras' ? new Response('', { status: 500 }) : new Response(JSON.stringify({ results: [] }))))
+    const unchecked = await convertH3Plan(template(), plan, 'MiniMax', t, unlisted, target)
+    expect(unchecked.warnings).toContain('The LoRA list could not be read, so LoRA names were not checked: HTTP 500')
+    expect(unchecked.segment_loras?.changed).toBe(true)
+  })
+
   it('says what each prompt label of a task stands for', async () => {
     // The server finds every input file; probed videos are 10 s long with sound.
     const fetcher = vi.fn(async (_path: string, init: RequestInit) => {

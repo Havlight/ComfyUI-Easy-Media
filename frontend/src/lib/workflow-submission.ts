@@ -1,5 +1,7 @@
 import type { ComfyApp } from '@comfyorg/comfyui-frontend-types'
-import { applyAgentTab, readAgentTab, type TabApplyJob, type TabApplyResult, type TabReadJob, type TabReadResult } from '@/lib/agent-tabs'
+import {
+  applyAgentTab, readAgentTab, tabLoraTarget, type TabApplyJob, type TabApplyResult, type TabReadJob, type TabReadResult,
+} from '@/lib/agent-tabs'
 import { convertH3Plan, type H3PlanConversion } from '@/lib/h3-plan-convert'
 import { translate } from '@/lib/i18n'
 import { errorMessage, nativeQueueBusy, queueCurrentWorkflow } from '@/lib/native-queue'
@@ -25,6 +27,9 @@ export interface PlanConversionJob {
   track_data: TrackData
   plan: unknown
   format: string
+  /** The tab and Editor the plan is for, whose LoRA node the plan's rules replace. */
+  tab?: string | null
+  editor_id?: number | string | null
 }
 
 /** The server's targeted wake-up: a hidden tab's own polling may run only once a minute. */
@@ -84,8 +89,9 @@ export async function runPlanConversion(app: ComfyApp, job: PlanConversionJob): 
     const locale = (app as unknown as { ui?: { settings?: { settingsValues?: Record<string, unknown> } } })
       .ui?.settings?.settingsValues?.['Comfy.Locale']
     const t = (path: string, params?: Record<string, string | number>) => translate(typeof locale === 'string' ? locale : undefined, path, params)
+    const loras = job.tab && job.editor_id != null ? await tabLoraTarget(app, job.tab, job.editor_id) : undefined
     const conversion = await convertH3Plan(job.track_data, job.plan, job.format, t,
-      (path, init) => app.api.fetchApi(path, init))
+      (path, init) => app.api.fetchApi(path, init), loras)
     return { status: 'converted', conversion }
   } catch (error) {
     return { status: 'failed', error: errorMessage(error) }

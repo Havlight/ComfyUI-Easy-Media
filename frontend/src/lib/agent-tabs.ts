@@ -1,8 +1,11 @@
 import type { ComfyApp } from '@comfyorg/comfyui-frontend-types'
 import { exportH3Plan, type H3PlanFile } from '@/lib/h3-plan'
+import type { H3LoraNodeError, H3PlanLoraTarget } from '@/lib/h3-plan-loras'
+import { h3EditorLoraNode, h3LoraRulesWidget, h3PlanLoraTarget, serializedGraphNodes, type SnapshotNode } from '@/lib/h3-project-snapshot'
 import { normalizeTrackData } from '@/lib/multitrack-utils'
 import { errorMessage, nativeQueueBusy, queueCurrentWorkflow, type QueueResult } from '@/lib/native-queue'
 import type { TrackData } from '@/types/multitrack'
+import type { SegmentLoraPlan } from '@/types/segment-loras'
 
 const EDITOR_TYPE = 'easy multiTrackEditor'
 const PROJECT_TYPE = 'easy multitrackProject'
@@ -58,6 +61,8 @@ export interface AgentTabContent {
   workflow: Workflow
   /** The H3 plan each Editor exports, by node id. */
   plans: Record<string, H3PlanFile>
+  /** Why an Editor's plan has no `loras` although a LoRA node is connected, by node id. */
+  lora_errors?: Record<string, H3LoraNodeError>
 }
 
 export interface TabReadJob {
@@ -67,12 +72,18 @@ export interface TabReadJob {
   tab?: string | null
 }
 
+/** Widget values by name, in the order to set them: a dynamic combo first creates its option widgets. */
+export type WidgetChanges = [name: string, value: string | number | boolean | null][]
+
 export interface TabChanges {
   editor_id: number | string
   track_data: TrackData
+  /** Editor settings besides its track data, such as resolution. */
+  editor?: WidgetChanges
   project_id?: number | string
-  /** Project widgets by name, set in order: sampling_mode first creates its option widgets. */
-  project?: Record<string, string | number | boolean>
+  project?: WidgetChanges
+  /** Rules for the H3 Segment LoRA node feeding the Editor's Project, from the plan's conversion. */
+  segment_loras?: SegmentLoraPlan
 }
 
 export interface TabApplyJob {
@@ -110,13 +121,19 @@ function trackDataValue(node: SerializedNode): string | undefined {
   })
 }
 
-function editorPlans(workflow: Workflow): Record<string, H3PlanFile> {
+/** Each Editor's plan, with its LoRA node's rules, and why a connected LoRA node's rules were left out. */
+function editorPlans(workflow: Workflow): Pick<AgentTabContent, 'plans' | 'lora_errors'> {
+  const graph = serializedGraphNodes(workflow)
   const plans: Record<string, H3PlanFile> = {}
+  const errors: Record<string, H3LoraNodeError> = {}
   for (const node of nodesOf(workflow, EDITOR_TYPE)) {
     const value = trackDataValue(node)
-    if (value) plans[String(node.id)] = exportH3Plan(normalizeTrackData(JSON.parse(value) as TrackData))
+    const editor = graph.find((item) => String(item.id) === String(node.id))
+    const loras = editor ? h3PlanLoraTarget(editor) : undefined
+    if (loras && 'error' in loras) errors[String(node.id)] = loras.error
+    if (value) plans[String(node.id)] = exportH3Plan(normalizeTrackData(JSON.parse(value) as TrackData), loras && 'rules' in loras ? loras.rules : null)
   }
-  return plans
+  return { plans, ...(Object.keys(errors).length ? { lora_errors: errors } : {}) }
 }
 
 function listTabs(app: ComfyApp): AgentTab[] {
@@ -205,10 +222,18 @@ export async function readAgentTab(app: ComfyApp, job: TabReadJob): Promise<TabR
     const tab = await findWorkflow(app, job.tab)
     const workflow = await tabWorkflow(app, tab)
     return { status: 'read', tabs, saved, tab: {
-      key: tab.path, name: tab.filename, open: tabsOf(app).isOpen(tab), workflow, plans: editorPlans(workflow) } }
+      key: tab.path, name: tab.filename, open: tabsOf(app).isOpen(tab), workflow, ...editorPlans(workflow) } }
   } catch (error) {
     return { status: 'failed', error: errorMessage(error) }
   }
+}
+
+/** An Editor's LoRA node in a tab or saved workflow, as the tab holds it, for converting a plan. */
+export async function tabLoraTarget(app: ComfyApp, key: string, editorId: number | string): Promise<H3PlanLoraTarget | undefined> {
+  const workflow = await tabWorkflow(app, await findWorkflow(app, key))
+  const editor = serializedGraphNodes(workflow).find((node) => String(node.id) === String(editorId))
+  if (!editor) throw new Error(`Node ${editorId} is not in ${key}`)
+  return h3PlanLoraTarget(editor)
 }
 
 function setWidget(node: { widgets?: { name: string; value?: unknown }[] }, name: string, value: unknown) {
@@ -235,15 +260,28 @@ export async function applyAgentTab(app: ComfyApp, job: TabApplyJob): Promise<Ta
     }
     const graph = app.rootGraph
     if (job.changes) {
-      const { editor_id: editorId, project_id: projectId, project = {}, track_data: trackData } = job.changes
+      const {
+        editor_id: editorId, project_id: projectId, editor: settings = [], project = [], track_data: trackData,
+        segment_loras: loraRules,
+      } = job.changes
       const editor = graph.getNodeById(editorId)
       const projectNode = projectId == null ? null : graph.getNodeById(projectId)
       if (editor?.type !== EDITOR_TYPE) throw new Error(`Node ${editorId} is not a MultiTrack Editor`)
-      if (Object.keys(project).length && projectNode?.type !== PROJECT_TYPE) throw new Error(`Node ${projectId} is not a MultiTrack Project`)
+      // Settings are [name, value] lists; check them before anything is written.
+      if (!Array.isArray(settings) || !Array.isArray(project)) throw new Error('changes.editor and changes.project must be [name, value] lists')
+      if (project.length && projectNode?.type !== PROJECT_TYPE) throw new Error(`Node ${projectId} is not a MultiTrack Project`)
+      const loras = loraRules ? h3EditorLoraNode(editor as unknown as SnapshotNode) : null
+      if (loraRules && (!loras || 'error' in loras)) {
+        throw new Error(loras ? `The segment LoRA rules cannot be written (${loras.error})` : 'No H3 Segment LoRA node feeds the Editor\'s Project')
+      }
       graph.beforeChange()
       try {
+        for (const [name, value] of settings) setWidget(editor, name, value)
+        // After the settings, so the track data is the plan's whatever they change.
         setWidget(editor, 'track_data', JSON.stringify(trackData))
-        for (const [name, value] of Object.entries(project)) setWidget(projectNode!, name, value)
+        for (const [name, value] of project) setWidget(projectNode!, name, value)
+        const rules = loras && 'node' in loras ? h3LoraRulesWidget(loras.node) : undefined
+        if (rules) rules.value = JSON.stringify(loraRules)
       } finally {
         graph.afterChange()
       }

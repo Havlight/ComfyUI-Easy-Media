@@ -14,6 +14,7 @@ import {
   type DriftTaperContent,
 } from '@/lib/h3-drift-taper'
 import { H3_NATIVE_CONTEXT_FRAMES, isH3Continuation } from '@/lib/h3-native-timing'
+import { buildH3PlanLoras, exportH3PlanLoras, type H3PlanLora, type H3PlanLoraImport, type H3PlanLoraTarget } from '@/lib/h3-plan-loras'
 import {
   H3_MEDIA_REFERENCE_LIMIT,
   H3_TRACK_SOURCE,
@@ -49,6 +50,7 @@ import type {
   MultiTrackTaskMode,
   TrackData,
 } from '@/types/multitrack'
+import type { SegmentLoraPlan } from '@/types/segment-loras'
 
 /**
  * H3 plan files: the task track and the timeline's video and audio tracks as JSON that a
@@ -57,8 +59,8 @@ import type {
  * The file lists every task in order. A task with an `id` updates that task and keeps its
  * saved results where nothing relevant changed; a task without one is new; tasks missing
  * from the file are removed. Fields left out of an existing task keep their value. Subtitle
- * tracks, system prompts, prompt B, resolution, Project settings and segment LoRAs are not
- * part of the plan and stay as they are.
+ * tracks, system prompts, prompt B, resolution and Project settings are not part of the plan
+ * and stay as they are.
  *
  * References are strings or objects. A string is a local path or URL to copy into ComfyUI's
  * input folder (`file`), or "previous_frame". Objects name the source with one of `file`,
@@ -72,6 +74,9 @@ import type {
  * `at` places a clip at a task's start: a task id, or the task's 1-based position in the file.
  * `until` ends a clip, new or existing, at a task's end the same way, trimming the rest of
  * its source; a locked video can then end exactly where its last task does.
+ *
+ * `loras`, when present, lists every rule of the H3 Segment LoRA node feeding the Editor's
+ * Project, by task (see h3-plan-loras). Left out, the node's rules stay on their tasks.
  */
 export const H3_PLAN_FORMAT = 'easy-media-h3-plan'
 export const H3_PLAN_VERSION = 1
@@ -147,6 +152,7 @@ export interface H3PlanFile {
   muted?: boolean
   tasks: H3PlanTask[]
   tracks?: H3PlanTrack[]
+  loras?: H3PlanLora[]
 }
 
 export type H3PlanMediaType = 'image' | 'video' | 'audio'
@@ -180,6 +186,8 @@ export interface H3PlanIssue {
   /** 1-based track number in `tracks`, and clip number in that track. */
   track?: number
   clip?: number
+  /** 1-based rule number in `loras`. */
+  lora?: number
   code: string
   params?: Record<string, string | number>
 }
@@ -227,6 +235,8 @@ export interface H3PlanImport {
   rows: H3PlanRow[]
   /** Video and audio tracks; empty when the plan leaves them out. */
   trackRows: H3PlanTrackRow[]
+  /** The segment LoRA rules to write; absent when no rules are written. */
+  loras?: H3PlanLoraImport
   issues: H3PlanIssue[]
 }
 
@@ -357,8 +367,11 @@ function exportTrack(track: MultiTrack, fps: number): H3PlanTrack {
   }
 }
 
-/** The task track and the video and audio tracks as a plan file; importing it unchanged changes nothing. */
-export function exportH3Plan(data: TrackData): H3PlanFile {
+/**
+ * The task track, the video and audio tracks and, given them, the segment LoRA rules as a plan
+ * file; importing it unchanged changes nothing.
+ */
+export function exportH3Plan(data: TrackData, loras?: SegmentLoraPlan | null): H3PlanFile {
   const fps = data.frame_rate
   let cursor = 0
   const tasks = orderedTasks(data).map((segment): H3PlanTask => {
@@ -387,6 +400,7 @@ export function exportH3Plan(data: TrackData): H3PlanFile {
     ...(data.muted ? { muted: true } : {}),
     tasks,
     tracks: data.tracks.filter(isMediaTrack).map((track) => exportTrack(track, fps)),
+    ...(loras ? { loras: exportH3PlanLoras(loras, data) } : {}),
   }
 }
 
@@ -419,6 +433,7 @@ export function parseH3Plan(text: string): { plan: H3PlanFile | null; issues: H3
       ...(file.muted !== undefined ? { muted: file.muted } : {}),
       tasks: file.tasks,
       ...(file.tracks !== undefined ? { tracks: file.tracks } : {}),
+      ...(file.loras !== undefined ? { loras: file.loras } : {}),
     },
     issues: [],
   }
@@ -1175,13 +1190,15 @@ function lockedVideoIssues(data: TrackData, tasks: readonly MultiTrackSegment[],
 
 /**
  * Build the timeline a plan describes. `prepare` applies the Editor's own normalization and
- * native timing, exactly as a manual edit would; it may throw to reject the result.
+ * native timing, exactly as a manual edit would; it may throw to reject the result. `loras` is
+ * the connected H3 Segment LoRA node, which the plan's rules replace; leave it out when none is.
  */
 export function buildH3PlanImport(
   current: TrackData,
   plan: H3PlanFile,
   media: ReadonlyMap<string, H3PlanMediaResult>,
   prepare: (candidate: TrackData) => TrackData,
+  loras?: H3PlanLoraTarget,
 ): H3PlanImport {
   const issues: H3PlanIssue[] = []
   const taskTrack = taskTrackOf(current)
@@ -1332,28 +1349,34 @@ export function buildH3PlanImport(
       images: 0, videos: 0, audios: 0, prompt: getSelectedTaskUserPrompt(segment.content),
     })
   })
+  const loraImport = data ? buildH3PlanLoras(plan, current, data, positions, loras, issues) : undefined
   const blocked = issues.some((item) => item.level === 'error')
-  return { data: blocked ? null : data, rows, trackRows: data && plan.tracks !== undefined ? trackRows(current, data) : [], issues }
+  return {
+    data: blocked ? null : data, rows, trackRows: data && plan.tracks !== undefined ? trackRows(current, data) : [],
+    ...(loraImport ? { loras: loraImport } : {}), issues,
+  }
 }
 
 export interface H3PlanIssueGroup {
   level: H3PlanIssue['level']
   code: string
   params?: H3PlanIssue['params']
-  /** 1-based task numbers in ascending order; empty for the whole file or a track. */
+  /** 1-based task numbers in ascending order; empty for the whole file, a track or a LoRA rule. */
   tasks: number[]
   track?: number
   clip?: number
+  lora?: number
 }
 
 /** Merge issues that say the same thing about several tasks, in the order each first appears. */
 export function groupH3PlanIssues(issues: readonly H3PlanIssue[]): H3PlanIssueGroup[] {
   const groups = new Map<string, H3PlanIssueGroup>()
   for (const item of issues) {
-    const key = JSON.stringify([item.level, item.code, item.params ?? null, item.track ?? null, item.clip ?? null])
+    const key = JSON.stringify([item.level, item.code, item.params ?? null, item.track ?? null, item.clip ?? null, item.lora ?? null])
     const group = groups.get(key) ?? {
       level: item.level, code: item.code, ...(item.params ? { params: item.params } : {}), tasks: [],
       ...(item.track !== undefined ? { track: item.track } : {}), ...(item.clip !== undefined ? { clip: item.clip } : {}),
+      ...(item.lora !== undefined ? { lora: item.lora } : {}),
     }
     groups.set(key, group)
     if (item.task !== undefined && !group.tasks.includes(item.task)) group.tasks.push(item.task)

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { LinkedChange } from '@/hooks/use-multitrack-history'
 import { H3NativeTimingError, reconcileH3NativeTimeline } from '@/lib/h3-native-timing'
 import { normalizeTrackData } from '@/lib/multitrack-utils'
 import type { TrackData } from '@/types/multitrack'
@@ -20,7 +21,9 @@ export function prepareH3NativeEdit(current: TrackData, candidate: TrackData, fo
 }
 
 /** One accepted edit, including native ripple adjustments, is one history entry. */
-export function useH3NativeEditing(current: TrackData, format: string | undefined, commit: (next: TrackData) => void) {
+export function useH3NativeEditing(
+  current: TrackData, format: string | undefined, commit: (next: TrackData, linked?: LinkedChange) => void,
+) {
   const [error, setError] = useState<{ code: string; message: string; segmentId?: string } | null>(null)
   const [notice, setNotice] = useState<number | null>(null)
   // Do not immediately redo an automatic conversion when the user undoes it.
@@ -39,7 +42,7 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
       : { code: 'EDIT_FAILED', message: cause instanceof Error ? cause.message : String(cause) })
   }
 
-  function apply(next: TrackData, requested: TrackData) {
+  function apply(next: TrackData, requested: TrackData, linked?: LinkedChange) {
     const before = new Map(requested.tracks.flatMap((track) => track.type === 'task' ? track.segments.map((item) => [item.id, item] as const) : []))
     const count = next.tracks.flatMap((track) => track.type === 'task' ? track.segments : []).filter((item) => {
       const old = before.get(item.id)
@@ -47,13 +50,14 @@ export function useH3NativeEditing(current: TrackData, format: string | undefine
     }).length
     setError(null)
     setNotice(count || null)
-    commitRef.current(next)
+    commitRef.current(next, linked)
   }
 
-  function commitEdit(candidate: TrackData | (() => TrackData)) {
+  /** `linked` is another node's change made with this edit, undone and redone with it. */
+  function commitEdit(candidate: TrackData | (() => TrackData), linked?: LinkedChange) {
     try {
       const requested = typeof candidate === 'function' ? candidate() : candidate
-      apply(prepare(requested), requested)
+      apply(prepare(requested), requested, linked)
     } catch (cause: unknown) { report(cause) }
   }
 

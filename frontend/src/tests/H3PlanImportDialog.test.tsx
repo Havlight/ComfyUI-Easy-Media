@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ComfyApp } from '@comfyorg/comfyui-frontend-types'
 import { H3PlanImportDialog } from '@/components/widgets/multitrack/H3PlanImportDialog'
 import { prepareH3NativeEdit } from '@/hooks/use-h3-native-editing'
 import type { TrackData } from '@/types/multitrack'
@@ -58,6 +59,70 @@ describe('H3PlanImportDialog', () => {
     expect(onApply).toHaveBeenCalledTimes(1)
     const [applied] = onApply.mock.calls[0] as [TrackData]
     expect(applied.tracks[0].segments.map((segment) => segment.content.user_prompt)).toEqual(['New line', '<Picture 1> joins'])
+  })
+
+  it('previews the LoRA rules a plan lists and hands them over on apply', async () => {
+    vi.stubGlobal('fetch', vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === '/models/loras' ? ['mmh3\\a.safetensors'] : { results: [] })))))
+    const onApply = vi.fn()
+    render(
+      <H3PlanImportDialog
+        request={{ fileName: 'plan.json', loras: { rules: { version: 1, rules: [] } }, text: JSON.stringify({ version: 1, tasks: [{ id: 't1' }],
+          loras: [{ lora: 'mmh3/a.safetensors', strength: 0.6, stage: 'second' }] }) }}
+        current={timeline()}
+        format="MiniMax"
+        projects={[]}
+        currentStatuses={[]}
+        onApply={onApply}
+        onClose={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('h3-plan-lora-rows').textContent).toContain('mmh3/a.safetensors'))
+    expect(screen.getByTestId('h3-plan-lora-rows').textContent).toContain('Second stage')
+    expect(screen.getByTestId('h3-plan-lora-rows').textContent).toContain('1–end')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    const [, rules] = onApply.mock.calls[0] as [TrackData, { rules: object[] }]
+    expect(rules.rules).toEqual([expect.objectContaining({ lora: 'mmh3/a.safetensors', strength: 0.6, stage: 'second', start_segment: 1, segment_count: -1 })])
+  })
+
+  it('checks saved results without the rules a bypassed or muted LoRA node would take', async () => {
+    vi.stubGlobal('fetch', vi.fn((path: string) => Promise.resolve(new Response(JSON.stringify(
+      path === '/models/loras' ? ['mmh3/a.safetensors'] : { results: [] })))))
+    const empty = { version: 1 as const, rules: [] }
+    const project = { id: '15', name: 'p', project_snapshot: { known: true, segment_loras: empty, recipe: { sampling_mode: 'single' }, start_segment: 1, segment_count: -1 } }
+    const text = JSON.stringify({ version: 1, tasks: [{ id: 't1' }], loras: [{ lora: 'mmh3/a.safetensors' }] })
+    const statusRules = async (inactive: boolean) => {
+      const fetchApi = vi.fn(async (_path: string, _init?: RequestInit) => new Response(JSON.stringify({ project_name: 'p', tasks: [] })))
+      const view = render(
+        <H3PlanImportDialog
+          request={{ fileName: 'plan.json', loras: { rules: empty, ...(inactive ? { inactive: true as const } : {}) }, text }}
+          current={timeline()}
+          format="MiniMax"
+          app={{ api: { fetchApi } } as unknown as ComfyApp}
+          projects={[project]}
+          currentStatuses={[]}
+          onApply={vi.fn()}
+          onClose={vi.fn()}
+        />,
+      )
+      await waitFor(() => expect(fetchApi).toHaveBeenCalled())
+      const [, init] = fetchApi.mock.calls[0]
+      view.unmount()
+      return JSON.parse(String(init?.body)).project_snapshot.segment_loras.rules as object[]
+    }
+    expect(await statusRules(false)).toEqual([expect.objectContaining({ lora: 'mmh3/a.safetensors' })])
+    expect(await statusRules(true)).toEqual([])
+  })
+
+  it('stays open and says why when the import cannot be applied', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ results: [] })))))
+    renderDialog(JSON.stringify({ version: 1, tasks: [{ id: 't1', prompt: 'New line' }] }), vi.fn(() => {
+      throw new Error('The LoRA node is gone.')
+    }))
+    await waitFor(() => expect(screen.getByTestId('h3-plan-rows')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(screen.getByTestId('h3-plan-apply-error').textContent).toBe('The LoRA node is gone.')
   })
 
   it('lists blocking problems and keeps Apply disabled', async () => {

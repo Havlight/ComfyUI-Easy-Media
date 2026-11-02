@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCanvasScale } from '@/hooks/use-canvas-scale'
 import { useElementWidth } from '@/hooks/use-element-width'
-import { useMultiTrackHistory } from '@/hooks/use-multitrack-history'
+import { useMultiTrackHistory, type LinkedChange } from '@/hooks/use-multitrack-history'
 import { useVideoAudioProbe } from '@/hooks/use-video-audio-probe'
 import { useH3NativeEditing } from '@/hooks/use-h3-native-editing'
 import { useMultiTrackResolutionInput } from '@/hooks/use-multitrack-resolution-input'
@@ -76,12 +76,14 @@ import {
 } from '@/lib/subtitle-speech'
 import { createSubtitleSegmentsFromSrt } from '@/lib/subtitle-srt'
 import { exportH3Plan } from '@/lib/h3-plan'
+import { h3EditorLoraNode, h3LoraRulesWidget, h3PlanLoraTarget, type SnapshotNode } from '@/lib/h3-project-snapshot'
 import { loadBrowserAudioMetadata } from '@/lib/audio-utils'
 import { invalidateMediaListCache } from '@/stores/media-list-store'
 import { uuid } from '@/lib/uuid'
 import { loadBrowserVideoMetadata } from '@/lib/video-utils'
 import { adjustMultiTrackEditorNodeHeight } from '@/lib/timeline-node-size'
 import type { MultiTrack, MultiTrackSegment, MultiTrackSegmentContent, MultiTrackSourceType, MultiTrackTaskImage, MultiTrackType, TrackData } from '@/types/multitrack'
+import type { SegmentLoraPlan } from '@/types/segment-loras'
 import { MultiTrackRuler, MULTITRACK_LEFT_GUTTER, MULTITRACK_RIGHT_RESERVE } from './multitrack/MultiTrackRuler'
 import { MultiTrackToolbar } from './multitrack/MultiTrackToolbar'
 import { PreviewArea } from './multitrack/PreviewArea'
@@ -382,7 +384,8 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   }
 
   function handleExportPlan() {
-    const text = `${JSON.stringify(exportH3Plan(committedData), null, 2)}\n`
+    const loras = node ? h3PlanLoraTarget(node as unknown as SnapshotNode) : undefined
+    const text = `${JSON.stringify(exportH3Plan(committedData, loras && 'rules' in loras ? loras.rules : null), null, 2)}\n`
     const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
     const link = document.createElement('a')
     link.href = url
@@ -392,7 +395,26 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
   }
 
   async function handleImportPlanFile(file: File) {
-    setPlanImport({ fileName: file.name, text: await file.text() })
+    const loras = node ? h3PlanLoraTarget(node as unknown as SnapshotNode) : undefined
+    setPlanImport({ fileName: file.name, text: await file.text(), ...(loras ? { loras } : {}) })
+  }
+
+  /**
+   * A plan's rules for the LoRA node feeding this Editor's Projects, as a change history applies
+   * with the import and undoes with it. Throws when that node is gone, so nothing is applied.
+   * Undo and redo leave rules alone that someone changed in the node since.
+   */
+  function loraRulesChange(rules: SegmentLoraPlan): LinkedChange {
+    const found = node ? h3EditorLoraNode(node as unknown as SnapshotNode) : null
+    const widget = found && 'node' in found ? h3LoraRulesWidget(found.node) : undefined
+    if (!widget) throw new Error(t('h3Plan.applyLorasFailed'))
+    const before = widget.value
+    const after = JSON.stringify(rules)
+    const swap = (from: unknown, to: unknown) => () => {
+      if (widget.value === from) widget.value = to
+      else console.warn('[Easy Media] The LoRA rules changed in their node since the plan import; they are left as they are')
+    }
+    return { apply: swap(before, after), undo: swap(after, before) }
   }
 
   function handleTaskOverviewChange(enabled: boolean) {
@@ -1662,8 +1684,8 @@ export function MultiTrackWidget({ value, onChange, app, node }: Readonly<ReactW
             app={app}
             projects={savedStatus.projects}
             currentStatuses={savedStatus.results}
-            onApply={(next) => {
-              commitNormalizedTrackChange(next)
+            onApply={(next, loras) => {
+              commitNormalizedTrackChange(next, loras ? loraRulesChange(loras) : undefined)
               setPlanImport(null)
             }}
             onClose={() => setPlanImport(null)}
