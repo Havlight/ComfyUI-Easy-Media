@@ -1,17 +1,29 @@
 """The agent records folder: small text files beside a project, written through the server."""
 
 import asyncio
-import importlib.util
+import importlib
 import re
+import sys
+import types
 from pathlib import Path
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-spec = importlib.util.spec_from_file_location("agent_records", Path(__file__).resolve().parents[1] / "utils/agent_records.py")
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+
+def utils_module(name: str):
+    """A utils module imported as part of a stand-in package: its relative imports work, and
+    utils/__init__ (which pulls in torch and ComfyUI) never runs."""
+    package = "easy_media_utils_under_test"
+    if package not in sys.modules:
+        stub = types.ModuleType(package)
+        stub.__path__ = [str(Path(__file__).resolve().parents[1] / "utils")]
+        sys.modules[package] = stub
+    return importlib.import_module(f"{package}.{name}")
+
+
+module = utils_module("agent_records")
 
 
 def safe_name(name: object) -> str:
