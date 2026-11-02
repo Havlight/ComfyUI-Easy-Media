@@ -325,18 +325,52 @@ def test_an_upscaled_version_keeps_tasks_continued_from_its_first_pass_valid(tmp
     assert state['existing']['a']['generation'] == '2'
 
 
-def test_saved_first_pass_edits_compare_content_and_first_stage_loras(tmp_path):
+TASK_A = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
+          'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
+                                                     'content': {'continuity_mode': 'shot'}}]}]}
+LORA_A, LORA_B, LORA_C = ({'sha256': name, 'strength': 1.0} for name in 'abc')
+
+
+def test_a_first_stage_lora_change_is_reported_but_does_not_block_an_upscale(tmp_path):
     status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
     plans = [_plan()]
     _version(tmp_path, plans, 0, _sized(plans[0]))
-    info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
-            'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
-                                                       'content': {'continuity_mode': 'shot'}}]}]}
     manifest = artifacts.read_native_manifest(tmp_path)
-    second_only = {'a': {'second': [{'sha256': 'x', 'strength': 1.0}]}}
-    assert status.saved_first_pass_edits(info, manifest, [0], second_only) == []
-    first_added = {'a': {'first': [{'sha256': 'x', 'strength': 1.0}]}}
-    assert 'first-stage segment LoRAs' in status.saved_first_pass_edits(info, manifest, [0], first_added)[0]
+    assert status.saved_first_pass_edits(TASK_A, manifest, [0]) == []
+    # The upscale keeps the saved first pass; the new first-stage rules apply to the next one.
+    assert status.saved_first_pass_lora_changes(TASK_A, manifest, [0], {'a': {'second': [LORA_A]}}) == []
+    assert status.saved_first_pass_lora_changes(TASK_A, manifest, [0], {'a': {'first': [LORA_A]}}) == [1]
+
+
+def test_an_upscaled_version_answers_for_its_second_pass_loras(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan()]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first, native_recipe={'segment_loras': {'first': [LORA_A]}})
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second',
+             first_pass_generation='0', native_recipe={'segment_loras': {'first': [LORA_A], 'second': [LORA_C]}})
+    manifest = artifacts.read_native_manifest(tmp_path)
+    # B in the first stage now: upscaling the same first pass again still matches it, and says it predates B.
+    [entry] = status.native_timeline_status(TASK_A, manifest, {'a': {'first': [LORA_B], 'second': [LORA_C]}}, True)
+    assert entry['status'] == 'saved' and entry['first_loras_changed'] is True
+    # A preview, or Dual from scratch, samples a new first pass with B: the version is out of date.
+    [entry] = status.native_timeline_status(TASK_A, manifest, {'a': {'first': [LORA_B], 'second': [LORA_C]}})
+    assert entry['status'] == 'edited'
+    [entry] = status.native_timeline_status(TASK_A, manifest, {'a': {'first': [LORA_A], 'second': [LORA_B]}}, True)
+    assert entry['status'] == 'edited' and 'first_loras_changed' not in entry
+    # A version that sampled its own first pass answers for both stages.
+    _version(tmp_path, plans, 0, _sized(plans[0]), native_recipe={'segment_loras': {'first': [LORA_A]}})
+    [entry] = status.native_timeline_status(TASK_A, artifacts.read_native_manifest(tmp_path), {'a': {'first': [LORA_B]}})
+    assert entry['status'] == 'edited' and entry['first_loras_changed'] is True
+
+
+def test_a_saved_first_pass_brings_the_loras_it_was_sampled_with(tmp_path):
+    plans = [_plan()]
+    files = {'first': [{'lora': 'mmh3/a.safetensors', 'sha256': 'a', 'strength': 1.0}]}
+    _version(tmp_path, plans, 0, _sized(plans[0]), native_recipe={'segment_loras': {'first': [LORA_A]},
+                                                                  'segment_lora_files': files})
+    state = check(tmp_path, plans, [0], saved_recipe())
+    assert state['first_pass']['a']['loras'] == {'segment_loras': [LORA_A], 'segment_lora_files': files['first']}
 
 
 def test_project_versions_say_how_each_version_was_made(tmp_path):
@@ -406,8 +440,8 @@ def test_saved_first_pass_edits_leave_missing_versions_to_the_source_check(tmp_p
     info = {'format': 'MiniMax', 'frame_rate': 24, 'h3_native': {'version': 2},
             'tracks': [{'type': 'task', 'segments': [{'id': 'a', 'start_frame': 0, 'end_frame': 243,
                                                        'content': {'continuity_mode': 'shot'}}]}]}
-    first_lora = {'a': {'first': [{'sha256': 'x', 'strength': 1.0}]}}
-    assert status.saved_first_pass_edits(info, {}, [0], first_lora) == []
+    assert status.saved_first_pass_edits(info, {}, [0]) == []
+    assert status.saved_first_pass_lora_changes(info, {}, [0], {'a': {'first': [LORA_A]}}) == []
 
 
 def test_project_versions_omit_an_upscaled_from_version_that_was_replaced(tmp_path):

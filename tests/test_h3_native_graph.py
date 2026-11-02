@@ -452,7 +452,13 @@ def test_saved_first_pass_runtime_upscales_the_saved_version_and_keeps_its_ident
     single = {"sampling_mode": "single", "first_width": 32, "first_height": 32,
               "target_width": 32, "target_height": 32, "seed": 77}
     empty, _ = module._empty_av_latent(32, 32, 56)
-    canvas, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(single)).values
+
+    def lora_state(**stages):
+        return {"segment_loras": {"tasks": [{"segment_id": plans[0].segment_id, "stages": {
+            stage: [{"lora": f"{name}.safetensors", "sha256": name, "strength": 0.5}] for stage, name in stages.items()}}]}}
+
+    canvas, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(single),
+                                                              run_state=lora_state(first="a")).values
     canvas["samples"].unbind()[0].fill_(3)
     high, _, done = runtime.EasyH3NativeResult.execute(canvas, state).values
     _, delivered = runtime.EasyH3NativeMediaView.execute(done, raw_audio).values
@@ -464,10 +470,14 @@ def test_saved_first_pass_runtime_upscales_the_saved_version_and_keeps_its_ident
     directory = tmp_path / "easy_media/projects/test"
     run_state = runtime.preflight_native_sources(directory, runtime.read_native_manifest(directory), plans, [0],
                                                  dual, set(), [{}], set())
+    # The first-stage rules changed to b since; the upscale records the a its first pass was sampled with.
     _, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(dual),
-                                                         run_state=run_state).values
+                                                         run_state={**run_state, **lora_state(first="b", second="c")}).values
     assert state["low"]["artifact_id"] == first_id
     assert state["high"]["recipe"]["seed"] == 77 and state["high"]["recipe"]["first_pass_generation"] == "0"
+    assert state["high"]["recipe"]["segment_loras"] == {"first": [{"sha256": "a", "strength": 0.5}],
+                                                        "second": [{"sha256": "c", "strength": 0.5}]}
+    assert state["high"]["recipe"]["segment_lora_files"]["first"] == [{"lora": "a.safetensors", "sha256": "a", "strength": 0.5}]
     saved, seed = runtime.EasyH3NativeSavedFirstPass.execute("test", plan_json, run_state).values
     assert seed == 77 and torch.all(saved["samples"].unbind()[0] == 3)
     kept = runtime.EasyH3NativeKeepAudio.execute(saved).values[0]

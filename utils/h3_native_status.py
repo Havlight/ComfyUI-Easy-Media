@@ -116,8 +116,29 @@ def _record_edited(info: dict[str, Any], plans: list[Any], tasks: list[dict[str,
                 and task_content_signature(recipe['task_content']) != task_content_signature(tasks[index].get('content', {}))))
 
 
+def _upscaled(record: dict[str, Any], recipe: dict[str, Any]) -> bool:
+    """Made from a saved first pass: its first stage was not sampled with the rules of its run."""
+    return record.get('first_pass_generation', recipe.get('first_pass_generation')) is not None
+
+
+def _first_stage_changed(recipe: dict[str, Any], effect: dict[str, Any]) -> bool:
+    return (recipe.get('segment_loras') or {}).get('first', []) != effect.get('first', [])
+
+
+def _second_stages(effect: dict[str, Any]) -> dict[str, Any]:
+    return {stage: rules for stage, rules in effect.items() if stage != 'first'}
+
+
 def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
-                           lora_effects: dict[str, dict[str, Any] | None] | None = None) -> list[dict[str, Any]]:
+                           lora_effects: dict[str, dict[str, Any] | None] | None = None,
+                           reuse_first_pass: bool = False) -> list[dict[str, Any]]:
+    """Each task's saved result against the timeline. `first_loras_changed` marks a version whose
+    first-stage LoRAs differ from the rules now: upscaling its saved first pass keeps them.
+
+    `reuse_first_pass` when the run upscales saved first passes (Dual with use_saved_1st_pass):
+    a version upscaled from one then answers for its second-pass LoRAs only, since the run
+    would upscale the same first pass again. Any other run samples a new first pass.
+    """
     from .h3_lora_preflight import task_dependencies
 
     plans = compile_native_plan(info)
@@ -130,6 +151,7 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
         meta = record.get('native', {}).get('high', {}).get('metadata', {})
         recipe = record.get('native_recipe', meta.get('recipe', {}))
         status = 'saved'
+        effect = lora_effects.get(plan.segment_id) if lora_effects is not None else None
         if not record:
             status = 'missing'
         elif not meta:
@@ -139,10 +161,12 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
         elif _record_edited(info, plans, tasks, index, meta, recipe):
             status = 'edited'
         if status == 'saved' and lora_effects is not None:
-            effect = lora_effects.get(plan.segment_id)
+            saved = recipe.get('segment_loras', {})
             if effect is None:
                 status = 'pending'
-            elif effect != recipe.get('segment_loras', {}):
+            # Upscaling the same saved first pass again only redoes the second pass.
+            elif ((_second_stages(effect) != _second_stages(saved)) if reuse_first_pass and _upscaled(record, recipe)
+                  else effect != saved):
                 status = 'edited'
         if status in {'saved', 'pending'}:
             parent_states = {states.get(plans[parent].segment_id) for parent in dependencies[index]}
@@ -151,15 +175,17 @@ def native_timeline_status(info: dict[str, Any], manifest: dict[str, Any],
             elif 'pending' in parent_states:
                 status = 'pending'
         states[plan.segment_id] = status
-        result.append({'segment_id': plan.segment_id, 'index': index, 'status': status})
+        changed = bool(meta and effect is not None and _first_stage_changed(recipe, effect))
+        result.append({'segment_id': plan.segment_id, 'index': index, 'status': status,
+                       **({'first_loras_changed': True} if changed else {})})
     return result
 
 
-def saved_first_pass_edits(info: dict[str, Any], manifest: dict[str, Any], selected: list[int],
-                           lora_effects: dict[str, dict[str, Any]]) -> list[str]:
-    """Tasks whose saved first pass no longer matches their timeline content or first-stage LoRAs.
+def saved_first_pass_edits(info: dict[str, Any], manifest: dict[str, Any], selected: list[int]) -> list[str]:
+    """Tasks whose saved first pass no longer matches their timeline content.
 
-    Only the first pass is reused, so second-pass settings and LoRAs may change freely.
+    Only the first pass is reused as it is, so second-pass settings and LoRAs may change freely,
+    and so may first-stage LoRAs: they apply to the next first pass, not the saved one.
     """
     plans = compile_native_plan(info)
     tasks = native_task_segments(info)
@@ -175,10 +201,22 @@ def saved_first_pass_edits(info: dict[str, Any], manifest: dict[str, Any], selec
         # A version can be stale through its second pass alone; its first pass is checked by itself.
         if _record_edited(info, plans, tasks, index, meta, recipe):
             problems.append(f'Task {index + 1}: its content changed after the first pass. Run it with single again.')
-        elif (recipe.get('segment_loras') or {}).get('first', []) != (lora_effects.get(sid) or {}).get('first', []):
-            problems.append(f'Task {index + 1}: its first-stage segment LoRAs changed after the first pass. '
-                            'Run it with single again, or restore the LoRA rows.')
     return problems
+
+
+def saved_first_pass_lora_changes(info: dict[str, Any], manifest: dict[str, Any], selected: list[int],
+                                  lora_effects: dict[str, dict[str, Any] | None]) -> list[int]:
+    """1-based tasks whose first-stage LoRA rules changed after their saved first pass, which
+    upscaling keeps as it is."""
+    plans = compile_native_plan(info)
+    changed = []
+    for index in selected:
+        record = _active_record(manifest, plans[index].segment_id)
+        meta = record.get('native', {}).get('high', {}).get('metadata', {})
+        effect = lora_effects.get(plans[index].segment_id)
+        if meta and effect is not None and _first_stage_changed(record.get('native_recipe', meta.get('recipe', {})), effect):
+            changed.append(index + 1)
+    return changed
 
 
 def native_project_versions(manifest: dict[str, Any]) -> dict[str, Any]:

@@ -83,8 +83,12 @@ def saved_first_pass(directory: Path, manifest: dict[str, Any], plan: NativeTask
     if any(meta[key] != getattr(plan, key) for key in ('start_frame', 'end_frame', 'continuity_mode', 'parent_segment_id')):
         raise NativePlanError('SAVED_FIRST_PASS_EDITED', 'Its timing or continuity changed after the first pass. '
                               'Run this task with single again.', plan.segment_id)
+    # The LoRAs the first pass was sampled with, which the upscaled version records as its own.
+    source = record.get('native_recipe') or meta['recipe']
+    loras = {key: (source.get(key) or {}).get('first') for key in ('segment_loras', 'segment_lora_files')}
     return {'generation': generation, 'descriptor': deepcopy(descriptor), 'meta': meta,
-            'seed': int(record.get('seed', meta['recipe'].get('seed', 0)))}
+            'seed': int(record.get('seed', meta['recipe'].get('seed', 0))),
+            'loras': {key: value for key, value in loras.items() if value}}
 
 
 def generation_snapshot(manifest: dict[str, Any], sid: str) -> dict[str, Any]:

@@ -107,13 +107,19 @@ class EasyH3NativePreflight(io.ComfyNode):
         from ..utils.h3_native_status import native_timeline_status
         loras = preflight_project_loras(tracks_info, config.get('segment_loras'), recipe,
                                        selected, model, second_model if second_model is not None else model)
-        status = {item['segment_id']: item['status'] for item in native_timeline_status(tracks_info, manifest, loras['effects'])}
+        status = {item['segment_id']: item['status'] for item in native_timeline_status(
+            tracks_info, manifest, loras['effects'], bool(recipe.get('use_saved_1st_pass')))}
         if recipe.get('use_saved_1st_pass'):
-            from ..utils.h3_native_status import saved_first_pass_edits
-            edits = saved_first_pass_edits(tracks_info, manifest, [i for i in selected if i not in passthrough],
-                                           loras['effects'])
+            from ..utils.h3_native_status import saved_first_pass_edits, saved_first_pass_lora_changes
+            upscaled = [i for i in selected if i not in passthrough]
+            edits = saved_first_pass_edits(tracks_info, manifest, upscaled)
             if edits:
                 raise NativePlanError('SAVED_FIRST_PASS_EDITED', '\n' + '\n'.join(edits))
+            changed = saved_first_pass_lora_changes(tracks_info, manifest, upscaled, loras['effects'])
+            if changed:
+                logging.warning('H3 native: the first-stage segment LoRAs of task(s) %s changed after their saved '
+                                'first pass; upscaling keeps that first pass, and the new rules apply to the next '
+                                'preview.', ', '.join(map(str, changed)))
         selected_ids = {plans[i].segment_id for i in selected}
         # A continuation reads its predecessor's saved latent, so content, source and
         # LoRA edits to unselected ancestors do not block it; include a task to redo it.
@@ -210,6 +216,14 @@ class EasyH3NativePrepare(io.ComfyNode):
                 raise NativePlanError("SAVED_FIRST_PASS", "The run preflight selected no saved first pass for this task.", plan.segment_id)
             # The second pass keeps the first pass's seed, and the version records which first pass it upscaled.
             recipe.update(seed=first_pass["seed"], first_pass_generation=first_pass["generation"])
+            # It also records the LoRAs that first pass was sampled with; this run's first-stage rules
+            # apply to the next first pass, not to the saved one.
+            for key in ("segment_loras", "segment_lora_files"):
+                stages = {stage: rules for stage, rules in recipe.get(key, {}).items() if stage != "first"}
+                if first_pass.get("loras", {}).get(key):
+                    stages = {"first": first_pass["loras"][key], **stages}
+                if stages or key in recipe:
+                    recipe[key] = stages
         recipe["model_patch_revision"] = str(getattr(model, "patches_uuid", "unavailable"))
         recipe["second_model_patch_revision"] = str(getattr(second_model, "patches_uuid", "unavailable"))
         for key, schedule in (("sigmas", sigmas), ("second_sigmas", second_sigmas)):
