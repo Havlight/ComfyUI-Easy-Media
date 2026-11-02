@@ -104,7 +104,9 @@ HTTP 400 表示参数错误，409 表示多个页面未指定目标、目标忙�
 
 ### 专案版本
 
-`GET /easy-media/project/versions?project_name=名称` 只读：`tasks` 依时间轴顺序列出每段的 `active` 与 `versions`（`version`、`video`、`sampling_pass`、`locked_audio`、`continued_from`、`fallback`、`stale`），`detached` 列出已不在时间轴上的段落。专案还没有生成结果时返回 404。
+`GET /easy-media/project/versions?project_name=名称` 只读：`tasks` 依时间轴顺序列出每段的 `active` 与 `versions`（`version`、`video`、`sampling_pass`、`size`、dual 的 `first_pass_size`、`seed`、从已存一采放大的 `upscaled_from` 与 `keep_1st_pass_audio`、`locked_audio`、`continued_from`、`fallback`、`stale`），`detached` 列出已不在时间轴上的段落。专案还没有生成结果时返回 404。
+
+`PATCH /easy-media/project/video` 切换段落使用中的版本：`{"project_name", "segment_index", "version"}`（`segment_index` 从 0 起；Project Video Combine 节点改送 `file_path`）。会更新依赖关系并通知打开着的 Project 节点重新载入。
 
 ### 专案纪录
 

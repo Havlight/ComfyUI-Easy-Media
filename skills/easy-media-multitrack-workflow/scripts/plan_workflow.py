@@ -11,7 +11,10 @@ apply:  PLAN.json -> the tab's Editor and Project. Files the plan names are copi
         The tab changes like a person's edit (one undo step); nothing is saved to disk or queued.
         A saved workflow that is not open is opened first, as the Workflows sidebar opens it.
         --from-run N applies the plan a recorded run used instead, to restore a tab.
-project: each task's saved versions: which is active, what it continued from, locked audio, fallbacks.
+        --sampling single|dual|upscale also sets the Project's sampling: upscale is Dual from each
+        task's saved first pass, and needs --start.
+project: each task's saved versions: which is active, how each was made, what it continued from.
+select: make one saved version the one a task uses for continuing, combining and upscaling.
 record: keep a note (README.md) in the project's agent records folder.
 probe:  the length of video and audio files, to plan tasks around a song or clip.
 """
@@ -41,6 +44,7 @@ from patch_workflow import (  # noqa: E402
     choose_project,
     inspect_workflow,
     load_object,
+    read_sampling_mode,
     track_data_widget,
     write_json_atomic,
 )
@@ -56,6 +60,12 @@ from submit_workflow import (  # noqa: E402
 )
 
 IMPORT_SUBFOLDER = "easy_media/imports"
+# Project widgets for apply --sampling; setting sampling_mode first creates its option widgets.
+SAMPLING_WIDGETS = {
+    "single": {"sampling_mode": "single"},
+    "dual": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": False},
+    "upscale": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True},
+}
 MEDIA_FIELDS = (("images", "image"), ("videos", "video"), ("audios", "audio"))
 EXTENSIONS = {
     "video": {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"},
@@ -333,8 +343,14 @@ def tab_summary(workflow: dict, project: dict, plan: dict | None) -> dict:
             values = node.get("widgets_values") or []
             mode = values[1] if len(values) > 1 and isinstance(values[1], str) else "save"
             outputs.append({"id": node.get("id"), "output_mode": mode, "temp": mode in PREVIEW_OUTPUT_MODES})
-    return {"settings": {"project_save": setting("project_save"), "sampling_mode": setting("sampling_mode")},
-            "tracks": tracks, "outputs": outputs}
+    settings = {"project_save": setting("project_save"), "sampling_mode": setting("sampling_mode")}
+    try:
+        options = {key: value for key, value in read_sampling_mode(widgets)[0].items() if key != "sampling_mode"}
+    except (WorkflowError, IndexError):
+        options = {}
+    if options:
+        settings["sampling_options"] = options
+    return {"settings": settings, "tracks": tracks, "outputs": outputs}
 
 
 def tabs(args: argparse.Namespace) -> int:
@@ -421,7 +437,11 @@ def apply(args: argparse.Namespace) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 2
     converted = conversion["track_data"]
-    statuses, reusable = saved_tasks(base_url, args.project_name, converted, project_snapshot(workflow, project))
+    snapshot = project_snapshot(workflow, project)
+    sampling = SAMPLING_WIDGETS.get(args.sampling, {})
+    if sampling:
+        snapshot["recipe"]["sampling_mode"] = sampling["sampling_mode"]
+    statuses, reusable = saved_tasks(base_url, args.project_name, converted, snapshot)
     first = first_task_to_run(statuses, reusable) if args.start == "auto" else int(args.start)
     by_task = status_by_task(statuses, reusable)
     tasks = [row for row in conversion["tasks"] if row["change"] != "removed"]
@@ -435,7 +455,8 @@ def apply(args: argparse.Namespace) -> int:
     applied = page_job(base_url, "apply", {
         "tab": key, "queue": False,
         "changes": {"editor_id": editor["id"], "track_data": converted, "project_id": project["id"], "project": {
-            "project_name": args.project_name, "segment_start_number": first or 1, "segment_count": args.count}},
+            "project_name": args.project_name, "segment_start_number": first or 1, "segment_count": args.count,
+            **sampling}},
         **({"client_id": args.client_id} if args.client_id else {}),
     }, args.timeout)
     if applied["status"] != "applied":
@@ -444,6 +465,7 @@ def apply(args: argparse.Namespace) -> int:
         "tab": key,
         **({"opened": True} if applied.get("opened") else {}),
         "project_name": args.project_name,
+        **({"sampling": args.sampling} if args.sampling else {}),
         # Nothing to run when every task's saved result matches it.
         "run": {"start": first, "count": args.count} if first else {"nothing_to_run": True},
         **{name: value for name, value in report.items() if name != "tab"},
@@ -462,6 +484,16 @@ def project(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
     result = request_json(base_url, f"/easy-media/project/versions?{urlencode({'project_name': args.name})}")
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def select(args: argparse.Namespace) -> int:
+    base_url = resolve_comfyui_url(args.url, args.config)
+    request_json(base_url, "/easy-media/project/video", {
+        "project_name": args.name, "segment_index": args.task - 1, "version": args.version}, method="PATCH")
+    # Later tasks that continued from another version of this task are stale now.
+    result = request_json(base_url, f"/easy-media/project/versions?{urlencode({'project_name': args.name})}")
+    print(json.dumps({"selected": {"task": args.task, "version": args.version}, **result}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -513,8 +545,15 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--start", default="auto",
                               help='"auto" (first task whose saved result does not match) or a 1-based task number')
     apply_parser.add_argument("--count", type=int, default=-1, help="Tasks to run from the start; -1 runs the rest")
+    apply_parser.add_argument("--sampling", choices=sorted(SAMPLING_WIDGETS),
+                              help="Also set the Project's sampling: single (preview), dual, or upscale "
+                                   "(Dual from each task's saved first pass; needs --start)")
     project_parser = commands.add_parser("project", help="List each task's saved versions")
     project_parser.add_argument("--name", required=True, help="The project_name")
+    select_parser = commands.add_parser("select", help="Make one saved version the one a task uses")
+    select_parser.add_argument("--name", required=True, help="The project_name")
+    select_parser.add_argument("--task", type=int, required=True, help="The task number, from 1")
+    select_parser.add_argument("--version", type=int, required=True, help="The version number, as the project command lists it")
     record_parser = commands.add_parser("record", help="Keep a note file in the project's agent records")
     record_parser.add_argument("file", type=Path)
     record_parser.add_argument("--project", required=True)
@@ -524,7 +563,7 @@ def build_parser() -> argparse.ArgumentParser:
     for sub in (tabs_parser, read_parser, apply_parser):
         sub.add_argument("--client-id", help="The ComfyUI page, when several are open")
         sub.add_argument("--timeout", type=float, default=150, help="Seconds to wait for the page")
-    for sub in (tabs_parser, read_parser, apply_parser, project_parser, record_parser, probe_parser):
+    for sub in (tabs_parser, read_parser, apply_parser, project_parser, select_parser, record_parser, probe_parser):
         sub.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
         sub.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
     return parser
@@ -538,7 +577,14 @@ def main() -> int:
     if args.command == "apply" and (args.plan is None) == (args.from_run is None):
         print("give a plan file or --from-run, not both", file=sys.stderr)
         return 1
-    commands = {"tabs": tabs, "read": read, "apply": apply, "project": project, "record": record, "probe": probe}
+    if args.command == "apply" and args.sampling == "upscale" and args.start == "auto":
+        print("an upscale run needs --start: the first task whose saved first pass to upscale", file=sys.stderr)
+        return 1
+    if args.command == "select" and (args.task < 1 or args.version < 0):
+        print("--task counts from 1 and --version is a listed version number", file=sys.stderr)
+        return 1
+    commands = {"tabs": tabs, "read": read, "apply": apply, "project": project, "select": select,
+                "record": record, "probe": probe}
     try:
         return commands[args.command](args)
     except (PlanError, WorkflowError) as error:

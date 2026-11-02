@@ -127,6 +127,11 @@ class FakeComfy:
         self.statuses = {"s01": "saved"}
         self.records = tmp_path / "records"
         self.tmp_path = tmp_path
+        self.selected: list[dict] = []
+        self.versions = {"tasks": [{"number": 1, "task": "s01", "active": 2, "versions": [{"version": 2, "continued_from": None}]}],
+                         "detached": []}
+        self.clips = [{"id": "s01", "index": 0, "file_path": "easy_media/projects/mv/s01.mp4"},
+                      {"id": "s02", "index": 1, "file_path": "easy_media/projects/mv/s02.mp4"}]
 
     def routes(self) -> web.RouteTableDef:
         routes = web.RouteTableDef()
@@ -167,16 +172,17 @@ class FakeComfy:
 
         @routes.get("/easy-media/project/versions")
         async def versions(request):
-            return web.json_response({"project_name": request.query["project_name"], "tasks": [
-                {"number": 1, "task": "s01", "active": 2, "versions": [{"version": 2, "continued_from": None}]}],
-                "detached": []})
+            return web.json_response({"project_name": request.query["project_name"], **self.versions})
+
+        @routes.patch("/easy-media/project/video")
+        async def select(request):
+            body = await request.json()
+            self.selected.append(body)
+            return web.json_response({"project_name": body["project_name"], "clips": []})
 
         @routes.get("/easy-media/project")
         async def project(request):
-            return web.json_response({"project_name": request.query["project_name"], "clips": [
-                {"id": "s01", "index": 0, "file_path": "easy_media/projects/mv/s01.mp4"},
-                {"id": "s02", "index": 1, "file_path": "easy_media/projects/mv/s02.mp4"},
-            ]})
+            return web.json_response({"project_name": request.query["project_name"], "clips": self.clips})
 
         @routes.get("/history/p1")
         async def history(_request):
@@ -353,6 +359,71 @@ def test_project_lists_each_tasks_saved_versions(tmp_path):
     code, stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "plan_workflow.py"), "project", "--name", "mv")
     assert code == 0, stderr
     assert json.loads(stdout)["tasks"] == [{"number": 1, "task": "s01", "active": 2, "versions": [{"version": 2, "continued_from": None}]}]
+
+
+def test_select_makes_a_version_active_and_lists_the_versions(tmp_path):
+    fake = FakeComfy(tmp_path)
+    code, stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "plan_workflow.py"), "select",
+                                      "--name", "mv", "--task", "1", "--version", "2")
+    assert code == 0, stderr
+    assert fake.selected == [{"project_name": "mv", "segment_index": 0, "version": 2}]
+    report = json.loads(stdout)
+    assert report["selected"] == {"task": 1, "version": 2} and report["tasks"] == fake.versions["tasks"]
+    code, _stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "plan_workflow.py"), "select",
+                                       "--name", "mv", "--task", "0", "--version", "2")
+    assert code == 1 and "--task counts from 1" in stderr
+
+
+def test_apply_sets_the_sampling_and_an_upscale_needs_a_start(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    plan_path = write_plan(tmp_path, {"version": 1, "tasks": [{"id": "s01", "seconds": 5}, {"id": "s02", "seconds": 5}]})
+    code, _stdout, stderr = with_comfy(fake, page, 0, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                       "--tab", TAB, "--project-name", "mv", "--sampling", "upscale")
+    assert code == 1 and "needs --start" in stderr and not page.jobs
+
+    code, stdout, stderr = with_comfy(fake, page, 3, str(SCRIPTS / "plan_workflow.py"), "apply", str(plan_path),
+                                      "--tab", TAB, "--project-name", "mv", "--sampling", "upscale", "--start", "1")
+    assert code == 0, stderr
+    assert json.loads(stdout)["sampling"] == "upscale"
+    assert page.jobs[-1]["changes"]["project"] == {"project_name": "mv", "segment_start_number": 1, "segment_count": -1,
+                                                   "sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True}
+    # The saved-result check compares against the sampling the run will use.
+    assert fake.status_requests[-1]["project_snapshot"]["recipe"] == {"sampling_mode": "dual"}
+
+
+def test_read_reports_the_selected_modes_options(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    page._node("easy multitrackProject")["widgets_values"][7:] = [
+        "dual", True, 1.5, "minimax_h3_latent_upscaler_3d_fp16.safetensors", False, False, "false"]
+    code, stdout, stderr = with_comfy(fake, page, 1, str(SCRIPTS / "plan_workflow.py"), "read", "--tab", TAB)
+    assert code == 0, stderr
+    project = json.loads(stdout)["project"]
+    assert project["sampling_mode"] == "dual"
+    assert project["sampling_options"] == {
+        "use_saved_1st_pass": True, "upscale_by": 1.5, "upscale_model": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "keep_1st_pass_audio": False, "disable_2nd_noise": False, "enabled_tiling": False}
+
+
+def test_review_versions_makes_a_sheet_for_each_take(tmp_path):
+    fake = FakeComfy(tmp_path)
+    fake.clips = [{"id": "s01", "index": 0, "file_path": "easy_media/projects/mv/video_0_3.mp4", "video_files": [
+        {"file_path": "easy_media/projects/mv/video_0_1.mp4"}, {"file_path": "easy_media/projects/mv/video_0_3.mp4"}]}]
+    fake.versions = {"tasks": [{"number": 1, "task": "s01", "active": 3, "versions": [
+        {"version": 1, "video": "video_0_1.mp4"}, {"version": 3, "video": "video_0_3.mp4"}]}], "detached": []}
+
+    async def scenario():
+        app = web.Application()
+        app.add_routes(fake.routes())
+        async with TestClient(TestServer(app)) as client:
+            return await run_script(str(SCRIPTS / "review_frames.py"), "--project", "mv", "--versions", "--user-asked",
+                                    "--out", str(tmp_path / "sheets"), "--url", str(client.make_url("")))
+
+    code, stdout, stderr = asyncio.run(scenario())
+    assert code == 0, stderr
+    sheets = json.loads(stdout)
+    assert [(sheet["version"], sheet["active"], Path(sheet["image"]).name) for sheet in sheets] == [
+        (1, False, "01-s01-v1.jpg"), (3, True, "01-s01-v3.jpg")]
+    assert Path(sheets[0]["image"]).read_bytes() == b"jpeg:video_0_1.jpg"
 
 
 def test_apply_reports_plan_errors_without_touching_the_tab(tmp_path):

@@ -168,9 +168,10 @@ def saved_first_pass_edits(info: dict[str, Any], manifest: dict[str, Any], selec
 
 
 def native_project_versions(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Each task's saved versions in timeline order: which is active, what it continued from,
-    whether it used locked audio, fell back or went stale. Tasks no longer on the timeline
-    keep their versions under ``detached``."""
+    """Each task's saved versions in timeline order: which is active, how each was made (pass,
+    size, seed, the version it upscaled), what it continued from, whether it used locked
+    audio, fell back or went stale. Tasks no longer on the timeline keep their versions
+    under ``detached``."""
     owners: dict[str, str] = {}
     groups = {'segments': manifest.get('segments', {}), 'detached': manifest.get('detached_segments', {})}
     for segments in groups.values():
@@ -179,16 +180,26 @@ def native_project_versions(manifest: dict[str, Any]) -> dict[str, Any]:
                 for stage in generation.get('native', {}).values():
                     artifact = stage.get('metadata', {}).get('artifact_id')
                     if artifact:
-                        owners[artifact] = f"{segment.get('segment_id', '')}@{key}"
+                        # An upscaled version carries its first pass on; name the version that made it.
+                        owners.setdefault(artifact, f"{segment.get('segment_id', '')}@{key}")
 
     def describe(segment: dict[str, Any]) -> dict[str, Any]:
         versions = []
         for key, generation in sorted(segment.get('generations', {}).items(), key=lambda item: int(item[0])):
             metadata = generation.get('native', {}).get('high', {}).get('metadata', {})
             parent = metadata.get('parent_artifact_id')
+            recipe = generation.get('native_recipe', metadata.get('recipe', {}))
+            dual = generation.get('sampling_pass') == 'second'
             versions.append({
                 'version': int(key), 'video': generation.get('video') or generation.get('audio'),
-                'sampling_pass': generation.get('sampling_pass'), 'locked_audio': generation.get('audio_locked') is True,
+                'sampling_pass': generation.get('sampling_pass'),
+                **({'size': f"{recipe['target_width']}x{recipe['target_height']}"} if 'target_width' in recipe else {}),
+                **({'first_pass_size': f"{recipe['first_width']}x{recipe['first_height']}"}
+                   if dual and 'first_width' in recipe else {}),
+                **({'seed': generation['seed']} if 'seed' in generation else {}),
+                **({'upscaled_from': int(generation['first_pass_generation'])} if 'first_pass_generation' in generation else {}),
+                **({'keep_1st_pass_audio': generation['keep_1st_pass_audio']} if 'keep_1st_pass_audio' in generation else {}),
+                'locked_audio': generation.get('audio_locked') is True,
                 'continued_from': owners.get(parent, 'missing') if parent else None,
                 'fallback': [item.get('reason') for item in generation.get('fallback_history', [])],
                 'stale': generation.get('native_stale') is True,

@@ -185,6 +185,12 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
     # The page opened a saved workflow to change it.
     result = store.complete("apply-1", {"claim_token": job["claim_token"], "status": "applied", "opened": True})
     assert result["status"] == "applied" and result["opened"] is True
+    # An agent may switch between a single preview and Dual from the saved first pass.
+    upscale = {"project_name": "mv", "sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": True}
+    store.apply(apply_payload(request_id="apply-upscale", changes={**apply_payload()["changes"], "project": upscale}))
+    job = register(store)
+    assert job["changes"]["project"] == upscale
+    store.complete("apply-upscale", {"claim_token": job["claim_token"], "status": "applied"})
     # Changing a tab can be retried; running it might already have happened.
     store.apply(apply_payload(request_id="apply-2"))
     register(store)
@@ -202,6 +208,11 @@ def test_tab_reads_and_applies_go_to_the_page_and_report_back(monkeypatch):
     {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"seed": 1}, "project_id": 15}},
     {"changes": {"editor_id": True, "track_data": {"tracks": []}}},
     {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"project_name": "mv"}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project": {"sampling_mode": "selflift"}, "project_id": 15}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
+                 "project": {"sampling_mode": "dual", "sampling_mode.use_saved_1st_pass": "yes"}}},
+    {"changes": {"editor_id": 14, "track_data": {"tracks": []}, "project_id": 15,
+                 "project": {"sampling_mode": "dual", "sampling_mode.upscale_by": 2}}},
 ])
 def test_invalid_tab_applies_do_not_create_jobs(change):
     store = module.WorkflowSubmissions(lambda _: True)

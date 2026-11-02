@@ -5,7 +5,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 # Easy Media MultiTrack 工作流
 
-用 H3 规划文件描述影片内容，直接写进用户在 ComfyUI 开着的工作流分页再执行；分页里没存的修改也读得到。规划文件管不到的设置（模型、分辨率、采样方式等）由用户在分页里设定。
+用 H3 规划文件描述影片内容，直接写进用户在 ComfyUI 开着的工作流分页再执行；分页里没存的修改也读得到。规划文件管不到的设置（模型、分辨率、采样方式等）由用户在分页里设定；agent 只在「先预览再放大」时切换 single 与 dual。
 
 ## 必守规则
 
@@ -34,7 +34,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 4. 在 `current.json` 上改出规划（空白分页就新写）；分段与提示词按 [references/writing.md](references/writing.md)，提示词用对应 mode 的 H3 指南写。
 5. `plan_workflow.py apply 规划 --tab 分页 --project-name 名称`：有错误就修正规划再套用；确认警告、每段的标签对应（`labels`）、每段的 `status` 与要跑的范围。
 6. 用户授权执行后：`submit_workflow.py --tab 分页 --until-done`（放后台）或 `--wait 540`。
-7. `plan_workflow.py project --name 名称` 确认每段用哪一版、接在哪一版后面、有没有备用方式；（可选）`review_frames.py --project 名称 --tasks 重跑的段落`。
+7. `plan_workflow.py project --name 名称` 确认每段用哪一版、怎么生成的、接在哪一版后面、有没有备用方式；（可选）`review_frames.py --project 名称 --tasks 重跑的段落`。
 8. 需要修改时回到第 2 步，读出目前的规划再改。
 9. 用 `plan_workflow.py record` 更新专案纪录的 `README.md`。
 
@@ -52,7 +52,8 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 - **首帧、尾帧图**：会缩放成影片画面的大小，首帧直接拉伸、尾帧等比裁切。图的比例跟影片不同时，另存一份裁成相同比例的副本再用，不改用户的原档。
 - **自己处理素材**：时间轴、`until`、`muted`、`soundtrack` 做得到的（切段、去原声），不要另做副本。做不到的（如裁图）可以用 ffmpeg 另存副本，不改原档；套用时会复制进 ComfyUI，副本放在暂存区也可以。
 - **公用媒体**：多段要用同一张图、同一段音频或影片时设 `shared: true`。公用图片排在各段自己的图片之前，每段合计最多 9 张；每条音频或视频轨最多一个公用片段。
-- **版本**：用户要某段用旧版本时（`new` 才会留旧版本），请用户在 Project Video Combine 节点切换该段的版本；接在它后面的段落会变成 `parent_changed`，要重跑。所有段落共用 Project 的 seed；要比较提示词效果时，请用户固定 seed。
+- **版本**：用户要某段用旧版本时（`new` 才会留旧版本），用 `plan_workflow.py select --name 名称 --task N --version V` 切换（用户也能在 Project Video Combine 节点勾选）；接在它后面的段落会变成 `parent_changed`，要重跑，`select` 的输出会标出变成 `stale` 的版本。所有段落共用 Project 的 seed；要比较提示词效果时，请用户固定 seed。
+- **先预览再放大**：用户要先看一采效果，或要从几个版本里挑一个再放大时，用 single 当预览：`apply … --sampling single` 后执行（`project_save` 是 `new` 才会留下每一版，由用户设定）；`review_frames.py --versions` 比较各版本，`select` 选定；用户同意放大后 `apply … --sampling upscale --start N --count M` 再执行：dual 直接放大每段选定版本的一采，用它当初的种子，不重跑一采。要按时间轴顺序放大，或在同一次一起放大。放大倍率、放大模型、`keep_1st_pass_audio` 由用户设定，agent 不改。生成前报 `SAVED_FIRST_PASS_*` 时照错误说明处理，处理不了就告诉用户。细节见 [references/automation.md](references/automation.md)「先预览再放大」。
 
 ## 直接改工作流文件
 

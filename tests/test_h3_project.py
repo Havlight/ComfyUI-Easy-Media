@@ -566,6 +566,23 @@ def test_select_video_makes_its_generation_supply_the_context_latent(
     )
 
 
+def test_select_version_by_number_for_agents(monkeypatch, tmp_path):
+    project_dir = _write_render_project(tmp_path)
+    monkeypatch.setattr("utils.h3_project.folder_paths.get_output_directory", lambda: str(tmp_path))
+    monkeypatch.setattr("utils.video.ffprobe_info", lambda _path: {"frame_count": 120})
+    manifest_path = project_dir / "project.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["segments"]["0"]["generations"]["2"] = {"video": "video_0_2.mp4", "updated_at": 2000}
+    manifest["segments"]["0"]["active_generation"] = 2
+    manifest_path.write_text(json.dumps(manifest))
+    (project_dir / "video_0_2.mp4").write_bytes(b"newer")
+
+    select_h3_project_video("demo", 0, version=1)
+    assert json.loads(manifest_path.read_text())["segments"]["0"]["active_generation"] == 1
+    with pytest.raises(ValueError, match="Task 1 has no version 7"):
+        select_h3_project_video("demo", 0, version=7)
+
+
 def test_delete_last_video_removes_segment_and_keeps_shared_artifacts(monkeypatch, tmp_path):
     project_dir = _write_render_project(tmp_path)
     monkeypatch.setattr("utils.h3_project.folder_paths.get_output_directory", lambda: str(tmp_path))

@@ -3,6 +3,7 @@
 
 Off unless config.yaml sets AGENT_FRAME_REVIEW: true or the user asked for a review
 (--user-asked). Each sheet is one image of a few evenly spaced, time-labelled frames.
+--versions makes one per saved version instead of only the active one, to compare takes.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project", required=True, help="The project_name the run used")
     parser.add_argument("--tasks", help="Comma-separated task ids; default every task with a video")
+    parser.add_argument("--versions", action="store_true",
+                        help="One sheet per saved version of each task, not only the active one")
     parser.add_argument("--frames", type=int, default=4, help="Frames per sheet, 1-9")
     parser.add_argument("--width", type=int, default=1024, help="Sheet width in pixels, 256-2048")
     parser.add_argument("--out", type=Path, help="Folder for the sheets; default the project's agent records "
@@ -75,18 +78,31 @@ def main() -> int:
             raise RuntimeError(f"No generated video for task(s) {', '.join(missing)} in project {args.project}")
         if not clips:
             raise RuntimeError(f"Project {args.project} has no generated videos yet")
+        items = [(clip, {"file_path": clip["file_path"]}) for clip in clips]
+        if args.versions:
+            listing = request_json(base_url, f"/easy-media/project/versions?{urlencode({'project_name': args.project})}")
+            numbers = {(task["number"], version["video"]): (version["version"], version["version"] == task["active"])
+                       for task in listing["tasks"] for version in task["versions"]}
+            items = []
+            for clip in clips:
+                for file in clip.get("video_files") or [{"file_path": clip["file_path"]}]:
+                    version, active = numbers.get((clip["index"] + 1, Path(file["file_path"]).name), (None, False))
+                    items.append((clip, {"file_path": file["file_path"], "version": version, "active": active}))
         results = request_json(base_url, "/easy-media/review/contact-sheet", {
-            "items": [{"file_path": clip["file_path"]} for clip in clips], "frames": args.frames, "width": args.width,
+            "items": [{"file_path": item["file_path"]} for _, item in items], "frames": args.frames, "width": args.width,
         }, timeout=300)["results"]
         out = args.out or default_folder(base_url, args.project)
         out.mkdir(parents=True, exist_ok=True)
         sheets = []
-        for clip, result in zip(clips, results):
-            entry = {"task": clip["id"], "number": clip["index"] + 1, "video": clip["file_path"]}
+        for (clip, item), result in zip(items, results):
+            entry = {"task": clip["id"], "number": clip["index"] + 1, "video": item["file_path"]}
+            if args.versions:
+                entry.update(version=item["version"], active=item["active"])
             if "error" in result:
                 entry["error"] = result["error"]
             else:
-                target = out / f"{clip['index'] + 1:02d}-{clip['id']}.jpg"
+                suffix = f"-v{item['version']}" if args.versions else ""
+                target = out / f"{clip['index'] + 1:02d}-{clip['id']}{suffix}.jpg"
                 download(base_url, result, target)
                 entry["image"] = str(target.resolve())
             sheets.append(entry)

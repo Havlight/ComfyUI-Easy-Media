@@ -151,6 +151,24 @@ describe('agent access to open workflow tabs', () => {
     expect(app.queuePrompt).not.toHaveBeenCalled()
   })
 
+  it('sets sampling_mode before the option widgets that choosing it creates', async () => {
+    const { nativeApp, project } = setup()
+    const widgets: { name: string; value?: unknown }[] = project.widgets
+    let mode: unknown = 'single'
+    // Like ComfyUI's DynamicCombo: choosing dual adds its option widgets after the combo.
+    widgets.push({ name: 'sampling_mode', get value() { return mode }, set value(next: unknown) {
+      mode = next
+      widgets.splice(5, widgets.length, ...(next === 'dual' ? [{ name: 'sampling_mode.use_saved_1st_pass', value: false }] : []))
+    } })
+    const result = await applyAgentTab(nativeApp, { kind: 'apply', request_id: 'r', claim_token: 't', tab: 'workflows/mv.json',
+      queue: false, changes: { editor_id: 14, project_id: 15, track_data: trackData('A dancer'), project: {
+        project_name: 'mv', segment_start_number: 1, segment_count: 2,
+        sampling_mode: 'dual', 'sampling_mode.use_saved_1st_pass': true } } })
+    expect(result).toEqual({ status: 'applied' })
+    expect(widgets.slice(4).map((widget) => [widget.name, widget.value])).toEqual([
+      ['sampling_mode', 'dual'], ['sampling_mode.use_saved_1st_pass', true]])
+  })
+
   it('changes nothing when the named Editor is not one, and still returns to the tab in view', async () => {
     const { app, nativeApp, editor, isActive, tabB } = setup()
     const before = editor.widgets[1].value

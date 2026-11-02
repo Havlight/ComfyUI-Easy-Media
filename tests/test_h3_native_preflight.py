@@ -238,9 +238,9 @@ def _sized(plan, parent=None, stage='single_final', side=2):
     return native.stamp_native_result({'samples': native._official_nested_tensor((video, audio))}, meta)
 
 
-def _version(directory, plans, index, high, low=None, sampling_pass='single', seed=51):
+def _version(directory, plans, index, high, low=None, sampling_pass='single', seed=51, **fields):
     from test_h3_native_artifacts import _fields
-    record = {'continuity_mode': plans[index].continuity_mode, 'sampling_pass': sampling_pass, 'seed': seed}
+    record = {'continuity_mode': plans[index].continuity_mode, 'sampling_pass': sampling_pass, 'seed': seed, **fields}
     return artifacts.commit_native_generation(directory, index, _fields(plans), record,
                                               {'high': high, **({'low': low} if low is not None else {})}, {})
 
@@ -337,3 +337,27 @@ def test_saved_first_pass_edits_compare_content_and_first_stage_loras(tmp_path):
     assert status.saved_first_pass_edits(info, manifest, [0], second_only) == []
     first_added = {'a': {'first': [{'sha256': 'x', 'strength': 1.0}]}}
     assert 'first-stage segment LoRAs' in status.saved_first_pass_edits(info, manifest, [0], first_added)[0]
+
+
+def test_project_versions_say_how_each_version_was_made(tmp_path):
+    status = importlib.import_module('native_artifact_unit.utils.h3_native_status')
+    plans = [_plan(), _plan('b', 243, 51, 'a')]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first, seed=7, native_recipe={'target_width': 32, 'target_height': 32})
+    _version(tmp_path, plans, 1, _sized(plans[1], first['h3_native']))
+    _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4), first, sampling_pass='second',
+             seed=7, first_pass_generation='0', keep_1st_pass_audio=True,
+             native_recipe={'target_width': 64, 'target_height': 64, 'first_width': 32, 'first_height': 32})
+
+    summary = status.native_project_versions(artifacts.read_native_manifest(tmp_path))
+
+    single, upscaled = summary['tasks'][0]['versions']
+    assert (single['sampling_pass'], single['size'], single['seed']) == ('single', '32x32', 7)
+    assert 'upscaled_from' not in single and 'first_pass_size' not in single
+    assert {key: upscaled[key] for key in ('sampling_pass', 'size', 'first_pass_size', 'seed', 'upscaled_from',
+                                           'keep_1st_pass_audio')} == {
+        'sampling_pass': 'second', 'size': '64x64', 'first_pass_size': '32x32', 'seed': 7, 'upscaled_from': 0,
+        'keep_1st_pass_audio': True}
+    # b continued from the first pass a@0 made; the upscaled a@2 carries it on, so b is still valid.
+    [continued] = summary['tasks'][1]['versions']
+    assert continued['continued_from'] == 'a@0' and continued['stale'] is False

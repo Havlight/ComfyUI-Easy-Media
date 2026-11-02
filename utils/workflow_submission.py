@@ -20,6 +20,9 @@ from aiohttp import web
 # minute; while its WebSocket stays connected it is still there, and a job wakes it at once.
 HEARTBEAT_SECONDS = 300
 PAYLOAD_KEYS = ("workflow", "track_data", "plan", "changes")
+# Project widgets an agent may set; sampling_mode only switches between preview and Dual.
+PROJECT_CHANGE_FIELDS = {"project_name", "segment_start_number", "segment_count",
+                         "sampling_mode", "sampling_mode.use_saved_1st_pass"}
 JOB_EVENT = "easy_media_workflow_job"
 
 
@@ -152,8 +155,12 @@ class WorkflowSubmissions:
             if not isinstance(track_data, dict) or not isinstance(track_data.get("tracks"), list):
                 raise ValueError("changes.track_data must be Editor track data with a tracks list")
             project = changes.get("project", {})
-            if not isinstance(project, dict) or not set(project) <= {"project_name", "segment_start_number", "segment_count"}:
-                raise ValueError("changes.project may set only project_name, segment_start_number and segment_count")
+            if not isinstance(project, dict) or not set(project) <= PROJECT_CHANGE_FIELDS:
+                raise ValueError("changes.project may set only " + ", ".join(sorted(PROJECT_CHANGE_FIELDS)))
+            if project.get("sampling_mode", "single") not in {"single", "dual"} or not isinstance(
+                    project.get("sampling_mode.use_saved_1st_pass", False), bool):
+                raise ValueError("changes.project may switch sampling_mode between single and dual, "
+                                 "and set Dual's use_saved_1st_pass")
             if any(not isinstance(changes.get(key), (int, str)) or isinstance(changes.get(key), bool)
                    for key in ("editor_id", *(("project_id",) if project else ()))):
                 raise ValueError("changes need the editor_id (and project_id) of nodes in the tab")

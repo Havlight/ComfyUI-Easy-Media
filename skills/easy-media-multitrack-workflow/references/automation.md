@@ -6,7 +6,7 @@
 
 - 用户在 ComfyUI 开好要用的工作流分页，或指定一个存在 ComfyUI 里的工作流：分辨率、Project 的采样设置、模型都设好，时间轴可以是空的。没存档也可以，agent 读得到分页里没存的修改。
 - 用户没说用哪个工作流时先问。用户说「用默认」时用 `assets/templates/v1.3.0-blank-workflow.json`：`apply --file` 会把它开成新的未存档复本。`--file` 只给 ComfyUI 工作流文件夹以外的文件用。
-- agent 只改分页的 Editor 时间轴与 Project 的专案名称、开始段、段数，算一步，用户按 Ctrl+Z 可以还原（重新整理页面会清掉还原纪录）；不存档、不改其他节点。
+- agent 只改分页的 Editor 时间轴与 Project 的专案名称、开始段、段数（加 `--sampling` 时还有采样方式），算一步，用户按 Ctrl+Z 可以还原（重新整理页面会清掉还原纪录）；不存档、不改其他节点。
 - 分页里已有的影音轨若要保留，规划的 `tracks` 要列出它们的 `id`；没有 `id` 的轨道是新轨道，分页原有、规划没列出的轨道会被删除。
 
 ## 1. 找分页
@@ -24,7 +24,7 @@ python scripts/plan_workflow.py tabs --saved "mmh3 blank"
 python scripts/plan_workflow.py read --tab "workflows/mmh3/MV.json" -o current.json
 ```
 
-输出 Project（专案名称、开始段、段数、`project_save`、`sampling_mode`）、Editor（format、分辨率、帧率）、每段的摘要与 `status`、每条影音轨（是否锁定、`soundtrack`、静音、片段起讫秒数）、输出节点（`outputs`：`temp: true` 表示只是预览，ComfyUI 重开会被清掉），`-o` 写出分页目前的规划。要修改时就在这份规划上改，用户在分页里改过的地方才会留着。
+输出 Project（专案名称、开始段、段数、`project_save`、`sampling_mode`，dual 与 selflift 另有 `sampling_options`，如 `use_saved_1st_pass`、`upscale_by`）、Editor（format、分辨率、帧率）、每段的摘要与 `status`、每条影音轨（是否锁定、`soundtrack`、静音、片段起讫秒数）、输出节点（`outputs`：`temp: true` 表示只是预览，ComfyUI 重开会被清掉），`-o` 写出分页目前的规划。要修改时就在这份规划上改，用户在分页里改过的地方才会留着。
 
 分页内容跟专案纪录对不上时（例如 ComfyUI 重开后分页变回空白范本），先问用户要不要还原；要的话用 `apply --from-run last --tab 分页 --project-name 名称`（或指定执行编号）套回那次执行用的规划。
 
@@ -57,6 +57,7 @@ python scripts/plan_workflow.py apply plan.json --tab "workflows/mmh3/MV.json" -
   - `run`：`start` 是第一个要跑的段落（`status` 不是 `saved`），已写进 Project；`nothing_to_run: true` 表示每段的结果都相符，不需要执行。
 - `--start N` 从指定段落开始，`--count N` 只跑 N 段（默认 `-1` 跑完剩下的）。Project 会把范围内的每一段都重新生成，只改了一小段时自己设范围；范围外还有要跑的段落时会警告。
 - 专案名称决定结果存在哪里。同一支影片沿用原名称，没改到的段落才能沿用。重跑的段落是另存新版本还是取代目前版本，看用户设的 `project_save`（`new` / `override`），agent 不改它。
+- `--sampling single|dual|upscale` 同时设定 Project 的采样方式：`single` 是预览，`dual` 一次跑完一采与二采，`upscale` 是 dual 加 `use_saved_1st_pass`（放大已存的一采），必须给 `--start`。不加就不改。dual 的其他参数（放大倍率、放大模型等）由用户设定，切换时 ComfyUI 会保留这次开启期间设过的值。
 
 ## 6. 执行并等待
 
@@ -77,7 +78,15 @@ python scripts/submit_workflow.py --tab "workflows/mmh3/MV.json" --until-done
 
 - 返回码：0 成功（`generation.outputs` 列出输出文件），2 失败（`generation.node_type`、`message`），3 还在跑（`generation.state` 为 `running` 或 `pending`）。改了分辨率或采样方式后接续旧段落，可能在开始生成前失败（`VAE_FALLBACK_REQUIRED`），见 SKILL.md 的「分辨率」。
 
-执行结束后用 `plan_workflow.py project --name 名称` 确认每段的版本：目前用哪一版（`active`）、接在哪一版后面（`continued_from`，如 `f05@7`）、有没有沿用锁定音频（`locked_audio`）、有没有改用备用方式（`fallback`）、是否因前一段换了版本而过期（`stale`）。
+执行结束后用 `plan_workflow.py project --name 名称` 确认每段的版本：目前用哪一版（`active`）、怎么生成的（`sampling_pass`：`single`、`second` 即 dual、`selflift`；`size` 成品尺寸，dual 另有 `first_pass_size`；`seed`；从已存一采放大的有 `upscaled_from` 版本号与 `keep_1st_pass_audio`）、接在哪一版后面（`continued_from`，如 `f05@7`）、有没有沿用锁定音频（`locked_audio`）、有没有改用备用方式（`fallback`）、是否因前一段换了版本而过期（`stale`）。
+
+切换某段用哪一版：
+
+```bash
+python scripts/plan_workflow.py select --name mv-alice --task 3 --version 12
+```
+
+`--task` 是段落编号（从 1 起），`--version` 用 `project` 列出的版本号。输出这次的选择与切换后的版本清单；接在这段后面、原本接的是别的版本的段落会变成 `stale`，要重跑。打开着的 Project Video Combine 节点会跟着更新。
 
 ## 7. 看画面检查（选用）
 
@@ -87,9 +96,27 @@ python scripts/submit_workflow.py --tab "workflows/mmh3/MV.json" --until-done
 python scripts/review_frames.py --project mv-alice --tasks s03,s04 --user-asked
 ```
 
-每段输出一张图（默认 4 格、宽 1024），存到专案纪录的 `review/`（agent 在别台机器时存到目前目录的 `review/<专案名称>/`），输出列出每张图的本机路径。看图后判断要不要修改；每轮只看这轮重新生成的段落。
+每段输出一张图（默认 4 格、宽 1024），存到专案纪录的 `review/`（agent 在别台机器时存到目前目录的 `review/<专案名称>/`），输出列出每张图的本机路径。看图后判断要不要修改；每轮只看这轮重新生成的段落。加 `--versions` 时每段的每个版本各一张（`01-s01-v3.jpg`，输出有 `version`、`active`），用来比较几个版本。
 
-## 8. 修改与重跑
+## 8. 先预览再放大
+
+single 就是 dual 的一采：尺寸、默认 sigmas 与接续方式都相同，所以可以先用 single 看效果，满意的再放大。
+
+1. `apply 规划 --tab 分页 --project-name 名称 --sampling single`，执行。要比较几种一采时让用户把 `project_save` 设成 `new`，每次执行都会另存一版。
+2. `review_frames.py --project 名称 --tasks s01,s02 --versions --user-asked` 比较各版本（或请用户看），`select` 选定每段要用的版本。新版本生成后自动成为使用中的版本。
+3. 用户同意放大后：`apply 规划 --tab 分页 --project-name 名称 --sampling upscale --start 1 --count 2`，执行。每段放大使用中版本的一采，用它当初的种子，结果另存为 dual 版本（`upscaled_from` 记着来源版本）；dual 版本也能从它自己的一采再放大一次。
+4. 之后再用 single 预览后面的段落时，会接在已放大段落的一采后面。
+
+生成前会报错、不开始生成的情况（错误码在 `SAVED_FIRST_PASS` 开头，`generation.message` 有说明）：
+
+- 段落没有编辑器尺寸的一采（没跑过、改了分辨率，或使用中的版本是 selflift）；
+- 一采之后改过该段的内容、时间或一采阶段的片段 LoRA：用 single 重跑该段；
+- 它接着的前一段还没有二采：先放大前一段，或在同一次一起放大；
+- 同一次放大相邻两段时，后一段的一采不是接在前一段使用中的那个一采后面：先放大前一段，再用 single 重跑后一段。
+
+二采的设置、模型与 LoRA 可以随意改，一采的采样方案与模型改了也不影响（放大的是已存的结果）。
+
+## 9. 修改与重跑
 
 回到第 2 步读出目前的规划，改对应段落（保留 `id`），再套用，沿用同一个专案名称。同一个需求最多自动重跑 3 轮，再要重跑先问用户。
 

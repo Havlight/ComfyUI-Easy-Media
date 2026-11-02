@@ -246,13 +246,24 @@ async def handle_select_h3_project_video(request: web.Request) -> web.Response:
         project_name = payload.get("project_name")
         segment_index = payload.get("segment_index")
         file_path = payload.get("file_path")
-        if not isinstance(project_name, str) or not isinstance(file_path, str):
-            raise ValueError("project_name and file_path must be strings")
+        version = payload.get("version")
+        if not isinstance(project_name, str):
+            raise ValueError("project_name must be a string")
+        # The Project widget names the version's video; agents name its number.
+        if (file_path is None) == (version is None):
+            raise ValueError("Give either file_path or version")
+        if file_path is not None and not isinstance(file_path, str):
+            raise ValueError("file_path must be a string")
+        if version is not None and (type(version) is not int or version < 0):
+            raise ValueError("version must be a non-negative integer")
         if type(segment_index) is not int or segment_index < 0:
             raise ValueError("segment_index must be a non-negative integer")
-        return web.json_response(
-            select_h3_project_video(project_name, segment_index, file_path)
-        )
+        data = select_h3_project_video(project_name, segment_index, file_path, version)
+        if version is not None:
+            from .nodes.minimax import _notify_multitrack_project_refresh
+
+            _notify_multitrack_project_refresh(project_name, "select", segment_index)
+        return web.json_response(data)
     except FileNotFoundError as error:
         return web.json_response({"error": str(error)}, status=404)
     except (TypeError, ValueError) as error:

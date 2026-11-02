@@ -70,9 +70,10 @@ def resolve_comfyui_url(explicit_url: str | None, config_path: Path | None = Non
     return base_url
 
 
-def request_json(base_url: str, path: str, payload: dict | None = None, timeout: float = 20) -> dict:
+def request_json(base_url: str, path: str, payload: dict | None = None, timeout: float = 20,
+                 method: str | None = None) -> dict:
     data = None if payload is None else json.dumps(payload, allow_nan=False).encode("utf-8")
-    request = Request(base_url + path, data=data, headers={"Content-Type": "application/json"})
+    request = Request(base_url + path, data=data, headers={"Content-Type": "application/json"}, method=method)
     try:
         with urlopen(request, timeout=timeout) as response:
             return json.load(response)

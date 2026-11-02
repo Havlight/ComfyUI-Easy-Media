@@ -71,7 +71,8 @@ export interface TabChanges {
   editor_id: number | string
   track_data: TrackData
   project_id?: number | string
-  project?: { project_name?: string; segment_start_number?: number; segment_count?: number }
+  /** Project widgets by name, set in order: sampling_mode first creates its option widgets. */
+  project?: Record<string, string | number | boolean>
 }
 
 export interface TabApplyJob {

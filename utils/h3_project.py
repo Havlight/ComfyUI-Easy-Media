@@ -1020,9 +1020,13 @@ def _delete_h3_project_video(project_name: str, segment_index: int, file_path: s
 def select_h3_project_video(
     project_name: str,
     segment_index: int,
-    file_path: str,
+    file_path: str | None = None,
+    version: int | None = None,
 ) -> dict[str, Any]:
-    """Serialize native version edits with generation publication."""
+    """Serialize native version edits with generation publication.
+
+    The version is given by its video's output path (the Project widget) or its number (agents).
+    """
     directory = h3_project_directory(project_name)
     _, manifest = _load_h3_manifest(project_name)
     guard = nullcontext()
@@ -1031,13 +1035,14 @@ def select_h3_project_video(
 
         guard = native_project_transaction(directory)
     with guard:
-        return _select_h3_project_video(project_name, segment_index, file_path)
+        return _select_h3_project_video(project_name, segment_index, file_path, version)
 
 
 def _select_h3_project_video(
     project_name: str,
     segment_index: int,
-    file_path: str,
+    file_path: str | None,
+    version: int | None,
 ) -> dict[str, Any]:
     """Select the generation whose video supplies this segment's context latent."""
     project_dir = h3_project_directory(project_name)
@@ -1054,18 +1059,23 @@ def _select_h3_project_video(
         raise ValueError("Project segment was not found")
 
     selected_generation: str | None = None
-    for key, generation in segment["generations"].items():
-        if not isinstance(generation, dict) or not generation.get("video"):
-            continue
-        try:
-            candidate = _project_child_path(project_dir, generation["video"])
-        except FileNotFoundError:
-            continue
-        if candidate.relative_to(output_dir).as_posix() == file_path:
-            selected_generation = str(key)
-            break
-    if selected_generation is None:
-        raise ValueError("Video does not belong to this project segment")
+    if version is not None:
+        if not isinstance(segment["generations"].get(str(version)), dict):
+            raise ValueError(f"Task {segment_index + 1} has no version {version}")
+        selected_generation = str(version)
+    else:
+        for key, generation in segment["generations"].items():
+            if not isinstance(generation, dict) or not generation.get("video"):
+                continue
+            try:
+                candidate = _project_child_path(project_dir, generation["video"])
+            except FileNotFoundError:
+                continue
+            if candidate.relative_to(output_dir).as_posix() == file_path:
+                selected_generation = str(key)
+                break
+        if selected_generation is None:
+            raise ValueError("Video does not belong to this project segment")
     try:
         active_generation = int(selected_generation)
     except (TypeError, ValueError) as error:
