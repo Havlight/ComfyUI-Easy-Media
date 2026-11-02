@@ -11,6 +11,7 @@ import type {
   TrackData,
 } from '@/types/multitrack'
 import { uuid } from './uuid'
+import { normalizeAnchorContent, withoutAnchorRestart } from './h3-anchor'
 import { normalizeDriftTaperContent } from './h3-drift-taper'
 import { splitH3NativeAtBoundaries } from './h3-native-timing'
 import { activeTaskImages, synchronizeSharedTaskImages } from './task-image-utils'
@@ -21,7 +22,7 @@ export const MULTITRACK_DEFAULT_TOTAL_LENGTH = 120
 export const MULTITRACK_MIN_DURATION_SECONDS = 5
 export const MULTITRACK_TASK_MODES = ['default', 'ref', 'edit', 'l2v', 'passthrough'] as const
 export const MULTITRACK_DEFAULT_TASK_MODE: MultiTrackTaskMode = 'default'
-export const MULTITRACK_CONTINUITY_MODES = ['shot', 'context', 'context_drift'] as const
+export const MULTITRACK_CONTINUITY_MODES = ['shot', 'context', 'context_drift', 'context_anchor'] as const
 export const MULTITRACK_DEFAULT_CONTINUITY_MODE: MultiTrackContinuityMode = 'shot'
 export const MULTITRACK_REF_IMAGE_SIZES = ['match', 'max'] as const
 export const MULTITRACK_DEFAULT_REF_IMAGE_SIZE: MultiTrackRefImageSize = 'match'
@@ -704,11 +705,13 @@ export function splitMultiTrackSegmentByFrames(
     const nextEndFrame = Math.min(cursor + safeTargetFrames, source.end_frame)
     const startFrame = cursor
     cursor = nextEndFrame
+    const part = structuredClone(source)
     splitSegments.push({
-      ...structuredClone(source),
+      ...part,
       id: splitIndex === 0 ? source.id : uuid(),
       start_frame: startFrame,
       end_frame: cursor,
+      ...(splitIndex === 0 ? {} : { content: withoutAnchorRestart(part.content) }),
     })
   }
 
@@ -1682,7 +1685,7 @@ function normalizeTaskSegmentContent(content: MultiTrackSegment['content']): Mul
     ...(content.audios !== undefined ? { audios: Array.isArray(content.audios) ? content.audios : [] } : {}),
   }
   // Cleared taper settings arrive as undefined from spread patches; drop them with invalid values.
-  return normalizeDriftTaperContent(normalized)
+  return normalizeAnchorContent(normalizeDriftTaperContent(normalized))
 }
 
 function normalizeTotalLength(tracks: MultiTrack[], frameRate: number): number {

@@ -1,3 +1,4 @@
+import { withoutAnchorRestart } from '@/lib/h3-anchor'
 import { uuid } from '@/lib/uuid'
 import { splitH3NativeAtBoundaries } from '@/lib/h3-native-timing'
 import { throwIfMissingModelResponse } from '@/lib/model-download'
@@ -66,7 +67,7 @@ function splitSegment(
     end_frame: points[index + 1],
     ...(originStartFrame === undefined ? {} : { origin_start_frame: originStartFrame }),
     content: {
-      ...segment.content,
+      ...(index === 0 ? segment.content : withoutAnchorRestart(segment.content)),
       images: segment.content.images?.map((image) => ({ ...image })),
     },
   }))

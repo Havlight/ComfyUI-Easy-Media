@@ -25,6 +25,7 @@ import {
   normalizeDriftTaperSteps,
   parseDriftTaperOptionValue,
 } from '@/lib/h3-drift-taper'
+import { clearAnchorPatch } from '@/lib/h3-anchor'
 import { translate } from '@/lib/i18n'
 import type { MultiTrackSegmentContent } from '@/types/multitrack'
 
@@ -112,10 +113,11 @@ describe('Drift taper helpers', () => {
     })
   })
 
-  it('clears taper keys whenever continuity leaves Drift', () => {
-    expect(continuityModeChangePatch('context_drift')).toStrictEqual({ continuity_mode: 'context_drift' })
+  it('clears taper keys whenever continuity leaves Drift, and anchor keys whenever it leaves Anchor', () => {
+    expect(continuityModeChangePatch('context_drift')).toStrictEqual({ continuity_mode: 'context_drift', ...clearAnchorPatch() })
+    expect(continuityModeChangePatch('context_anchor')).toStrictEqual({ continuity_mode: 'context_anchor', ...clearDriftTaperPatch() })
     for (const mode of ['shot', 'context'] as const) {
-      expect(continuityModeChangePatch(mode)).toStrictEqual({ continuity_mode: mode, ...clearDriftTaperPatch() })
+      expect(continuityModeChangePatch(mode)).toStrictEqual({ continuity_mode: mode, ...clearDriftTaperPatch(), ...clearAnchorPatch() })
     }
   })
 

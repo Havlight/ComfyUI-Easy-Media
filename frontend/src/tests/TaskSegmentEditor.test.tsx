@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { clearAnchorPatch } from '@/lib/h3-anchor'
+import { clearDriftTaperPatch } from '@/lib/h3-drift-taper'
 import { LocaleContext } from '@/lib/i18n'
 import { TaskSegmentEditor } from '@/components/widgets/multitrack/TaskSegmentEditor'
 import { getMediaListStoreRevision } from '@/stores/media-list-store'
@@ -89,6 +91,11 @@ function driftTask(content: Partial<MultiTrackSegment['content']> = {}): MultiTr
 
 function optionTexts() {
   return screen.getAllByRole('option').map((option) => option.textContent)
+}
+
+/** Open a continuity mode's settings from the button beside the continuity menu. */
+function openSettings(buttonName: string) {
+  fireEvent.click(screen.getByRole('button', { name: buttonName }))
 }
 
 function chooseOption(comboboxName: string, optionName: string) {
@@ -260,7 +267,7 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange).not.toHaveBeenCalled()
   })
 
-  it('shows Drift taper controls only for eligible MiniMax continuations', () => {
+  it('shows the continuity settings button only for eligible MiniMax Drift and Anchor continuations', () => {
     const first = taskSegment()
     const props = { format: 'MiniMax', onContentChange: vi.fn() }
     const { rerender } = render(
@@ -268,46 +275,48 @@ describe('TaskSegmentEditor', () => {
     )
 
     const continuitySelect = screen.getByRole('combobox', { name: 'Continuity mode' })
-    const stepsSelect = screen.getByRole('combobox', { name: 'Seam taper steps' })
-    const floorSelect = screen.getByRole('combobox', { name: 'Seam floor weight' })
-    const stageSelect = screen.getByRole('combobox', { name: 'Taper stage' })
-    expect(stepsSelect.textContent).toContain('Taper 4 (default)')
-    expect(floorSelect.textContent).toContain('Floor 0')
-    expect(stageSelect.textContent).toContain('All stages')
-    for (const select of [stepsSelect, floorSelect, stageSelect]) {
-      expect(select.className).toContain('h-8')
-      expect(select.className).toContain('bg-card')
-      expect(select.className).toContain('text-[10px]')
-    }
-    expect(continuitySelect.compareDocumentPosition(stepsSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(stepsSelect.compareDocumentPosition(floorSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(floorSelect.compareDocumentPosition(stageSelect)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(stageSelect.compareDocumentPosition(screen.getByRole('combobox', { name: 'Task mode' })))
+    const button = screen.getByRole('button', { name: 'Drift Control settings' })
+    expect(continuitySelect.compareDocumentPosition(button)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(button.compareDocumentPosition(screen.getByRole('combobox', { name: 'Task mode' })))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    // The settings stay out of the toolbar until the button opens them.
+    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
+    expect(screen.queryByTestId('continuity-settings-customized')).toBeNull()
+    fireEvent.click(button)
+    const stepsSelect = screen.getByRole('combobox', { name: 'Seam taper steps' })
+    expect(stepsSelect.textContent).toContain('Taper 4 (default)')
+    expect(screen.getByRole('combobox', { name: 'Seam floor weight' }).textContent).toContain('Floor 0')
+    expect(screen.getByRole('combobox', { name: 'Taper stage' }).textContent).toContain('All stages')
+    expect(screen.getByRole('button', { name: 'Reset to defaults' })).toHaveProperty('disabled', true)
 
     const untapered = driftTask({ drift_taper_steps: 0 })
     rerender(<TaskSegmentEditor {...props} segment={untapered} trackSegments={[first, untapered]} />)
     expect(screen.getByRole('combobox', { name: 'Seam taper steps' }).textContent).toContain('Taper: none')
     expect(screen.queryByRole('combobox', { name: 'Seam floor weight' })).toBeNull()
     expect(screen.queryByRole('combobox', { name: 'Taper stage' })).toBeNull()
+    expect(screen.getByTestId('continuity-settings-customized')).toBeTruthy()
+
+    const anchor = driftTask({ continuity_mode: 'context_anchor' })
+    rerender(<TaskSegmentEditor {...props} segment={anchor} trackSegments={[first, anchor]} />)
+    expect(screen.getByRole('button', { name: 'Anchor settings' })).toBeTruthy()
 
     for (const continuityMode of ['shot', 'context'] as const) {
       const segment = driftTask({ continuity_mode: continuityMode, drift_taper_steps: 2 })
       rerender(<TaskSegmentEditor {...props} segment={segment} trackSegments={[first, segment]} />)
-      expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /settings$/ })).toBeNull()
     }
 
     const firstDrift = { ...first, content: { ...first.content, continuity_mode: 'context_drift' as const } }
     rerender(<TaskSegmentEditor {...props} segment={firstDrift} trackSegments={[firstDrift, driftTask()]} />)
-    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Drift Control settings' })).toBeNull()
 
     const passthrough = driftTask({ task_mode: 'passthrough' })
     rerender(<TaskSegmentEditor {...props} segment={passthrough} trackSegments={[first, passthrough]} />)
-    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Drift Control settings' })).toBeNull()
 
     const seedance = driftTask()
     rerender(<TaskSegmentEditor {...props} format="Seedance" segment={seedance} trackSegments={[first, seedance]} />)
-    expect(screen.queryByRole('combobox', { name: 'Seam taper steps' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Drift Control settings' })).toBeNull()
   })
 
   it('stores only taper steps that differ from the default', () => {
@@ -318,6 +327,7 @@ describe('TaskSegmentEditor', () => {
       <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
     )
 
+    openSettings('Drift Control settings')
     fireEvent.click(screen.getByRole('combobox', { name: 'Seam taper steps' }))
     expect(optionTexts()).toEqual([
       'Taper: none', 'Taper 1', 'Taper 2', 'Taper 3', 'Taper 4 (default)', 'Taper 6', 'Taper all',
@@ -337,7 +347,7 @@ describe('TaskSegmentEditor', () => {
     expect(Object.keys(defaultPatch)).toEqual(['drift_taper_steps'])
   })
 
-  it('stores the floor weight and the low-resolution-only stage', () => {
+  it('stores the floor weight and the low-resolution-only stage, and resets them', () => {
     const onContentChange = vi.fn()
     const first = taskSegment()
     const segment = driftTask({ drift_taper_steps: 3 })
@@ -345,6 +355,7 @@ describe('TaskSegmentEditor', () => {
       <TaskSegmentEditor segment={segment} trackSegments={[first, segment]} format="MiniMax" onContentChange={onContentChange} />,
     )
 
+    openSettings('Drift Control settings')
     fireEvent.click(screen.getByRole('combobox', { name: 'Seam floor weight' }))
     expect(optionTexts()).toEqual([
       'Floor 0', 'Floor 0.1', 'Floor 0.2', 'Floor 0.25', 'Floor 0.3', 'Floor 0.4', 'Floor 0.5', 'Floor 0.6', 'Floor 0.7',
@@ -367,6 +378,65 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_floor: undefined })
     chooseOption('Taper stage', 'All stages')
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ drift_taper_low_only: undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual(clearDriftTaperPatch())
+  })
+
+  it('stores Anchor settings that differ from the defaults and hides the late lock without a back frame', () => {
+    const onContentChange = vi.fn()
+    const first = taskSegment()
+    const anchor = (content: Partial<MultiTrackSegment['content']> = {}) => driftTask({ continuity_mode: 'context_anchor', ...content })
+    const { rerender } = render(
+      <TaskSegmentEditor segment={anchor()} trackSegments={[first, anchor()]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+
+    openSettings('Anchor settings')
+    expect(screen.getByRole('combobox', { name: 'Anchor frames' }).textContent).toContain('Keystone front + capstone back (default)')
+    fireEvent.click(screen.getByRole('combobox', { name: 'Back frame comes in' }))
+    expect(optionTexts()).toEqual([
+      'From the first step', 'After a quarter of the steps', 'After half the steps (default)', 'After three quarters of the steps',
+    ])
+    fireEvent.click(screen.getByRole('option', { name: 'From the first step' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_late: 0 })
+    chooseOption('Anchor frames', 'Keystone front only')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_placement: 'keystone_front' })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Start a new anchor here' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_restart: true })
+
+    const custom = anchor({ anchor_placement: 'keystone_front', anchor_restart: true })
+    rerender(
+      <TaskSegmentEditor segment={custom} trackSegments={[first, custom]} format="MiniMax" onContentChange={onContentChange} />,
+    )
+    expect(screen.queryByRole('combobox', { name: 'Back frame comes in' })).toBeNull()
+    expect(screen.getByTestId('continuity-settings-customized')).toBeTruthy()
+    chooseOption('Anchor frames', 'Keystone front + capstone back (default)')
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_placement: undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual(clearAnchorPatch())
+  })
+
+  it('restarts the anchor on the edited task alone, and resets every selected task', () => {
+    const onContentChange = vi.fn()
+    const onTrackSegmentsContentChange = vi.fn()
+    const first = taskSegment()
+    const anchor = driftTask({ continuity_mode: 'context_anchor' })
+    const other = { ...driftTask({ continuity_mode: 'context_anchor', anchor_late: 0.25 }), id: 'third' }
+    render(
+      <TaskSegmentEditor segment={anchor} trackSegments={[first, anchor, other]} selectedSegments={[anchor, other]}
+        format="MiniMax" onContentChange={onContentChange} onTrackSegmentsContentChange={onTrackSegmentsContentChange} />,
+    )
+
+    // The other selected task differs from the defaults, so the mark shows and Reset works.
+    expect(screen.getByTestId('continuity-settings-customized')).toBeTruthy()
+    openSettings('Anchor settings')
+    expect(screen.getByRole('dialog', { name: 'Anchor settings' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Start a new anchor here' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_restart: true })
+    expect(onTrackSegmentsContentChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+    expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
+      { segmentId: anchor.id, patch: clearAnchorPatch() }, { segmentId: other.id, patch: clearAnchorPatch() },
+    ])
   })
 
   it('clears taper settings when continuity leaves Drift', () => {
@@ -379,10 +449,7 @@ describe('TaskSegmentEditor', () => {
 
     chooseOption('Continuity mode', 'Context')
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({
-      continuity_mode: 'context',
-      drift_taper_steps: undefined,
-      drift_taper_floor: undefined,
-      drift_taper_low_only: undefined,
+      continuity_mode: 'context', ...clearDriftTaperPatch(), ...clearAnchorPatch(),
     })
 
     const context = driftTask({ continuity_mode: 'context' })
@@ -390,7 +457,7 @@ describe('TaskSegmentEditor', () => {
       <TaskSegmentEditor segment={context} trackSegments={[first, context]} format="MiniMax" onContentChange={onContentChange} />,
     )
     chooseOption('Continuity mode', 'Drift Control Context')
-    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ continuity_mode: 'context_drift' })
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ continuity_mode: 'context_drift', ...clearAnchorPatch() })
   })
 
   it('applies taper changes to every selected task and strips taper keys from the forced first continuity', () => {
@@ -406,22 +473,15 @@ describe('TaskSegmentEditor', () => {
 
     chooseOption('Continuity mode', 'Drift Control Context')
     expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
-      {
-        segmentId: first.id,
-        patch: {
-          continuity_mode: 'shot',
-          drift_taper_steps: undefined,
-          drift_taper_floor: undefined,
-          drift_taper_low_only: undefined,
-        },
-      },
-      { segmentId: context.id, patch: { continuity_mode: 'context_drift' } },
+      { segmentId: first.id, patch: { continuity_mode: 'shot', ...clearDriftTaperPatch(), ...clearAnchorPatch() } },
+      { segmentId: context.id, patch: { continuity_mode: 'context_drift', ...clearAnchorPatch() } },
     ])
 
     const drift = driftTask()
     rerender(
       <TaskSegmentEditor {...props} segment={drift} trackSegments={[first, drift]} selectedSegments={[first, drift]} />,
     )
+    openSettings('Drift Control settings')
     chooseOption('Seam taper steps', 'Taper 3')
     expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([
       { segmentId: first.id, patch: { drift_taper_steps: 3 } },
@@ -435,7 +495,7 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange).not.toHaveBeenCalled()
   })
 
-  it('uses locale messages for the taper controls', () => {
+  it('uses locale messages for the continuity settings', () => {
     const first = taskSegment()
     const segment = driftTask({ drift_taper_steps: 3, drift_taper_floor: 0.25 })
     render(
@@ -444,6 +504,7 @@ describe('TaskSegmentEditor', () => {
       </LocaleContext.Provider>,
     )
 
+    openSettings('漂移控制设置')
     expect(screen.getByRole('combobox', { name: '接缝渐变步数' }).textContent).toContain('渐变 3 步')
     expect(screen.getByRole('combobox', { name: '接缝最低权重' }).textContent).toContain('权重 0.25')
     expect(screen.getByRole('combobox', { name: '渐变阶段' }).textContent).toContain('全部阶段')
