@@ -8,16 +8,30 @@ from pathlib import Path
 
 import pytest
 
+from test_minimax_node import _frontend_input_keys
+
 
 @pytest.fixture
 def vsr(monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    input_type = types.SimpleNamespace(Input=lambda *args, **kwargs: None)
-    dynamic_combo = types.SimpleNamespace(
-        Option=lambda *args, **kwargs: None,
-        Input=lambda *args, **kwargs: None,
+    port_type = types.SimpleNamespace(
+        Input=lambda name, **kwargs: types.SimpleNamespace(name=name, kwargs=kwargs),
+        Output=lambda name=None, **kwargs: types.SimpleNamespace(name=name, kwargs=kwargs),
     )
-    io = types.SimpleNamespace(ComfyNode=object, DynamicCombo=dynamic_combo, Float=input_type, Int=input_type)
+    dynamic_combo = types.SimpleNamespace(
+        Option=lambda name, inputs: (name, inputs),
+        Input=port_type.Input,
+    )
+    io = types.SimpleNamespace(
+        ComfyNode=object,
+        DynamicCombo=dynamic_combo,
+        Boolean=port_type,
+        Combo=port_type,
+        Float=port_type,
+        Int=port_type,
+        Schema=types.SimpleNamespace,
+        Video=port_type,
+    )
     latest = types.ModuleType("comfy_api.latest")
     latest.Input = types.SimpleNamespace(Video=object)
     latest.InputImpl = types.SimpleNamespace()
@@ -77,3 +91,15 @@ def test_encoder_disables_b_frames_for_elementary_stream_mux(vsr):
 
     params = vsr._make_encoder(Codec(), 1920, 1080, 0, "h264", "P7", 30000 / 1001, 16_000_000)
     assert params["bf"] == 0
+
+
+def test_rtx_vsr_has_matching_chinese_localization(vsr):
+    node_defs = json.loads(
+        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text(encoding="utf-8")
+    )
+    schema = vsr.EasyRTXVideoSuperResolution.define_schema()
+
+    translation = node_defs[schema.node_id]
+
+    assert set(translation["inputs"]) == _frontend_input_keys(schema.inputs)
+    assert "resize_type_scale" in translation["inputs"]
