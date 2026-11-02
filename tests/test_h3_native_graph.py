@@ -186,7 +186,7 @@ def test_native_runtime_nodes_save_full_raw_and_load_only_legal_context(monkeypa
               "target_width": 32, "target_height": 32}
     empty, _ = module._empty_av_latent(32, 32, 56)
     prepared = runtime.EasyH3NativePrepare.execute(empty, model, "test", json.dumps(plans[0].as_dict()), json.dumps(recipe))
-    canvas, _, _, state = prepared.values
+    canvas, _, _, state, _, _ = prepared.values
     assert canvas["samples"].unbind()[1].shape[-1] == 94
     canvas["samples"].unbind()[0].fill_(3)
     result = runtime.EasyH3NativeResult.execute(canvas, state)
@@ -457,7 +457,7 @@ def test_saved_first_pass_runtime_upscales_the_saved_version_and_keeps_its_ident
         return {"segment_loras": {"tasks": [{"segment_id": plans[0].segment_id, "stages": {
             stage: [{"lora": f"{name}.safetensors", "sha256": name, "strength": 0.5}] for stage, name in stages.items()}}]}}
 
-    canvas, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(single),
+    canvas, _, _, state, _, _ = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(single),
                                                               run_state=lora_state(first="a")).values
     canvas["samples"].unbind()[0].fill_(3)
     high, _, done = runtime.EasyH3NativeResult.execute(canvas, state).values
@@ -471,7 +471,7 @@ def test_saved_first_pass_runtime_upscales_the_saved_version_and_keeps_its_ident
     run_state = runtime.preflight_native_sources(directory, runtime.read_native_manifest(directory), plans, [0],
                                                  dual, set(), [{}], set())
     # The first-stage rules changed to b since; the upscale records the a its first pass was sampled with.
-    _, _, _, state = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(dual),
+    _, _, _, state, _, _ = runtime.EasyH3NativePrepare.execute(empty, model, "test", plan_json, json.dumps(dual),
                                                          run_state={**run_state, **lora_state(first="b", second="c")}).values
     assert state["low"]["artifact_id"] == first_id
     assert state["high"]["recipe"]["seed"] == 77 and state["high"]["recipe"]["first_pass_generation"] == "0"

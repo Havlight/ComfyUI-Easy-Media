@@ -16,6 +16,7 @@ from ..utils.h3_presets import get_h3_preset_keys, load_h3_presets, select_h3_pr
 from ..utils.h3_previous_frame import previous_frame_position
 from ..utils.h3_native_status import TASK_FINGERPRINT_VERSION, native_task_fingerprint
 from ..utils.h3_segment_loras import normalize_lora_plan
+from ..utils.h3_anchor import anchor_settings
 from ..utils.h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_stage_taper, drift_taper
 from ..utils.h3_lora_preflight import compile_project_loras
 from ..utils.h3_native_timing import NativePlanError, compile_native_plan, native_policy, normalize_native_timeline
@@ -53,7 +54,7 @@ TYPE_FAST_MODEL_LOADER = io.Custom(io_type="FAST_MODEL_LOADER")
 TYPE_TRACKS_INFO = io.Custom(io_type="TRACKS_INFO")
 TYPE_PROJECT_DATA = io.Custom(io_type="PROJECT_DATA")
 TYPE_H3_PROJECT_STATIC_DATA = io.Custom(io_type="H3_PROJECT_STATIC_DATA")
-H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift"}
+H3_CONTEXT_CONTINUITY_MODES = {"context", "context_drift", "context_anchor"}
 H3_CONTEXT_SOURCE_FRAMES = 39
 
 
@@ -1493,6 +1494,9 @@ class EasyMultiTrackProject(io.ComfyNode):
             taper = drift_taper(content, native_plans[task_index].segment_id)
             uses_context = continuity_mode in H3_CONTEXT_CONTINUITY_MODES
             uses_swap = continuity_mode == "context_drift"
+            anchor = anchor_settings(content, native_plans[task_index].segment_id)
+            # A task that restarts the anchor holds its context without one.
+            anchored = anchor is not None and native_plans[task_index].anchor_segment_id is not None
             # The default taper keeps the original Drift graphs; low-only tapers
             # leave the high-resolution stage on the plain schedule.
             drift_low_inputs: dict[str, Any] = {}
@@ -1632,7 +1636,22 @@ class EasyMultiTrackProject(io.ComfyNode):
             first_pass_sampling_model = task_model
             if has_context_continuity:
                 report_segment_step(0.22)
-                if uses_swap:
+                if anchor is not None:
+                    anchor_stage = graph.node(
+                        "easy h3NativeAnchor",
+                        id=f"first_pass_anchor_{task_index}",
+                        model=task_model,
+                        latent=initial_latent,
+                        context_latent=first_pass_context_latent,
+                        sigmas=first_pass_sigmas,
+                        placement=anchor.placement,
+                        late=anchor.late,
+                        freeze_audio=False,
+                        **({"anchor": prepared_native.out(5 if has_second_pass else 4)} if anchored else {}),
+                    )
+                    first_pass_sampling_model = anchor_stage.out(0)
+                    initial_latent = anchor_stage.out(1)
+                elif uses_swap:
                     context_swap = graph.node(
                         "easy MiniMaxH3ContextSwap",
                         id=f"first_pass_context_swap_noise_{task_index}",
@@ -1863,10 +1882,24 @@ class EasyMultiTrackProject(io.ComfyNode):
                     ).out(0)
 
                 second_pass_sampling_model = task_second_model
-                if (
-                    uses_context
-                    and previous_hires_context_latent is not None
-                ):
+                if uses_context and previous_hires_context_latent is not None and anchor is not None:
+                    report_segment_step(0.59)
+                    # Anchor tasks hold the hi-res tail and anchor the refine from its first step:
+                    # the first pass already settled the pose.
+                    second_anchor = graph.node(
+                        "easy h3NativeAnchor",
+                        id=f"second_pass_anchor_{task_index}",
+                        model=task_second_model,
+                        latent=upscaled_latent,
+                        context_latent=previous_hires_context_latent,
+                        sigmas=segment_second_pass_sigmas,
+                        placement=anchor.placement,
+                        late=0.0,
+                        freeze_audio=True,
+                        **({"anchor": prepared_native.out(4)} if anchored else {}),
+                    )
+                    second_pass_sampling_model, upscaled_latent = second_anchor.out(0), second_anchor.out(1)
+                elif uses_context and previous_hires_context_latent is not None:
                     report_segment_step(0.59)
                     # Drift tasks copy the whole hi-res context and release it with the
                     # pass-two schedule like SelfLift's high stage. Plain context, and
