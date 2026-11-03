@@ -10,7 +10,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from .h3_native import new_native_metadata, validate_native_context_contract, validate_native_latent
+from .h3_native import (
+    anchor_stage_compatible, new_native_metadata, validate_native_context_contract, validate_native_latent,
+)
 from .h3_native_artifacts import (
     file_checksum, load_native_latent, native_child_path, native_parent_ids, refresh_native_dependencies,
 )
@@ -67,8 +69,8 @@ def saved_first_pass(directory: Path, manifest: dict[str, Any], plan: NativeTask
                               'with single.', plan.segment_id)
     if not set(native_parent_ids(descriptor['metadata'])) <= valid_ids:
         raise NativePlanError('SAVED_FIRST_PASS_STALE', 'Its first pass continued from a version of the '
-                              'previous task that is no longer selected. Select that version again, or run '
-                              'this task with single again.', plan.segment_id)
+                              'previous task (or of its anchor) that is no longer selected. Select that version '
+                              'again, or run this task with single again.', plan.segment_id)
     latent = load_native_latent(directory, descriptor)
     meta = validate_native_latent(latent)
     size = tuple(latent['samples'].unbind()[0].shape[-2:])
@@ -126,6 +128,33 @@ def seed_contract(parent: NativeTaskPlan, stage: str, recipe: dict[str, Any], im
     return meta
 
 
+def anchor_sources(directory: Path, plans: list[NativeTaskPlan], plan: NativeTaskPlan,
+                   layout: dict[str, tuple[str, tuple[int, int]]], recipe: dict[str, Any], upscale: bool,
+                   planned: dict[str, tuple[dict[str, Any], tuple[int, int]]] | None,
+                   source: dict[str, Any] | None) -> None:
+    """Check that the anchor task gives a keystone and capstone for each stage this run samples:
+    a saved or planned version of that stage, or a compatible one, at the same size."""
+    number = next(i for i, item in enumerate(plans) if item.segment_id == plan.anchor_segment_id) + 1
+    descriptors = (source or {}).get('record', {}).get('native', {})
+    for label, (stage, size) in layout.items():
+        if upscale and label == 'low':
+            continue
+        found = False
+        for source_label in parent_stage_labels(recipe, label):
+            candidate = planned.get(source_label) if planned is not None else None
+            if candidate is None and source_label in descriptors:
+                saved = load_native_latent(directory, descriptors[source_label])
+                candidate = (validate_native_latent(saved), tuple(saved['samples'].unbind()[0].shape[-2:]))
+                del saved
+            if candidate is not None and anchor_stage_compatible(candidate[0]['stage'], stage) and candidate[1] == size:
+                found = True
+                break
+        if not found:
+            raise NativePlanError('ANCHOR_SOURCE', f'Its anchor, task {number}, has no {stage} version at '
+                                  f'{size[1] * 16}x{size[0] * 16}. Run task {number} in this sampling mode first, '
+                                  'or include it in this run.', plan.segment_id)
+
+
 def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: list[NativeTaskPlan],
                              selected: list[int], recipe: dict[str, Any],
                              previous_frames: set[int], contents: list[dict[str, Any]],
@@ -146,6 +175,10 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
     for index in selected:
         plan = plans[index]
         try:
+            # A mode the task cannot run with comes before any source check.
+            if plan.continuity_mode == 'context_anchor' and not plan.passthrough and recipe['sampling_mode'] == 'selflift':
+                raise NativePlanError('ANCHOR_SELFLIFT', 'Anchor continuity does not run with SelfLift yet; use '
+                                      'single or dual, or another continuity for this task.', plan.segment_id)
             if index in previous_frames:
                 if index == 0 or recipe['target_width'] == recipe['target_height'] == 32:
                     raise NativePlanError('PREVIOUS_FRAME', 'A previous-frame reference requires a preceding video task.', plan.segment_id)
@@ -184,6 +217,13 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                 if parent_ids and index - 1 in selected:
                     carried = state['first_pass'].get(plans[index - 1].segment_id)
                     allowed = {carried['meta']['artifact_id']} if carried else set()
+                    # An anchored first pass also depends on its anchor's first pass: the one this run
+                    # carries on, or the anchor's version as it stays when the run leaves it out.
+                    if plan.anchor_segment_id:
+                        anchor = state['first_pass'].get(plan.anchor_segment_id)
+                        allowed |= ({anchor['meta']['artifact_id']} if anchor else
+                                    {descriptor['metadata']['artifact_id'] for descriptor in
+                                     existing(plan.anchor_segment_id)['record'].get('native', {}).values()})
                     if not parent_ids <= allowed:
                         raise NativePlanError('SAVED_FIRST_PASS_CHAIN', 'Its saved first pass does not continue from '
                                               f'task {index}, whose saved first pass this run upscales, so it would be '
@@ -246,6 +286,18 @@ def preflight_native_sources(directory: Path, manifest: dict[str, Any], plans: l
                     meta = seed_contract(parent, stage, recipe, imported, high_clock if label == 'low' else None)
                     parents[label] = meta
                     high_clock = high_clock or audio_clock(plan, meta)
+            if plan.anchor_segment_id:
+                anchor_number = next(i for i, item in enumerate(plans) if item.segment_id == plan.anchor_segment_id) + 1
+                try:
+                    anchor_version = None if plan.anchor_segment_id in contracts else existing(plan.anchor_segment_id)
+                except NativePlanError as error:
+                    if error.code not in {'SOURCE_MISSING', 'STALE_SOURCE'}:
+                        raise
+                    raise NativePlanError('ANCHOR_SOURCE', f'Its anchor, task {anchor_number}, is missing or depends on '
+                                          'a replaced version; regenerate it or include it in this run.',
+                                          plan.segment_id) from error
+                anchor_sources(directory, plans, plan, layout, recipe, first_pass is not None,
+                               contracts.get(plan.anchor_segment_id), anchor_version)
             contracts[plan.segment_id] = {
                 label: (first_pass['meta'], size) if first_pass is not None and label == 'low'
                 else (new_native_metadata(plan, stage, recipe, parents.get(label)), size)

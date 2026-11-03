@@ -118,6 +118,18 @@ def slice_native_context(
             "h3_native_slice": {"video_start": start, "video_end": end, **clock}}
 
 
+FINAL_STAGES = frozenset({"single_final", "dual_high_final", "selflift_high_final"})
+# A single result is a Dual first pass at the editor size, and the reverse.
+FIRST_PASS_STAGES = frozenset({"single_final", "dual_low_prediction"})
+
+
+def anchor_stage_compatible(stage: str, expected: str) -> bool:
+    """Whether a saved stage can give the keystone and capstone of a stage this run samples."""
+    return (stage == expected or stage == "imported_seed"
+            or (stage in FINAL_STAGES and expected in FINAL_STAGES)
+            or (stage in FIRST_PASS_STAGES and expected in FIRST_PASS_STAGES))
+
+
 def validate_native_context_contract(
     meta: dict[str, Any], plan: NativeTaskPlan, expected_stage: str,
     expected_size: tuple[int, int] | None, actual_size: tuple[int, int],
@@ -126,11 +138,8 @@ def validate_native_context_contract(
     if meta["segment_id"] != plan.parent_segment_id:
         raise NativePlanError("PARENT_ID", "The source task changed; regenerate the required predecessor.", plan.segment_id)
     external_seed = meta["stage"] == "imported_seed" and meta["source_kind"] in {"imported_seed", "rebuilt_generated"}
-    final_stages = {"single_final", "dual_high_final", "selflift_high_final"}
-    compatible_final = meta["stage"] in final_stages and expected_stage in final_stages
-    # A single result is a Dual first pass at the editor size, and the reverse.
-    first_pass_stages = {"single_final", "dual_low_prediction"}
-    compatible_first = meta["stage"] in first_pass_stages and expected_stage in first_pass_stages
+    compatible_final = meta["stage"] in FINAL_STAGES and expected_stage in FINAL_STAGES
+    compatible_first = meta["stage"] in FIRST_PASS_STAGES and expected_stage in FIRST_PASS_STAGES
     if meta["stage"] != expected_stage and not external_seed and not compatible_final and not compatible_first:
         raise NativePlanError("STAGE_MISMATCH", f"Need {expected_stage}, found {meta['stage']}; regenerate the predecessor in the selected mode.", plan.segment_id)
     if expected_size is not None and actual_size != expected_size:

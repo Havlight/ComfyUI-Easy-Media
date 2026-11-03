@@ -13,7 +13,7 @@ import torch
 from comfy_api.latest import io
 
 from ..utils.h3_native import (
-    new_native_metadata, prepare_native_canvas, slice_native_context,
+    anchor_stage_compatible, new_native_metadata, prepare_native_canvas, slice_native_context,
     stamp_native_result, trim_native_media, validate_native_latent,
 )
 from ..utils.h3_native_artifacts import (
@@ -193,7 +193,8 @@ class EasyH3NativePrepare(io.ComfyNode):
                                  io.String.Input("previous_frame_source", optional=True),
                                  io.AnyType.Input("previous", optional=True), io.AnyType.Input("run_state", optional=True)],
                          outputs=[io.Latent.Output("latent"), io.Latent.Output("high_context"),
-                                  io.Latent.Output("low_context"), io.AnyType.Output("native_state")])
+                                  io.Latent.Output("low_context"), io.AnyType.Output("native_state"),
+                                  io.Latent.Output("high_anchor"), io.Latent.Output("low_anchor")])
 
     @classmethod
     def execute(cls, latent: dict[str, Any], model: Any, project_name: str, plan_json: str,
@@ -305,6 +306,31 @@ class EasyH3NativePrepare(io.ComfyNode):
                 low_source = slice_native_context(full_low, plan, low_stage, low_size)
             else:
                 low_source = high_source
+        high_anchor = low_anchor = None
+        anchor_ids: dict[str, str] = {}
+        if plan.anchor_segment_id:
+            from ..modules.motion_context.anchor import anchor_source_latents
+
+            directory = _project_directory(project_name)
+            source = (run_source(run_state, plan.anchor_segment_id) if run_state is not None
+                      else generation_snapshot(read_native_manifest(directory), plan.anchor_segment_id))
+            anchor_descriptors = source["record"].get("native", {})
+
+            def load_anchor(label: str, stage: str, size: tuple[int, int]) -> dict[str, Any]:
+                for source_label in parent_stage_labels(recipe, label):
+                    if source_label not in anchor_descriptors:
+                        continue
+                    saved = load_native_latent(directory, anchor_descriptors[source_label])
+                    meta = validate_native_latent(saved)
+                    if anchor_stage_compatible(meta["stage"], stage) and tuple(saved["samples"].unbind()[0].shape[-2:]) == size:
+                        anchor_ids[label] = meta["artifact_id"]
+                        return {"samples": anchor_source_latents(saved, meta["context_frames"])}
+                raise NativePlanError("ANCHOR_SOURCE", "The anchor task has no version of this stage at this size; "
+                                      "run it in this sampling mode first.", plan.segment_id)
+
+            high_anchor = load_anchor("high", high_stage, high_size)
+            if low_stage and first_pass is None:
+                low_anchor = load_anchor("low", low_stage, layout["low"][1])
         reasons = tuple(recipe.get("fallback_reasons", []))
         high_meta = new_native_metadata(plan, high_stage, recipe, high_parent, reasons)
         if first_pass is not None:
@@ -324,6 +350,10 @@ class EasyH3NativePrepare(io.ComfyNode):
             for item in low_parent.get("fallback_history", []):
                 if item not in high_meta["fallback_history"]:
                     high_meta["fallback_history"].append(item)
+        # A version made with an anchor depends on the anchor's version, like on its parent.
+        for label, metadata in (("high", high_meta), ("low", low_meta if first_pass is None else None)):
+            if metadata is not None and label in anchor_ids:
+                metadata.setdefault("reference_artifact_ids", []).append(anchor_ids[label])
         state = {"high": high_meta, "low": low_meta}
         if previous_frame_source:
             identity = json.loads(previous_frame_source)
@@ -342,7 +372,8 @@ class EasyH3NativePrepare(io.ComfyNode):
                     for ancestor in record.get("fallback_history", []):
                         if ancestor not in metadata["fallback_history"]:
                             metadata["fallback_history"].append(ancestor)
-        return io.NodeOutput(prepare_native_canvas(latent, high_meta), high_source, low_source, state)
+        return io.NodeOutput(prepare_native_canvas(latent, high_meta), high_source, low_source, state,
+                             high_anchor, low_anchor)
 
 
 class EasyH3NativeDriftModel(io.ComfyNode):
@@ -363,6 +394,45 @@ class EasyH3NativeDriftModel(io.ComfyNode):
         return io.NodeOutput(install_drift_control_av_model(model, latent, sigmas, prefix_steps=12,
                                                             taper_steps=int(seam_taper_steps),
                                                             taper_floor=float(seam_taper_floor)))
+
+
+class EasyH3NativeAnchor(io.ComfyNode):
+    """Anchor continuity for one sampling pass: hold the previous task's tail, lock the
+    anchor's keystone into the first latent, tack its capstone onto the back from the
+    Late Lock step, and put the held first latent back after sampling."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        from ..utils.h3_anchor import ANCHOR_LATE_CHOICES, ANCHOR_PLACEMENTS, DEFAULT_ANCHOR_LATE, DEFAULT_ANCHOR_PLACEMENT
+
+        return io.Schema(node_id="easy h3NativeAnchor", display_name="H3 Native Anchor Stage", category="EasyUse/H3/dev",
+                         is_dev_only=True,
+                         inputs=[io.Model.Input("model"), io.Latent.Input("latent"), io.Latent.Input("context_latent"),
+                                 io.Sigmas.Input("sigmas"), io.Latent.Input("anchor", optional=True),
+                                 io.Combo.Input("placement", options=list(ANCHOR_PLACEMENTS), default=DEFAULT_ANCHOR_PLACEMENT),
+                                 io.Float.Input("late", default=DEFAULT_ANCHOR_LATE, min=min(ANCHOR_LATE_CHOICES),
+                                                max=max(ANCHOR_LATE_CHOICES), step=0.25),
+                                 io.Boolean.Input("freeze_audio", default=False)],
+                         outputs=[io.Model.Output("model"), io.Latent.Output("latent")])
+
+    @classmethod
+    def execute(cls, model: Any, latent: dict[str, Any], context_latent: dict[str, Any], sigmas: torch.Tensor,
+                anchor: dict[str, Any] | None = None, placement: str = "keystone_front_capstone_back",
+                late: float = 0.5, freeze_audio: bool = False) -> io.NodeOutput:
+        from ..modules.motion_context.anchor import anchor_hold_latent, graft_keystone, install_anchor_model
+        from ..utils.h3_anchor import ANCHOR_PLACEMENTS, late_start_step
+        from ..utils.h3_native_timing import CONTEXT_FRAMES
+
+        held, _ = anchor_hold_latent(latent, context_latent, CONTEXT_FRAMES, freeze_audio=bool(freeze_audio))
+        if anchor is None:
+            # A task that restarts the anchor holds the previous tail like Clown Context alone.
+            return io.NodeOutput(model, held)
+        front, back = ANCHOR_PLACEMENTS[placement]
+        samples = anchor["samples"]
+        grafted, originals = graft_keystone(held, samples, front)
+        back_latent = None if back is None else samples[:, :, (0 if back == "keystone" else 1):][:, :, :1]
+        start = late_start_step(late, max(0, int(sigmas.numel()) - 1))
+        return io.NodeOutput(install_anchor_model(model, back_latent, start, originals), grafted)
 
 
 class EasyH3NativeLockedVideoInfo(io.ComfyNode):

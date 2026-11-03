@@ -303,6 +303,26 @@ def test_saved_first_pass_in_one_run_must_continue_from_the_previous_first_pass(
     check(tmp_path, plans, [1], saved_recipe())
 
 
+def test_anchored_first_passes_may_also_depend_on_their_anchor_when_upscaled(tmp_path):
+    from dataclasses import replace
+
+    plans = [_plan(), _plan('b', 243, 51, 'a'), _plan('c', 294, 51, 'b')]
+    plans[1:] = [replace(plan, continuity_mode='context_anchor', anchor_segment_id='a') for plan in plans[1:]]
+    first = _sized(plans[0])
+    _version(tmp_path, plans, 0, first)
+    parent = first
+    for index in (1, 2):
+        version = _sized(plans[index], parent['h3_native'])
+        version['h3_native']['reference_artifact_ids'] = [first['h3_native']['artifact_id']]
+        _version(tmp_path, plans, index, version)
+        parent = version
+    # Task 3's first pass continues from task 2 and is anchored to task 1, both carried on by the run.
+    state = check(tmp_path, plans, [0, 1, 2], saved_recipe())
+    assert set(state['first_pass']) == {'a', 'b', 'c'}
+    # Left out of the run, the anchor's version stays what task 3 depends on.
+    check(tmp_path, plans, [1, 2], saved_recipe())
+
+
 def test_single_continues_from_a_dual_predecessor_first_pass(tmp_path):
     plans = [_plan(), _plan('b', 243, 51, 'a')]
     _version(tmp_path, plans, 0, _sized(plans[0], stage='dual_high_final', side=4),

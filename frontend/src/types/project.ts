@@ -1,4 +1,4 @@
-export type ProjectContinuityMode = 'shot' | 'context' | 'context_drift'
+export type ProjectContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_anchor'
 
 export interface ProjectVideoFile {
   file_path: string

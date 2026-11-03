@@ -12,7 +12,8 @@ NATIVE_VERSION = 2
 CONTEXT_FRAMES = 39
 FRAME_STEP = 17
 MAX_RAW_FRAMES = 3592
-CONTINUITY_MODES = frozenset({"shot", "context", "context_drift"})
+ANCHOR_MODE = "context_anchor"
+CONTINUITY_MODES = frozenset({"shot", "context", "context_drift", ANCHOR_MODE})
 
 
 class NativePlanError(ValueError):
@@ -69,6 +70,8 @@ class NativeTaskPlan:
     raw_start_frame: int
     raw_frames: int
     passthrough: bool = False
+    # Anchor continuity: the task whose keystone and capstone this task uses.
+    anchor_segment_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -82,6 +85,7 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
     segments = native_task_segments(info)
     result: list[NativeTaskPlan] = []
     seen: set[str] = set()
+    chain_anchor: str | None = None
     for segment in segments:
         sid = segment.get("id")
         if not isinstance(sid, str) or not sid or sid in seen:
@@ -108,9 +112,16 @@ def compile_native_plan(info: dict[str, Any]) -> list[NativeTaskPlan]:
             suggestion = snap_duration(duration, context)
             raise NativePlanError("DURATION_GRID", f"Use {suggestion} delivered frames instead of {duration}.", sid)
         prefix = CONTEXT_FRAMES if context else 0
+        # Anchor continuity uses the chain's first task, or the last task that restarted it.
+        anchored = context and mode == ANCHOR_MODE
+        anchor_id = None
+        if not context or (anchored and content.get("anchor_restart") is True):
+            chain_anchor = sid
+        elif anchored:
+            anchor_id = chain_anchor
         result.append(NativeTaskPlan(sid, start, end, mode,
                                     previous.segment_id if context and previous else None,
-                                    prefix, start - prefix, duration + prefix, passthrough))
+                                    prefix, start - prefix, duration + prefix, passthrough, anchor_id))
     return result
 
 
@@ -135,8 +146,10 @@ def native_task_segments(info: dict[str, Any]) -> list[dict[str, Any]]:
             if cut != frame:
                 raise NativePlanError("MARKER_GRID", f"Move this marker to frame {cut}.", task["id"])
             result.append({**current, "end_frame": cut})
+            # Only a task's first part restarts the anchor; its later parts use that part.
+            content = {key: value for key, value in current.get("content", {}).items() if key != "anchor_restart"}
             current = {**current, "id": f"{task['id']}:marker:{marker.get('id', frame)}", "start_frame": cut,
-                       "content": {**current.get("content", {}), "continuity_mode": current.get("content", {}).get("continuity_mode", "context") if continuation else "context"}}
+                       "content": {**content, "continuity_mode": content.get("continuity_mode", "context") if continuation else "context"}}
         result.append(current)
     return result
 

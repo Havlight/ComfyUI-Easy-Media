@@ -1,3 +1,4 @@
+import { ANCHOR_CONTINUITY_MODE, clearAnchorPatch, type AnchorContent } from '@/lib/h3-anchor'
 import type {
   MultiTrackContinuityMode,
   MultiTrackSegmentContent,
@@ -66,6 +67,12 @@ export function getDriftTaperLowOnly(content: DriftTaperContent): boolean {
   return content.drift_taper_low_only === true
 }
 
+/** Whether any taper setting differs from the defaults. */
+export function isDriftTaperCustomized(content: DriftTaperContent): boolean {
+  return getDriftTaperSteps(content) !== DRIFT_TAPER_DEFAULT_STEPS || getDriftTaperFloor(content) !== DRIFT_TAPER_DEFAULT_FLOOR
+    || getDriftTaperLowOnly(content)
+}
+
 /** Taper settings apply to MiniMax Drift continuations that sample (not passthrough). */
 export function isDriftTaperEligible({
   format,
@@ -106,13 +113,15 @@ export function driftTaperLowOnlyPatch(lowOnly: boolean): DriftTaperContent {
   return { drift_taper_low_only: lowOnly ? true : undefined }
 }
 
-/** Patch for a continuity mode change; leaving Drift also removes the taper settings. */
+/** Patch for a continuity mode change; leaving Drift or Anchor also removes its settings. */
 export function continuityModeChangePatch(
   continuityMode: MultiTrackContinuityMode,
-): Pick<MultiTrackSegmentContent, 'continuity_mode'> & DriftTaperContent {
-  return continuityMode === DRIFT_TAPER_CONTINUITY_MODE
-    ? { continuity_mode: continuityMode }
-    : { continuity_mode: continuityMode, ...clearDriftTaperPatch() }
+): Pick<MultiTrackSegmentContent, 'continuity_mode'> & DriftTaperContent & AnchorContent {
+  return {
+    continuity_mode: continuityMode,
+    ...(continuityMode === DRIFT_TAPER_CONTINUITY_MODE ? {} : clearDriftTaperPatch()),
+    ...(continuityMode === ANCHOR_CONTINUITY_MODE ? {} : clearAnchorPatch()),
+  }
 }
 
 /**

@@ -30,6 +30,13 @@ describe('shared H3 native timing contract', () => {
       [0, 124, 'shot'], [124, 243, 'context'],
     ])
   })
+  it('restarts the anchor only on the first part of a split Anchor task', () => {
+    const anchor = { ...segment('a', 243, 481, true), content: { media_type: 'none' as const, continuity_mode: 'context_anchor' as const, anchor_restart: true, anchor_late: 0.25 } }
+    const parts = splitH3NativeTask(anchor, 360, 'b')
+    expect(parts.map((part) => [part.content.continuity_mode, part.content.anchor_restart, part.content.anchor_late])).toEqual([
+      ['context_anchor', true, 0.25], ['context_anchor', undefined, 0.25],
+    ])
+  })
   it('promotes a remaining first continuation to Shot without changing source media', () => {
     const input = data([segment('b', 243, 481, true)])
     const media = { ...input.tracks[0], id: 'media', type: 'video' as const, segments: [segment('m', 0, 240)] }

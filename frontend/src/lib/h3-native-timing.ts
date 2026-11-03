@@ -1,3 +1,4 @@
+import { withoutAnchorRestart } from '@/lib/h3-anchor'
 import type { MultiTrackSegment, TrackData } from '@/types/multitrack'
 
 export const H3_NATIVE_CONTEXT_FRAMES = 39
@@ -110,7 +111,7 @@ export function splitH3NativeTask(segment: MultiTrackSegment, requested: number,
   return [
     { ...segment, end_frame: cut },
     { ...segment, id: rightId, start_frame: cut,
-      content: { ...segment.content, continuity_mode: isH3Continuation(segment) ? segment.content.continuity_mode : 'context' } },
+      content: { ...withoutAnchorRestart(segment.content), continuity_mode: isH3Continuation(segment) ? segment.content.continuity_mode : 'context' } },
   ]
 }
 

@@ -23,6 +23,8 @@ def task_dependencies(info: dict[str, Any]) -> list[set[int]]:
     result = []
     for index, plan in enumerate(plans):
         parents = {indices[plan.parent_segment_id]} if plan.parent_segment_id else set()
+        if plan.anchor_segment_id:
+            parents.add(indices[plan.anchor_segment_id])
         if index and not plan.passthrough and any(
                 image.get('source_type') == 'previous_frame' and not image.get('muted')
                 for image in tasks[index].get('content', {}).get('images', [])):

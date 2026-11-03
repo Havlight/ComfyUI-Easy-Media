@@ -6,7 +6,11 @@ export interface H3NativePolicy {
 
 export type MultiTrackTaskMode = 'default' | 'l2v' | 'ref' | 'edit' | 'passthrough'
 
-export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift'
+export type MultiTrackContinuityMode = 'shot' | 'context' | 'context_drift' | 'context_anchor'
+
+/** Anchor continuity: where the anchor's keystone and capstone go (front = first latent, back = tacked on). */
+export type MultiTrackAnchorPlacement =
+  | 'keystone_front' | 'keystone_front_back' | 'capstone_front_back' | 'keystone_front_capstone_back'
 
 export type MultiTrackRefImageSize = 'match' | 'max'
 
@@ -90,6 +94,12 @@ export interface MultiTrackSegmentContent {
   drift_taper_floor?: number
   /** Drift only: keep the high-resolution stage on the plain schedule. Stored only when true. */
   drift_taper_low_only?: boolean
+  /** Anchor only: keystone/capstone placement. Absent means keystone front + capstone back. */
+  anchor_placement?: MultiTrackAnchorPlacement
+  /** Anchor only: share of the first pass's steps before the back latent comes in (0, 0.25, 0.5, 0.75). Absent means 0.5. */
+  anchor_late?: number
+  /** Anchor only: this task restarts the anchor for later tasks. Stored only when true. */
+  anchor_restart?: boolean
   ref_image_size?: MultiTrackRefImageSize
   images?: MultiTrackTaskImage[]
   /** Ref and edit tasks: reference videos and audios beside the timeline's. */

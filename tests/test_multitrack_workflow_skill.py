@@ -304,7 +304,7 @@ def test_rejects_unknown_task_continuity_mode(patch_workflow_module):
 
     with pytest.raises(
         patch_workflow_module.WorkflowError,
-        match="continuity_mode must be 'shot', 'context', or 'context_drift'",
+        match="continuity_mode must be 'shot', 'context', 'context_drift' or 'context_anchor'",
     ):
         patch_workflow_module.validate_track_data(track_data, recalculate=False)
 
@@ -328,7 +328,20 @@ def _single_task_track_data(content):
     ("drift_taper_low_only", True, True), ("drift_taper_low_only", 1, False),
 ])
 def test_validates_drift_taper_settings(patch_workflow_module, field, value, valid):
-    track_data = _single_task_track_data({"continuity_mode": "context_drift", field: value})
+    _check_task_setting(patch_workflow_module, "context_drift", field, value, valid)
+
+
+@pytest.mark.parametrize("field,value,valid", [
+    ("anchor_placement", "keystone_front", True), ("anchor_placement", "middle", False), ("anchor_placement", ["x"], False),
+    ("anchor_late", 0.25, True), ("anchor_late", 0.3, False), ("anchor_late", True, False),
+    ("anchor_restart", True, True), ("anchor_restart", "yes", False),
+])
+def test_validates_anchor_settings(patch_workflow_module, field, value, valid):
+    _check_task_setting(patch_workflow_module, "context_anchor", field, value, valid)
+
+
+def _check_task_setting(patch_workflow_module, continuity, field, value, valid):
+    track_data = _single_task_track_data({"continuity_mode": continuity, field: value})
 
     if valid:
         patch_workflow_module.validate_track_data(track_data, recalculate=False)

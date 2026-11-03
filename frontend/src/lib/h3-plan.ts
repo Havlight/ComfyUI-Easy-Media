@@ -1,4 +1,18 @@
 import {
+  ANCHOR_CONTINUITY_MODE,
+  ANCHOR_DEFAULT_LATE,
+  ANCHOR_DEFAULT_PLACEMENT,
+  anchorLatePatch,
+  anchorPlacementPatch,
+  anchorRestartPatch,
+  getAnchorLate,
+  getAnchorPlacement,
+  getAnchorRestart,
+  normalizeAnchorLate,
+  normalizeAnchorPlacement,
+  type AnchorContent,
+} from '@/lib/h3-anchor'
+import {
   continuityModeChangePatch,
   DRIFT_TAPER_CONTINUITY_MODE,
   DRIFT_TAPER_DEFAULT_FLOOR,
@@ -41,6 +55,7 @@ import { taskMediaIdentity } from '@/lib/task-media-utils'
 import { uuid } from '@/lib/uuid'
 import type {
   MultiTrack,
+  MultiTrackAnchorPlacement,
   MultiTrackContinuityMode,
   MultiTrackRefImageSize,
   MultiTrackSegment,
@@ -105,6 +120,13 @@ export type H3PlanReference = string | H3PlanReferenceObject
  */
 export type H3PlanSeam = 'soft' | 'clean' | { taper?: number; floor?: number; low_only?: boolean }
 
+/**
+ * The Anchor settings. Agents pick "default" (keystone front + capstone back, the back frame
+ * after half the first pass's steps) or "restart" (the task is the anchor of the Anchor tasks
+ * after it); other settings export as an object.
+ */
+export type H3PlanAnchor = 'default' | 'restart' | { placement?: MultiTrackAnchorPlacement; late?: number }
+
 export interface H3PlanTask {
   id?: string
   seconds?: number
@@ -112,6 +134,7 @@ export interface H3PlanTask {
   mode?: MultiTrackTaskMode
   continuity?: MultiTrackContinuityMode
   seam?: H3PlanSeam
+  anchor?: H3PlanAnchor
   ref_image_size?: MultiTrackRefImageSize
   prompt?: string
   images?: H3PlanReference[]
@@ -249,7 +272,7 @@ type ParsedReference =
 
 const SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot', 'track', 'previous_frame'] as const
 const CLIP_SOURCE_KEYS = ['file', 'local', 'url', 'input', 'output', 'slot'] as const
-const TASK_KEYS = new Set(['id', 'seconds', 'gap_before', 'mode', 'continuity', 'seam', 'ref_image_size', 'prompt', 'images', 'videos', 'audios'])
+const TASK_KEYS = new Set(['id', 'seconds', 'gap_before', 'mode', 'continuity', 'seam', 'anchor', 'ref_image_size', 'prompt', 'images', 'videos', 'audios'])
 const TRACK_KEYS = new Set(['id', 'type', 'audio_locked', 'soundtrack', 'muted', 'volume', 'clips'])
 const CLIP_KEYS = new Set([...CLIP_SOURCE_KEYS, 'id', 'at', 'until', 'start', 'end', 'from', 'volume', 'muted', 'shared'])
 const REFERENCE_FIELDS = [['images', 'image'], ['videos', 'video'], ['audios', 'audio']] as const
@@ -340,6 +363,22 @@ function exportSeam(content: DriftTaperContent): H3PlanSeam {
   }
 }
 
+function exportAnchor(content: AnchorContent): H3PlanAnchor | undefined {
+  if (getAnchorRestart(content)) return 'restart'
+  const placement = getAnchorPlacement(content)
+  const late = getAnchorLate(content)
+  const anchor = {
+    ...(placement !== ANCHOR_DEFAULT_PLACEMENT ? { placement } : {}),
+    ...(late !== ANCHOR_DEFAULT_LATE ? { late } : {}),
+  }
+  return Object.keys(anchor).length ? anchor : undefined
+}
+
+function anchorField(content: MultiTrackSegmentContent): Pick<H3PlanTask, 'anchor'> {
+  const anchor = content.continuity_mode === ANCHOR_CONTINUITY_MODE ? exportAnchor(content) : undefined
+  return anchor ? { anchor } : {}
+}
+
 function exportClip(segment: MultiTrackSegment, fps: number): H3PlanClip {
   const content = segment.content
   const from = segment.origin_start_frame === undefined ? 0 : segment.start_frame - segment.origin_start_frame
@@ -385,6 +424,7 @@ export function exportH3Plan(data: TrackData, loras?: SegmentLoraPlan | null): H
       mode: content.task_mode ?? 'default',
       continuity: content.continuity_mode ?? 'shot',
       ...(content.continuity_mode === DRIFT_TAPER_CONTINUITY_MODE ? { seam: exportSeam(content) } : {}),
+      ...anchorField(content),
       ...(content.ref_image_size === 'max' ? { ref_image_size: content.ref_image_size } : {}),
       prompt: getSelectedTaskUserPrompt(content),
       images: (content.images ?? []).map(exportImage),
@@ -588,6 +628,19 @@ function parseSeam(raw: unknown): SeamSettings | null {
   return { steps, floor, lowOnly: object.low_only === true }
 }
 
+/** The settings a plan's `anchor` sets, or null when it is not one. Absent keys mean the defaults. */
+function parseAnchor(raw: unknown): AnchorContent | null {
+  const restart = raw === 'restart'
+  const value = raw === 'default' || restart ? {} : raw
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const object = value as Record<string, unknown>
+  if (Object.keys(object).some((key) => key !== 'placement' && key !== 'late')) return null
+  const placement = object.placement === undefined ? ANCHOR_DEFAULT_PLACEMENT : normalizeAnchorPlacement(object.placement)
+  const late = object.late === undefined ? ANCHOR_DEFAULT_LATE : normalizeAnchorLate(object.late)
+  if (placement === undefined || late === undefined) return null
+  return { ...anchorPlacementPatch(placement), ...anchorLatePatch(late), ...anchorRestartPatch(restart) }
+}
+
 function seamPatch(seam: SeamSettings): DriftTaperContent {
   return { ...driftTaperStepsPatch(seam.steps), ...driftTaperFloorPatch(seam.floor), ...driftTaperLowOnlyPatch(seam.lowOnly) }
 }
@@ -710,6 +763,12 @@ function buildContent(
   } else if (drift && old?.continuity_mode !== DRIFT_TAPER_CONTINUITY_MODE) {
     // A task the plan makes Drift, new or not, starts from the plan's seam.
     content = { ...content, ...seamPatch(SEAM_PRESETS[PLAN_DEFAULT_SEAM]) }
+  }
+  if (task.anchor !== undefined) {
+    const anchor = parseAnchor(task.anchor)
+    if (!anchor) issue(context, 'error', 'invalid_anchor')
+    else if (content.continuity_mode !== ANCHOR_CONTINUITY_MODE) issue(context, 'warning', 'anchor_ignored')
+    else content = { ...content, ...anchor }
   }
   if (task.ref_image_size !== undefined) {
     if ((MULTITRACK_REF_IMAGE_SIZES as readonly string[]).includes(task.ref_image_size)) content.ref_image_size = task.ref_image_size

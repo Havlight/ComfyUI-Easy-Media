@@ -858,6 +858,9 @@ describe('PreviewArea', () => {
         drift_taper_steps: undefined,
         drift_taper_floor: undefined,
         drift_taper_low_only: undefined,
+        anchor_placement: undefined,
+        anchor_late: undefined,
+        anchor_restart: undefined,
       },
     }])
 
@@ -869,7 +872,7 @@ describe('PreviewArea', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Drift Control Context' }))
     expect(onTrackSegmentsContentChange.mock.lastCall?.[0]).toStrictEqual([{
       segmentId: 'active-task',
-      patch: { continuity_mode: 'context_drift' },
+      patch: { continuity_mode: 'context_drift', anchor_placement: undefined, anchor_late: undefined, anchor_restart: undefined },
     }])
   })
 

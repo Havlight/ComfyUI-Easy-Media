@@ -139,6 +139,10 @@ def track_data_widget(node: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return candidates[0]
 
 
+ANCHOR_PLACEMENTS = ("keystone_front_capstone_back", "keystone_front", "keystone_front_back", "capstone_front_back")
+ANCHOR_LATE_CHOICES = (0, 0.25, 0.5, 0.75)
+
+
 def validate_track_data(
     data: dict[str, Any],
     *,
@@ -207,9 +211,9 @@ def validate_track_data(
                 raise WorkflowError(f"{where}.content.media_type must be {track_type!r}")
             if track_type == "task" and "continuity_mode" in content:
                 continuity_mode = content.get("continuity_mode")
-                if continuity_mode not in {"shot", "context", "context_drift"}:
+                if continuity_mode not in {"shot", "context", "context_drift", "context_anchor"}:
                     raise WorkflowError(
-                        f"{where}.content.continuity_mode must be 'shot', 'context', or 'context_drift'"
+                        f"{where}.content.continuity_mode must be 'shot', 'context', 'context_drift' or 'context_anchor'"
                     )
             # Keep these ranges in sync with utils/h3_drift_taper.py.
             if track_type == "task" and "drift_taper_steps" in content:
@@ -228,6 +232,18 @@ def validate_track_data(
             if track_type == "task" and "drift_taper_low_only" in content:
                 if not isinstance(content.get("drift_taper_low_only"), bool):
                     raise WorkflowError(f"{where}.content.drift_taper_low_only must be a boolean")
+            # Keep these values in sync with utils/h3_anchor.py.
+            if track_type == "task" and "anchor_placement" in content:
+                placement = content.get("anchor_placement")
+                if not isinstance(placement, str) or placement not in ANCHOR_PLACEMENTS:
+                    raise WorkflowError(f"{where}.content.anchor_placement must be one of {', '.join(ANCHOR_PLACEMENTS)}")
+            if track_type == "task" and "anchor_late" in content:
+                late = content.get("anchor_late")
+                if isinstance(late, bool) or late not in ANCHOR_LATE_CHOICES:
+                    raise WorkflowError(f"{where}.content.anchor_late must be 0, 0.25, 0.5 or 0.75")
+            if track_type == "task" and "anchor_restart" in content:
+                if not isinstance(content.get("anchor_restart"), bool):
+                    raise WorkflowError(f"{where}.content.anchor_restart must be a boolean")
             if "shared_reference" in content:
                 if not isinstance(content.get("shared_reference"), bool):
                     raise WorkflowError(

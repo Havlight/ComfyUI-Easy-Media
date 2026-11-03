@@ -5,6 +5,7 @@ import hashlib
 import json
 from typing import Any
 
+from .h3_anchor import anchor_signature
 from .h3_drift_taper import DEFAULT_DRIFT_TAPER, drift_taper
 from .h3_native_timing import CONTEXT_FRAMES, NativePlanError, compile_native_plan, native_task_segments
 from .h3_references import plan_task_references, shared_reference_clip
@@ -30,9 +31,12 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
         taper = drift_taper(content)
     except NativePlanError:
         taper = repr(tuple(content.get(key) for key in ('drift_taper_steps', 'drift_taper_floor', 'drift_taper_low_only')))
+    anchor = anchor_signature(content)
     return {key: value for key, value in {
         **({'drift_taper': list(taper) if isinstance(taper, tuple) else taper}
            if taper is not None and taper != DEFAULT_DRIFT_TAPER else {}),
+        # Like the taper, only non-default Anchor settings change the signature.
+        **({'anchor': anchor} if anchor is not None else {}),
         'task_mode': content.get('task_mode', 'default'),
         'continuity_mode': content.get('continuity_mode', 'shot'),
         'prompt': str(prompt or '').replace('@', ''),
@@ -109,7 +113,8 @@ def _record_edited(info: dict[str, Any], plans: list[Any], tasks: list[dict[str,
                    meta: dict[str, Any], recipe: dict[str, Any]) -> bool:
     """Whether the task's timing, continuity, content or sources changed since the version was saved."""
     plan = plans[index]
-    return (any(meta.get(key) != getattr(plan, key) for key in ('start_frame', 'end_frame', 'continuity_mode', 'parent_segment_id'))
+    return (any(meta.get(key) != getattr(plan, key)
+                for key in ('start_frame', 'end_frame', 'continuity_mode', 'parent_segment_id', 'anchor_segment_id'))
             or bool(recipe.get('task_fingerprint') and recipe['task_fingerprint'] != native_task_fingerprint(
                 info, index, int(recipe.get('task_fingerprint_version', 1))))
             or (recipe.get('task_content') is not None
