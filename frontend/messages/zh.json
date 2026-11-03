@@ -248,7 +248,7 @@
     "anchorSettings": "锚定设置",
     "continuitySettingsReset": "恢复默认",
     "anchorPlacement": "锚点帧",
-    "anchorPlacementTooltip": "用锚点片段（这个长镜头的第一段，或之后重新锚定的那段）的哪一帧把这段拉回它的样子。首帧（keystone）是锚点片段的第一帧，尾帧（capstone）是它的最后一帧；“在前”指锁进这段开头，“在后”指采样时接在这段结尾之后。推荐默认的“首帧在前 + 尾帧在后”。",
+    "anchorPlacementTooltip": "用锚点片段（这个长镜头的第一段，或之后重新锚定的那段）的哪一帧把这段拉回它的样子。首帧（keystone）是锚点片段的第一帧，尾帧（capstone）是它的最后一帧；“在前”指锁进这段开头，“在后”指采样时接在这段结尾之后。推荐默认的“首帧在前 + 尾帧在后”。“在后”的帧偶尔会在这段结尾叠出重影（这段结尾的姿势与景别和它差很多时）：先换种子重跑这段，常发生再改用“仅首帧在前”。",
     "anchorPlacement_keystone_front_capstone_back": "首帧在前 + 尾帧在后(默认)",
     "anchorPlacement_keystone_front": "仅首帧在前",
     "anchorPlacement_keystone_front_back": "首帧在前 + 首帧在后",

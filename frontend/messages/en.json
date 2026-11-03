@@ -248,7 +248,7 @@
     "anchorSettings": "Anchor settings",
     "continuitySettingsReset": "Reset to defaults",
     "anchorPlacement": "Anchor frames",
-    "anchorPlacementTooltip": "Which frames of the anchor segment (the take's first segment, or the last segment that started a new anchor) pull this segment back toward its look. The keystone is the anchor's first frame and the capstone its last; front locks the frame into this segment's start, back places it just after this segment's end while sampling. Keystone front + capstone back is recommended.",
+    "anchorPlacementTooltip": "Which frames of the anchor segment (the take's first segment, or the last segment that started a new anchor) pull this segment back toward its look. The keystone is the anchor's first frame and the capstone its last; front locks the frame into this segment's start, back places it just after this segment's end while sampling. Keystone front + capstone back is recommended. A frame at the back occasionally leaves a ghosted double image at this segment's end, when the end's pose and framing differ a lot from it: rerun the segment with another seed first, and switch to keystone front only if it keeps happening.",
     "anchorPlacement_keystone_front_capstone_back": "Keystone front + capstone back (default)",
     "anchorPlacement_keystone_front": "Keystone front only",
     "anchorPlacement_keystone_front_back": "Keystone front + back",
