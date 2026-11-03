@@ -48,8 +48,9 @@ MultiTrack Editor 在 MiniMax 格式下，工具栏有「导出规划」与「�
 - `gap_before`：与前一段之间的空白秒数，默认 0；接续段（`context`、`context_drift`、`context_anchor`）一定紧接前一段。
 - `mode`：`default`、`ref`、`edit`、`l2v`、`passthrough`。
 - `continuity`：`shot`、`context`、`context_drift`、`context_anchor`；第一段只能是 `shot`。接着上一段时用 `context_drift`，`context` 与 `context_anchor` 只在用户要求时用。
-- `seam`（只用于 `context_drift`）：接缝的处理。新的 `context_drift` 任务不写时用 `"soft"`；用户要求接缝贴紧上一段时写 `"clean"`。导出文件里若是其他写法，保持原样。
-- `anchor`（只用于 `context_anchor`）：锚定接续把每段拉回锚点（这条链的第一段）的样子，减少长镜头逐段累积的颜色与清晰度偏移。对象，各项都可省略、省略即默认：`placement`（`keystone_front_capstone_back` 默认、`keystone_front`、`keystone_front_back`、`capstone_front_back`）、`late`（接在结尾之后的那一帧从一采的哪里开始作用：`0`、`0.25`、`0.5` 默认、`0.75`）、`restart`（`true` 时这段不被拉回，之后的锚定段落改以它为锚点；长镜头中途换场景时用）。写了就整个取代这段的设置，没写就不动；导出文件里有的照原样保留，用户没要求不要加。SelfLift 不能跑锚定接续。
+- `seam`（只用于 `context_drift`）：接缝的处理。新的 `context_drift` 任务不写时用 `"soft"`；用户要求接缝贴紧上一段时写 `"clean"`。
+- `anchor`（只用于 `context_anchor`）：锚定接续把每段拉回锚点（这条链的第一段）的样子，减少长镜头逐段累积的颜色与清晰度偏移。不写就不动，新任务即默认；`"default"` 改回默认；`"restart"` 让这段不被拉回，之后的锚定段落改以它为锚点，用户要求才用：长镜头中途换场景不需要它，后面的段落不会被拉回原来的场景。SelfLift 不能跑锚定接续。
+- `seam` 与 `anchor` 的细部数值由人在 Editor 里调。用户给了具体数值时才照 [continuity-values.md](continuity-values.md) 写成对象，不要自己试数值；导出文件里的对象照原样保留。
 - `prompt`：写入目前选用的提示词，按 [writing.md](writing.md) 用对应 mode 的 H3 指南写。用 `<Picture N>`、`<Video N>`、`<Audio N>` 引用素材；编号规则与 Editor 相同，`apply` 报告的 `labels` 列出每个标签对应的素材，预览会提醒对不上的标签。
 - 导出文件里的 `ref_image_size` 保持原样。
 
