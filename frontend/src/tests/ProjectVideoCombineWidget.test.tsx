@@ -531,6 +531,55 @@ describe('ProjectVideoCombineWidget', () => {
     fireEvent.mouseUp(window)
   })
 
+  it('seeks the playing preview video within the same clip and keeps the next clip preloaded', () => {
+    let animationFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      animationFrame = callback
+      return 1
+    }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const secondClip = {
+      ...projectData.clips[0],
+      id: 'segment-1',
+      index: 1,
+      file_path: 'easy_media/projects/demo/video_1_1.mp4',
+      file_name: 'video_1_1.mp4',
+      media_revision: '1000000002',
+      source_start_frame: 24,
+    }
+    const { props } = widgetProps({
+      value: { ...projectData, clips: [projectData.clips[0], secondClip] },
+    })
+    const { container } = render(<ProjectVideoCombineWidget {...props} />)
+    const [video, preloadedSecondVideo] = [...container.querySelectorAll('video')]
+    const ruler = container.querySelector('.cursor-col-resize') as HTMLDivElement
+    vi.spyOn(ruler, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      width: 480,
+      right: 480,
+      top: 0,
+      bottom: 24,
+      height: 24,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    act(() => animationFrame?.(performance.now() + 1000))
+    expect(video.currentTime).toBe(0)
+
+    // Frame 72 of 216 is 3s into the first clip, which is still the active one.
+    fireEvent.mouseDown(ruler, { clientX: 163 })
+    fireEvent.mouseUp(window)
+
+    expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull()
+    expect(video.currentTime).toBeCloseTo(3)
+    expect([...container.querySelectorAll('video')]).toEqual([video, preloadedSecondVideo])
+    expect(preloadedSecondVideo.getAttribute('aria-hidden')).toBe('true')
+    expect(preloadedSecondVideo.currentTime).toBeCloseTo(1)
+  })
+
   it('keeps the preloaded next video element mounted when crossing a clip boundary', () => {
     const secondClip = {
       ...projectData.clips[0],
