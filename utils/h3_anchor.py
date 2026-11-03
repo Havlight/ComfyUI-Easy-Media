@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
-from .h3_native_timing import ANCHOR_MODE, NativePlanError
+from .h3_native_timing import ANCHOR_MODE, CONTEXT_FRAMES, NativePlanError
 
 # Where the keystone or capstone goes: front = locked into the first latent,
 # back = tacked onto the end of the video while sampling.
@@ -88,6 +88,27 @@ def anchor_signature(content: dict[str, Any] | None) -> list[Any] | str | None:
         return repr(tuple((content or {}).get(key)
                           for key in ("anchor_placement", "anchor_late", "anchor_noise", "anchor_restart")))
     return None if settings is None else [ANCHOR_METHOD, *settings]
+
+
+def anchor_held_frames(parent_source_kind: str | None) -> int:
+    """How many of the 39 overlap frames an Anchor task holds.
+
+    Of a sampled predecessor it holds 22 and redraws 17, which the composed video plays over the
+    predecessor's end. An imported or rebuilt predecessor plays its own end (the composed video
+    cannot tell that the task continued from it), so the task holds the whole overlap and the
+    seam stays continuous.
+    """
+    return ANCHOR_HELD_FRAMES if parent_source_kind == "native_sampler" else CONTEXT_FRAMES
+
+
+def anchor_drawn_from(meta: dict[str, Any]) -> int:
+    """The first frame a saved task drew itself: after the frames it held, none for a new chain.
+
+    Versions saved before the held count was recorded held the whole overlap.
+    """
+    if not meta.get("context_frames"):
+        return 0
+    return int(meta.get("anchor_held_frames", CONTEXT_FRAMES))
 
 
 def late_start_step(late: float, steps: int) -> int:

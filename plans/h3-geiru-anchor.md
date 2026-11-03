@@ -84,6 +84,11 @@ H3 影片 latent 以 17 幀為一個區塊（1、4、4、4、4 幀）。這段�
 - Keystone 取「錨點段自己畫出的第一個單幀 latent」：Shot 是 latent 0；接續段改為 `5 × ceil(22 / 17) = 10`（第 34 幀），不再是現在的 latent 15。Capstone 照舊取最後一個單幀 latent。Passthrough 來源維持現行取法。
 - Restart 段：鎖 22 幀加 Context Noise，不放 keystone 與 capstone。這對應作者轉場段「keystone 關、noise 開」的處理。連續標 restart 等於作者關閉保護，最後一個 restart 成為新錨點，因此不另做「關閉保護」選項。
 
+### 前一段不是採樣結果時（審查後補上）
+
+- 前一段是 passthrough 匯入，或走 VAE 重建時，成片無法確認這段接的是它，不會讓這段播重疊（見下方歸屬條件），所以這段照舊鎖滿 39 幀，接縫才連續。依據是 context latent 的 `h3_native_source.source_kind`：只有 `native_sampler` 鎖 22。
+- Prepare 把實際鎖住的幀數寫進結果 metadata 的 `anchor_held_frames`。之後的段以它為錨點時，keystone 從這個幀數之後找；沒有這個欄位的舊版本視為鎖 39 幀。
+
 ## 成片與預覽的接縫歸屬
 
 ### 歸屬條件（前後端共用同一份規則）

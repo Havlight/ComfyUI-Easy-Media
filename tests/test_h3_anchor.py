@@ -16,7 +16,8 @@ from comfy.nested_tensor import NestedTensor  # noqa: E402
 from modules.motion_context import anchor as anchor_core  # noqa: E402
 from modules.motion_context import core  # noqa: E402
 from utils.h3_anchor import (  # noqa: E402
-    ANCHOR_METHOD, DEFAULT_ANCHOR_SETTINGS, anchor_settings, anchor_signature, context_noise_ramp, late_start_step,
+    ANCHOR_METHOD, DEFAULT_ANCHOR_SETTINGS, anchor_drawn_from, anchor_held_frames, anchor_settings, anchor_signature,
+    context_noise_ramp, late_start_step,
 )
 from utils.h3_lora_preflight import task_dependencies  # noqa: E402
 from utils.h3_native_status import task_content_signature  # noqa: E402
@@ -124,6 +125,18 @@ def test_hold_keeps_the_first_22_overlap_frames_and_lets_the_task_draw_the_last_
         anchor_core.anchor_hold_latent(target, _numbered_context(), 39, 20)
 
 
+def test_a_task_holds_22_frames_of_a_sampled_predecessor_and_the_whole_overlap_of_others():
+    # The composed video plays the redrawn 17 over a sampled predecessor's end only; an imported or
+    # rebuilt one plays its own end, so the task holds all of it and the seam stays continuous.
+    assert anchor_held_frames("native_sampler") == 22
+    assert anchor_held_frames("imported_seed") == anchor_held_frames("rebuilt_generated") == anchor_held_frames(None) == 39
+    # An anchor task's keystone comes after the frames it held: none for a chain start, all 39 for
+    # versions saved before the count was recorded (they held the whole overlap).
+    assert anchor_drawn_from({"context_frames": 0, "anchor_held_frames": 22}) == 0
+    assert anchor_drawn_from({"context_frames": 39, "anchor_held_frames": 22}) == 22
+    assert anchor_drawn_from({"context_frames": 39}) == 39
+
+
 def test_context_noise_ramps_the_held_latents_after_the_first_down_to_the_join():
     # Geiru Context Noise at 0.8 on seven held latents: 0.8, 0.64, 0.48, 0.32, 0.16, then the join stays locked.
     assert context_noise_ramp(7, 0.8) == [(1, 0.8), (2, 0.64), (3, 0.48), (4, 0.32), (5, 0.16)]
@@ -144,6 +157,8 @@ def test_keystone_and_capstone_come_from_the_anchors_single_frame_latents():
     assert picked[0, 0, :, 0, 0].tolist() == [0, 35]
     # A task that restarted mid-chain gives the first single frame it drew after its 22 held frames: frame 34, latent 10.
     assert anchor_core.anchor_source_latents(source, 22)[0, 0, :, 0, 0].tolist() == [10, 35]
+    # After 39 held frames it is frame 51, latent 15.
+    assert anchor_core.anchor_source_latents(source, 39)[0, 0, :, 0, 0].tolist() == [15, 35]
 
 
 def test_keystone_replaces_the_held_first_latent_and_keeps_it_for_the_restore():
@@ -252,11 +267,13 @@ class _Model:
     def __init__(self):
         self.model_options = {"transformer_options": {}}
         self.wrappers = []
+        self.wrapper_functions = {}
 
     def clone(self):
         copy = _Model()
         copy.model_options = {**self.model_options}
         copy.wrappers = list(self.wrappers)
+        copy.wrapper_functions = {**self.wrapper_functions}
         return copy
 
     def set_model_unet_function_wrapper(self, wrapper):
@@ -264,31 +281,92 @@ class _Model:
 
     def add_wrapper_with_key(self, kind, key, wrapper):
         self.wrappers.append((kind, key))
+        self.wrapper_functions[key] = wrapper
 
 
-def test_anchor_stage_node_holds_grafts_and_patches_the_model(monkeypatch):
-    _load_minimax_node(monkeypatch)
+def _native_runtime(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
     spec = importlib.util.spec_from_file_location("easy_media.nodes.h3_native", Path(__file__).resolve().parents[1] / "nodes/h3_native.py")
     runtime = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, runtime)
     # The node imports the anchor module lazily, relative to the package the test loader names.
     monkeypatch.setitem(sys.modules, "easy_media.modules.motion_context.anchor", anchor_core)
-    # The test loader stubs ComfyUI's comfy package.
+    # The test loader stubs ComfyUI's comfy package, without the latent packing the restore uses.
     monkeypatch.setitem(sys.modules, "comfy.patcher_extension",
                         types.SimpleNamespace(WrappersMP=types.SimpleNamespace(OUTER_SAMPLE="outer_sample")))
+    for name in ("pack_latents", "unpack_latents"):
+        monkeypatch.setattr(sys.modules["comfy.utils"], name, getattr(comfy.utils, name), raising=False)
     spec.loader.exec_module(runtime)
+    return module, runtime
+
+
+def _sliced(context, source_kind="native_sampler"):
+    """A context slice of a predecessor of this kind."""
+    return {**context, "h3_native_source": {"source_kind": source_kind}}
+
+
+def test_anchor_stage_node_holds_grafts_and_patches_the_model(monkeypatch):
+    _, runtime = _native_runtime(monkeypatch)
     anchor = {"samples": torch.stack([torch.full((1, 24, 2, 2), 7.0), torch.full((1, 24, 2, 2), 9.0)], dim=2)}
     sigmas = torch.linspace(1, 0, 11)
-    model, latent = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _av(12, 3.0), sigmas, anchor=anchor).values
-    assert torch.all(_streams(latent)[0][:, :, 0] == 7)
+    model, latent = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _sliced(_numbered_context()), sigmas,
+                                                       anchor=anchor).values
+    assert _streams(latent)[0][0, 0, :8, 0, 0].tolist() == [7, 2, 3, 4, 5, 6, 7, 0]
     wrapper = model.model_options["model_function_wrapper"]
     assert wrapper.easy_media_anchor_back and model.wrappers == [("outer_sample", anchor_core._RESTORE_KEY)]
+    # The restore puts back both the first latent the keystone replaced and the ones Context Noise changed.
+    packed, shapes = comfy.utils.pack_latents(_streams(latent))
+    sampled = model.wrapper_functions[anchor_core._RESTORE_KEY](lambda *args, **kwargs: torch.zeros_like(packed),
+                                                                None, None, None, None, None, None, latent_shapes=shapes)
+    assert comfy.utils.unpack_latents(sampled, shapes)[0][0, 0, :8, 0, 0].tolist() == [1, 2, 3, 4, 5, 6, 0, 0]
+    # Of an imported or rebuilt predecessor, the whole overlap is held.
+    for context in (_sliced(_numbered_context(), "imported_seed"), _numbered_context()):
+        _, latent = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), context, sigmas, anchor=anchor, noise=0.0).values
+        mask = _streams(latent, "noise_mask")[0]
+        assert torch.all(mask[:, :, :12] == 0) and torch.all(mask[:, :, 12:] == 1)
     # Keystone front only: nothing tacked on.
-    model, _ = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _av(12, 3.0), sigmas, anchor=anchor,
+    model, _ = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _sliced(_av(12, 3.0)), sigmas, anchor=anchor,
                                                   placement="keystone_front").values
     assert "model_function_wrapper" not in model.model_options
     # A task that restarts the anchor holds with Context Noise and puts the noised latents back.
-    model, latent = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _av(12, 3.0), sigmas).values
+    model, latent = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _sliced(_av(12, 3.0)), sigmas).values
     assert model.wrappers == [("outer_sample", anchor_core._RESTORE_KEY)] and torch.all(_streams(latent)[0][:, :, 0] == 3)
     plain = _Model()
-    assert runtime.EasyH3NativeAnchor.execute(plain, _av(22), _av(12, 3.0), sigmas, noise=0.0).values[0] is plain
+    assert runtime.EasyH3NativeAnchor.execute(plain, _av(22), _sliced(_av(12, 3.0)), sigmas, noise=0.0).values[0] is plain
+
+
+def test_prepare_records_the_hold_and_takes_a_restarted_anchors_keystone_after_it(monkeypatch, tmp_path):
+    module, runtime = _native_runtime(monkeypatch)
+    monkeypatch.setattr(module.folder_paths, "get_output_directory", lambda: str(tmp_path))
+    model = types.SimpleNamespace(model=types.SimpleNamespace(
+        model_config=type("MiniMaxH3", (), {})(), latent_format=type("MiniMaxH3AV", (), {})()))
+    info = native_inputs()["tracks_info"][0]
+    info.update(width=32, height=32)
+    segments = info["tracks"][0]["segments"]
+    segments[0]["end_frame"] = 56
+    segments[1].update(start_frame=56, end_frame=73)
+    segments[1]["content"].update(continuity_mode="context_anchor", anchor_restart=True)
+    segments.append({"id": "c", "start_frame": 73, "end_frame": 90,
+                     "content": {**segments[1]["content"], "anchor_restart": False}})
+    plans = runtime.compile_native_plan(info)
+    assert [plan.anchor_segment_id for plan in plans] == [None, None, "b"]
+    recipe = json.dumps({"sampling_mode": "single", "first_width": 32, "first_height": 32,
+                         "target_width": 32, "target_height": 32})
+    raw_audio = {"waveform": torch.zeros(1, 2, 18800), "sample_rate": 8000}
+    prepared = []
+    # Every task samples 56 raw frames: the first alone, the others 17 after the 39-frame overlap.
+    for index, plan in enumerate(plans):
+        empty, _ = module._empty_av_latent(32, 32, 56)
+        canvas, _, _, state, anchor, _ = runtime.EasyH3NativePrepare.execute(
+            empty, model, "test", json.dumps(plan.as_dict()), recipe).values
+        prepared.append((state, anchor))
+        video = canvas["samples"].unbind()[0]
+        video[:] = torch.arange(video.shape[2], dtype=video.dtype).view(1, 1, -1, 1, 1)
+        high, _, done = runtime.EasyH3NativeResult.execute(canvas, state).values
+        _, delivered = runtime.EasyH3NativeMediaView.execute(done, raw_audio).values
+        runtime.EasyH3NativeArtifact.execute("test", index, info, high, raw_audio, audio=delivered)
+    assert "anchor_held_frames" not in prepared[0][0]["high"]
+    # The restarting task held 22 frames of its sampled predecessor, so the task anchored to it takes
+    # the first single frame it drew after them: frame 34, latent 10, and its last, latent 15.
+    assert prepared[1][0]["high"]["anchor_held_frames"] == 22
+    assert prepared[2][1]["samples"][0, 0, :, 0, 0].tolist() == [10, 15]

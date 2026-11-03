@@ -23,7 +23,7 @@ from ..utils.h3_native_artifacts import (
 from ..utils.h3_native_lock import freeze_native_audio, validate_native_locked_video
 from ..utils.h3_lora_preflight import preflight_project_loras, task_lora_recipe, upstream_lora_warnings
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
-from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
+from ..utils.h3_native_timing import ANCHOR_MODE, NativePlanError, NativeTaskPlan, compile_native_plan
 from ..utils.h3_native_preflight import (
     generation_snapshot, native_stage_layout, parent_stage_labels, preflight_native_sources, run_source,
     validate_parent_range,
@@ -310,7 +310,7 @@ class EasyH3NativePrepare(io.ComfyNode):
         anchor_ids: dict[str, str] = {}
         if plan.anchor_segment_id:
             from ..modules.motion_context.anchor import anchor_source_latents
-            from ..utils.h3_anchor import ANCHOR_HELD_FRAMES
+            from ..utils.h3_anchor import anchor_drawn_from
 
             directory = _project_directory(project_name)
             source = (run_source(run_state, plan.anchor_segment_id) if run_state is not None
@@ -325,9 +325,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                     meta = validate_native_latent(saved)
                     if anchor_stage_compatible(meta["stage"], stage) and tuple(saved["samples"].unbind()[0].shape[-2:]) == size:
                         anchor_ids[label] = meta["artifact_id"]
-                        # A continuation draws its own frames after the held ones.
-                        drawn_from = ANCHOR_HELD_FRAMES if meta["context_frames"] else 0
-                        return {"samples": anchor_source_latents(saved, drawn_from)}
+                        return {"samples": anchor_source_latents(saved, anchor_drawn_from(meta))}
                 raise NativePlanError("ANCHOR_SOURCE", "The anchor task has no version of this stage at this size; "
                                       "run it in this sampling mode first.", plan.segment_id)
 
@@ -357,6 +355,14 @@ class EasyH3NativePrepare(io.ComfyNode):
         for label, metadata in (("high", high_meta), ("low", low_meta if first_pass is None else None)):
             if metadata is not None and label in anchor_ids:
                 metadata.setdefault("reference_artifact_ids", []).append(anchor_ids[label])
+        if plan.continuity_mode == ANCHOR_MODE and plan.context_frames:
+            from ..utils.h3_anchor import anchor_held_frames
+
+            # The Anchor stage holds as much of the overlap as its predecessor allows (see
+            # anchor_held_frames); a task anchored to this one takes its keystone after those frames.
+            for metadata, parent in ((high_meta, high_parent), (low_meta if first_pass is None else None, low_parent)):
+                if metadata is not None and parent is not None:
+                    metadata["anchor_held_frames"] = anchor_held_frames(parent["source_kind"])
         state = {"high": high_meta, "low": low_meta}
         if previous_frame_source:
             identity = json.loads(previous_frame_source)
@@ -425,10 +431,12 @@ class EasyH3NativeAnchor(io.ComfyNode):
                 anchor: dict[str, Any] | None = None, placement: str = "keystone_front_capstone_back",
                 late: float = 0.5, noise: float = 0.8, freeze_audio: bool = False) -> io.NodeOutput:
         from ..modules.motion_context.anchor import anchor_hold_latent, graft_keystone, install_anchor_model
-        from ..utils.h3_anchor import ANCHOR_HELD_FRAMES, ANCHOR_PLACEMENTS, late_start_step
+        from ..utils.h3_anchor import ANCHOR_PLACEMENTS, anchor_held_frames, late_start_step
         from ..utils.h3_native_timing import CONTEXT_FRAMES
 
-        held, _, originals = anchor_hold_latent(latent, context_latent, CONTEXT_FRAMES, ANCHOR_HELD_FRAMES,
+        parent = context_latent.get("h3_native_source") or {}
+        held, _, originals = anchor_hold_latent(latent, context_latent, CONTEXT_FRAMES,
+                                                anchor_held_frames(parent.get("source_kind")),
                                                 noise=float(noise), freeze_audio=bool(freeze_audio))
         if anchor is None:
             # A task that restarts the anchor holds the previous tail like Geiru Context and Context Noise alone.
