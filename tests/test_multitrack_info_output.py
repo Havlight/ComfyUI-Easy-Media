@@ -15,6 +15,8 @@ import pytest
 import torch
 from PIL import Image
 
+from test_minimax_node import _frontend_input_keys
+
 
 class _Port:
     def __init__(self, name=None, **kwargs):
@@ -5309,21 +5311,9 @@ def test_multitrack_prompt_enhance_to_project_has_chinese_localization():
     translation = node_defs["easy multitrackPromptEnhanceToProject"]
     assert "媒体" in translation["description"]
     assert "纯文本" not in json.dumps(translation, ensure_ascii=False)
-    assert set(translation["inputs"]) == {
-        "tracks_info",
-        "llama_model",
-        "model",
-        "inference_mode",
-        "force_offload",
-        "ratio",
-        "return_async",
-        "apikey",
-        "max_size",
-        "max_tokens",
-        "seed",
-        "enabled",
-        "api_account",
-    }
+    assert set(translation["inputs"]) == _frontend_input_keys(
+        module.MultiTrackPromptEnhanceToProject.define_schema().inputs
+    )
     assert set(translation["inputs"]).isdisjoint(
         {"images", "video", "audio", "files"}
     )
@@ -5723,6 +5713,22 @@ def test_multitrack_prompt_enhancer_keeps_video_for_native_video_url_provider(
     assert calls[-1]["video_urls"] == ["video"]
 
 
+@pytest.mark.parametrize(
+    "class_name",
+    ["TimelineEditor", "MultiImagesLoader", "MultiTrackEditor"],
+)
+def test_resolution_nodes_localize_resolution_options_under_frontend_keys(class_name):
+    module = _load_basic_module()
+    locale_path = Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json"
+    node_defs = json.loads(locale_path.read_text(encoding="utf-8"))
+    schema = getattr(module, class_name).define_schema()
+
+    translation = node_defs[schema.node_id]
+
+    assert set(translation["inputs"]) == _frontend_input_keys(schema.inputs)
+    assert "resolution_resize_method" in translation["inputs"]
+
+
 def test_multitrack_prompt_enhancer_has_complete_chinese_localization():
     module = _load_basic_module()
     locale_path = Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json"
@@ -5730,28 +5736,10 @@ def test_multitrack_prompt_enhancer_has_complete_chinese_localization():
 
     translation = node_defs["easy multiTrackPromptEnhancer"]
 
-    assert set(translation["inputs"]) == {
-        "system_prompt",
-        "user_prompt",
-        "type",
-        "length",
-        "images",
-        "video",
-        "audio",
-        "files",
-        "llama_model",
-        "model",
-        "inference_mode",
-        "force_offload",
-        "ratio",
-        "return_async",
-        "apikey",
-        "max_size",
-        "max_tokens",
-        "seed",
-        "enabled",
-        "api_account",
-    }
+    assert set(translation["inputs"]) == _frontend_input_keys(
+        module.MultiTrackPromptEnhancer.define_schema().inputs
+    )
+    assert "model_apikey" in translation["inputs"]
     assert all("tooltip" in input_translation for input_translation in translation["inputs"].values())
     assert module.LLAMA_CPP_INSTALL_URL in translation["inputs"]["llama_model"]["tooltip"]
     assert translation["outputs"] == {

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from test_minimax_node import _frontend_input_keys
+
 
 class _NodeOutput:
     def __init__(self, *values, ui=None):
@@ -21,22 +23,19 @@ class _FakeFolderType:
     temp = "temp"
 
 
-class _FakeDynamicCombo:
-    class Option:
-        def __init__(self, name, inputs):
-            self.name = name
-            self.inputs = inputs
-
-    class Input:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-
 class _FakeInput:
     def __init__(self, *args, **kwargs):
         self.args = args
         self.kwargs = kwargs
+        self.name = args[0] if args else None
+
+
+class _FakeDynamicCombo:
+    @staticmethod
+    def Option(name, inputs):
+        return name, inputs
+
+    Input = _FakeInput
 
 
 class _FakeComfyNode:
@@ -286,11 +285,25 @@ def _load_video_module(monkeypatch, tmp_path: Path):
     return module
 
 
+def test_save_video_has_matching_chinese_localization(monkeypatch, tmp_path):
+    video_module = _load_video_module(monkeypatch, tmp_path)
+    node_defs = json.loads(
+        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text(encoding="utf-8")
+    )
+    schema = video_module.EasySaveVideo.define_schema()
+
+    translation = node_defs[schema.node_id]
+
+    assert set(translation["inputs"]) == _frontend_input_keys(schema.inputs)
+    assert "input_mode_audio" in translation["inputs"]
+    assert "output_mode_save_metadata" in translation["inputs"]
+
+
 def test_hide_save_writes_output_without_preview(monkeypatch, tmp_path):
     video_module = _load_video_module(monkeypatch, tmp_path)
     source_video = _FakeVideo()
 
-    mode_names = [option.name for option in video_module._OUTPUT_MODE_OPTIONS]
+    mode_names = [name for name, _ in video_module._OUTPUT_MODE_OPTIONS]
     assert "hide&save" in mode_names
     assert mode_names.index("hide") < mode_names.index("hide&save")
 

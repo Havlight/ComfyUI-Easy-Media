@@ -2337,6 +2337,10 @@ def test_multitrack_h3_project_has_matching_chinese_localization(monkeypatch):
     assert set(translation["inputs"]) == _frontend_input_keys(schema.inputs)
     assert "sampling_mode_enabled_tiling_tile_count" in translation["inputs"]
     assert all(entry.get("name") for entry in translation["inputs"].values())
+    sampling_plan = next(port for port in schema.inputs if port.name == "sampling_plan")
+    assert set(sampling_plan.kwargs["options"]) <= set(
+        translation["inputs"]["sampling_plan"]["options"]
+    )
     assert translation["outputs"] == {
         "0": {"name": "项目名称"},
         "1": {"name": "锁定音频"},
@@ -2823,20 +2827,11 @@ def test_bundled_h3_latent_upscaler_schema_exposes_three_resize_modes(monkeypatc
     assert inputs["enable_temporal_chunking"].kwargs["default"] is True
     assert inputs["force_unload"].kwargs["default"] is True
     node_defs = json.loads(
-        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text()
+        (Path(__file__).parents[1] / "locales" / "zh" / "nodeDefs.json").read_text(encoding="utf-8")
     )
-    assert set(node_defs["easy minimaxH3LatentUpscaler"]["inputs"]) == {
-        "latent",
-        "model_name",
-        "mode",
-        "scale",
-        "width",
-        "height",
-        "megapixels",
-        "align",
-        "enable_temporal_chunking",
-        "force_unload",
-    }
+    translation = node_defs["easy minimaxH3LatentUpscaler"]["inputs"]
+    assert set(translation) == _frontend_input_keys(schema.inputs)
+    assert "mode_scale" in translation
 
 
 def test_bundled_h3_latent_upscaler_preserves_audio_and_resizes_mask(monkeypatch):
