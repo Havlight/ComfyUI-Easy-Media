@@ -20,5 +20,6 @@
 |---|---|---|---|
 | `placement` | `keystone_front_capstone_back`、`keystone_front`、`keystone_front_back`、`capstone_front_back` | `keystone_front_capstone_back` | 用锚点片段的哪一帧拉回：keystone 是锚点片段的第一帧，capstone 是最后一帧；front 锁进这段开头，back 采样时接在这段结尾之后 |
 | `late` | 0、0.25、0.5、0.75 | 0.5 | 接在结尾之后的那一帧从一采进行到多少比例的步数时开始作用；越晚越能自己决定姿势，越早越被拉向锚点。`keystone_front` 没有后置帧，不用写 |
+| `noise` | 0、0.6、0.8、1 | 0.8 | 上下文噪声：一采时，从上一段保留的画面带多少当前噪声，越接近新画面越少，让这段不精确照抄它们。可防长镜头纹理越来越硬；固定机位时颜色可能稍微更暗。0 为关闭 |
 
-`"default"` 等于 `{}`。从这段重新锚定只能写 `"restart"`，不能和数值一起写：重新锚定的那段本身不被拉回，数值对它没有作用。
+`"default"` 等于 `{}`。从这段重新锚定写 `"restart"`；要同时改上下文噪声写 `{"restart": true, "noise": 0}`，不能和 `placement`、`late` 一起写：重新锚定的那段本身不被拉回，只有上下文噪声对它有作用。
