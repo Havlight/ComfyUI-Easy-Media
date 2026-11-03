@@ -1134,7 +1134,7 @@ export function PreviewArea({
                       <SelectValue />
                     </SelectTrigger>
                   </TooltipTrigger>
-                  <TooltipContent side="top">{t('multitrack.continuityModeTooltip')}</TooltipContent>
+                  <TooltipContent side="top" className="max-w-72 whitespace-pre-line">{t('multitrack.continuityModeTooltip')}</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
               <SelectContent>
