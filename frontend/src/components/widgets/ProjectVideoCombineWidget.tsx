@@ -726,6 +726,9 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     if (isPlaying) {
       playbackStartFrameRef.current = nextFrame >= total ? 0 : nextFrame
       playbackStartedAtRef.current = performance.now()
+      // The paused seek effect skips while playing, so re-run the playing seek
+      // effect even when the active clip stays the same.
+      setPlaybackNonce((nonce) => nonce + 1)
     }
     setCurrentFrame(nextFrame)
     const nextActive = clipAtFrame(data.clips, Math.min(nextFrame, Math.max(0, total - 1)))
