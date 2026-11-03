@@ -175,7 +175,7 @@ def refresh_native_dependencies(manifest: dict[str, Any]) -> set[str]:
     return valid_ids
 
 
-GENERATION_FILE_FIELDS = ("context_latent", "context_latent_low", "video", "audio", "raw_audio", "last_frame", "locked_audio")
+GENERATION_FILE_FIELDS = ("context_latent", "context_latent_low", "video", "audio", "raw_audio", "last_frame", "locked_audio", "lead_in")
 
 
 def _delete_unreferenced_files(directory: Path, manifest: dict[str, Any], generation: dict[str, Any]) -> None:
@@ -244,7 +244,7 @@ def commit_native_generation(
                 saved["native"][stage] = save_native_latent(latent, staging / name)
                 saved[field] = name
             for field, source in media.items():
-                if field not in {"video", "audio", "raw_audio", "last_frame", "locked_audio"}:
+                if field not in {"video", "audio", "raw_audio", "last_frame", "locked_audio", "lead_in"}:
                     raise ValueError(f"Unsupported project media field: {field}")
                 name = f"{field}_{segment_index}_{generation}{source.suffix}"
                 shutil.copyfile(source, staging / name)

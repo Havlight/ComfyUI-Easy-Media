@@ -8,13 +8,16 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   ANCHOR_CONTINUITY_MODE,
   ANCHOR_LATE_OPTIONS,
+  ANCHOR_NOISE_OPTIONS,
   ANCHOR_PLACEMENTS,
   anchorHasBack,
   anchorLatePatch,
+  anchorNoisePatch,
   anchorPlacementPatch,
   anchorRestartPatch,
   clearAnchorPatch,
   getAnchorLate,
+  getAnchorNoise,
   getAnchorPlacement,
   getAnchorRestart,
   isAnchorCustomized,
@@ -52,6 +55,11 @@ interface ContinuitySettingsProps {
 /** Anchor late lock shares as message keys: 0.25 -> anchorLate25. */
 function anchorLateKey(late: number) {
   return `multitrack.anchorLate${Math.round(late * 100)}`
+}
+
+/** Context Noise strengths as message keys: 0.8 -> anchorNoise80. */
+function anchorNoiseKey(noise: number) {
+  return `multitrack.anchorNoise${Math.round(noise * 100)}`
 }
 
 /** A labelled setting; its control gets the help text's id for aria-describedby. */
@@ -168,6 +176,23 @@ function AnchorSettings({ content, onChange, onTaskChange }: Readonly<Omit<Conti
           </Select>}
         </Setting>
       )}
+      <Setting label={t('multitrack.anchorNoise')} help={t('multitrack.anchorNoiseTooltip')}>
+        {(helpId) => <Select value={String(getAnchorNoise(content))} onValueChange={(value) => {
+          const patch = anchorNoisePatch(Number(value))
+          if (patch) onChange(patch)
+        }}>
+          <SelectTrigger aria-label={t('multitrack.anchorNoise')} aria-describedby={helpId} className="h-8 w-full bg-card text-[11px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ANCHOR_NOISE_OPTIONS.map((option) => (
+              <SelectItem key={option} value={String(option)}>
+                <span className="text-[11px]">{t(anchorNoiseKey(option))}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>}
+      </Setting>
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <Checkbox id={restartId} aria-describedby={restartHelpId} checked={getAnchorRestart(content)}

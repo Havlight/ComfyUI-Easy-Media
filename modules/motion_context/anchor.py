@@ -1,18 +1,22 @@
-"""Anchor continuity for H3 tasks: hold, Keystone, Capstone, Late Lock and restore.
+"""Anchor continuity for H3 tasks: hold, Context Noise, Keystone, Capstone, Late Lock and restore.
 
-Based on roycho87/clown_context_suite (GPL-3.0). Clown Context holds the previous
-shot's tail at the start of a shot; Clown Keystone locks the anchor clip's first
-single-frame latent (the keystone) into the shot's first latent and tacks its last
-single-frame latent (the capstone) onto the back of the video for each model call;
-Clown Late Lock brings the back latent in from a later step, so the shot settles its
-own pose first. The real first latent is put back after sampling.
+Based on roycho87/geiru_context_suite (formerly clown_context_suite, GPL-3.0). Geiru
+Context holds the start of the previous shot's tail at the start of a shot, with the
+recommended drop_last of 17 frames: of the 39 overlap frames the first 22 are held and
+the last 17 are drawn again. Geiru Context Noise (ethanfel's context noise) gives the
+held latents after the first part of the current noise, fading to none at the join.
+Geiru Keystone locks the anchor clip's first single-frame latent (the keystone) into the
+shot's first latent and tacks its last single-frame latent (the capstone) onto the back
+of the video for each model call; Geiru Late Lock brings the back latent in from a later
+step, so the shot settles its own pose first. The real held latents are put back after
+sampling.
 
 H3 video latents come in 17-frame blocks of (1, 4, 4, 4, 4) frames, so every fifth
 latent is a single frame: the keystone and capstone are such latents.
 
-The whole overlap is held, unlike Clown Context's recommended drop_last of 17 frames: a
-task's delivered frames start right after its overlap, so a regenerated end of the overlap
-would join two takes of the same moment, which Clown's README warns shows a jump.
+A task owns the whole overlap in the composed video, so the previous task's last 39
+frames, where the capstone pulls back toward the anchor, are replaced by this task's
+first 39: the held 22 copy them and the redrawn 17 continue from there.
 """
 
 from __future__ import annotations
@@ -28,9 +32,15 @@ from .core import (
     _merge_noise_mask,
     _noise_mask_streams,
     _official_nested_tensor,
+    _steps_for_frames,
     _streams_from_latent,
     _video_tail_from_latent,
 )
+
+try:
+    from ...utils.h3_anchor import context_noise_ramp
+except ImportError:
+    from utils.h3_anchor import context_noise_ramp
 
 LOGGER = logging.getLogger("easy_media.h3_anchor")
 
@@ -58,13 +68,19 @@ def anchor_hold_latent(
     latent: dict[str, Any],
     context_latent: dict[str, Any],
     context_frames: int,
+    held_frames: int,
+    noise: float = 0.0,
     freeze_audio: bool = False,
-) -> tuple[dict[str, Any], int]:
-    """Clown Context: copy the previous task's tail into the start of this task and lock it.
+) -> tuple[dict[str, Any], int, dict[int, torch.Tensor]]:
+    """Geiru Context and Context Noise: hold the start of the previous task's tail in this task.
 
-    The audio under it is held too; ``freeze_audio`` keeps the incoming audio whole instead
-    (the second pass, whose audio comes from the first). Returns the latent and the number
-    of held video latents.
+    The tail covers the ``context_frames`` overlap; its first ``held_frames`` are copied into the
+    start of this task and locked, with the audio under them, and the rest of the overlap is drawn
+    again. ``noise`` gives the held latents after the first part of the current noise
+    (``context_noise_ramp``); those latents are returned to be put back after sampling.
+    ``freeze_audio`` keeps the incoming audio whole instead (the second pass, whose audio comes
+    from the first). Returns the latent, the number of held video latents and the held latents
+    to restore.
     """
     who = "easy h3 anchor hold"
     target_video, target_audio = _av_parts(latent, who)
@@ -72,15 +88,21 @@ def anchor_hold_latent(
     if covered != int(context_frames):
         raise RuntimeError(f"{who}: the context span changed")
     copied = torch.cat(blocks, dim=2)
-    held_steps = int(copied.shape[2])
-    if held_steps >= int(target_video.shape[2]):
-        raise ValueError(f"{who}: the held context must be shorter than the task")
+    held_steps = _steps_for_frames(int(held_frames))
+    if held_steps is None or int(held_frames) > int(context_frames):
+        raise ValueError(f"{who}: {held_frames} held frames do not end on a latent within the overlap")
+    if int(copied.shape[2]) >= int(target_video.shape[2]):
+        raise ValueError(f"{who}: the overlap must be shorter than the task")
     if copied.shape[1] != target_video.shape[1] or copied.shape[3:] != target_video.shape[3:]:
         raise ValueError(f"{who}: the context and task video latents differ in shape")
     video = target_video.clone()
     video[:, :, :held_steps] = copied[:, :, :held_steps].to(device=video.device, dtype=video.dtype)
     video_mask = torch.ones_like(video[:, :1], dtype=torch.float32)
     video_mask[:, :, :held_steps] = 0.0
+    ramp = context_noise_ramp(held_steps, noise)
+    for index, value in ramp:
+        video_mask[:, :, index] = value
+    originals = {index: copied[:, :, index:index + 1].clone() for index, _ in ramp}
 
     audio = target_audio
     if freeze_audio:
@@ -88,7 +110,7 @@ def anchor_hold_latent(
         held_ticks = int(audio.shape[-1])
     else:
         tail, tail_ticks, _ = _audio_tail_from_latent(context_latent, int(context_frames))
-        held_ticks = min(round(int(context_frames) * AUDIO_TICKS_PER_FRAME), tail_ticks, int(audio.shape[-1]) - 1)
+        held_ticks = min(round(int(held_frames) * AUDIO_TICKS_PER_FRAME), tail_ticks, int(audio.shape[-1]) - 1)
         if tail.shape[:3] != audio.shape[:3]:
             raise ValueError(f"{who}: the context and task audio latents differ in shape")
         audio = audio.clone()
@@ -103,17 +125,19 @@ def anchor_hold_latent(
         _merge_noise_mask(video_mask, old_video_mask, "video"),
         _merge_noise_mask(audio_mask, old_audio_mask, "audio"),
     ))
-    LOGGER.info("Anchor hold: video latents 0-%d held, audio %s",
-                held_steps - 1, "frozen" if freeze_audio else f"held for {held_ticks} ticks")
-    return output, held_steps
+    LOGGER.info("Anchor hold: video latents 0-%d held of %d, context noise %s, audio %s",
+                held_steps - 1, int(copied.shape[2]), ", ".join(f"{index}: {value}" for index, value in ramp) or "off",
+                "frozen" if freeze_audio else f"held for {held_ticks} ticks")
+    return output, held_steps, originals
 
 
-def anchor_source_latents(source: dict[str, Any], context_frames: int) -> torch.Tensor:
+def anchor_source_latents(source: dict[str, Any], drawn_from_frame: int) -> torch.Tensor:
     """The keystone and capstone of an anchor task's saved latent, as [B, C, 2, H, W].
 
-    The keystone is the first single-frame latent of the frames the task delivers (latent 0
-    of a task that starts a chain), the capstone its last single-frame latent. A passthrough
-    task keeps only the last 39 frames of its clip, so both come from those.
+    The keystone is the first single-frame latent the task drew itself, from ``drawn_from_frame``
+    on (latent 0 of a task that starts a chain, latent 10 of one that holds 22 frames), the
+    capstone its last single-frame latent. A passthrough task keeps only the last 39 frames of
+    its clip, so both come from those.
     """
     video = _streams_from_latent(source)[0]
     if video.ndim == 4:
@@ -121,7 +145,7 @@ def anchor_source_latents(source: dict[str, Any], context_frames: int) -> torch.
     if video.ndim != 5:
         raise ValueError("easy h3 anchor source: expected a 5-D video latent")
     capstone = BLOCK_LATENTS * ((int(video.shape[2]) - 1) // BLOCK_LATENTS)
-    keystone = min(BLOCK_LATENTS * math.ceil(int(context_frames) / BLOCK_FRAMES), capstone)
+    keystone = min(BLOCK_LATENTS * math.ceil(int(drawn_from_frame) / BLOCK_FRAMES), capstone)
     picked = torch.cat([video[:, :, keystone:keystone + 1], video[:, :, capstone:capstone + 1]], dim=2)
     return picked.detach().to("cpu", copy=True).contiguous()
 
@@ -129,7 +153,7 @@ def anchor_source_latents(source: dict[str, Any], context_frames: int) -> torch.
 def graft_keystone(
     latent: dict[str, Any], anchor: torch.Tensor, front: str | None,
 ) -> tuple[dict[str, Any], dict[int, torch.Tensor]]:
-    """Clown Keystone's front: lock the keystone (or capstone) into the task's first latent.
+    """Geiru Keystone's front: lock the keystone (or capstone) into the task's first latent.
 
     Returns the latent and the first latent it replaced when that latent was held, which
     the restore puts back after sampling.
@@ -176,9 +200,9 @@ def _put_back(latent: torch.Tensor, shapes: Any, originals: dict[int, torch.Tens
 
 
 def _restore_wrapper(originals: dict[int, torch.Tensor]):
-    """OUTER_SAMPLE wrapper: put the latents the keystone replaced back into the output, and
-    into the denoised latent the step callback sees, which sampler nodes return as their
-    denoised output (the one a Project saves)."""
+    """OUTER_SAMPLE wrapper: put the held latents the keystone and Context Noise changed back
+    into the output, and into the denoised latent the step callback sees, which sampler nodes
+    return as their denoised output (the one a Project saves)."""
     def wrapper(executor, *args, **kwargs):
         shapes = kwargs.get("latent_shapes", None)
         args = list(args)
@@ -268,7 +292,7 @@ def _tack_wrapper(back: torch.Tensor, start: int, previous):
 
 def install_anchor_model(model: Any, back: torch.Tensor | None, start_step: int,
                          originals: dict[int, torch.Tensor]) -> Any:
-    """Tack the back latent on from ``start_step`` (Late Lock) and restore the held first latent."""
+    """Tack the back latent on from ``start_step`` (Late Lock) and restore the held latents."""
     if back is None and not originals:
         return model
     patched = model.clone()

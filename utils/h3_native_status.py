@@ -35,7 +35,7 @@ def task_content_signature(content: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in {
         **({'drift_taper': list(taper) if isinstance(taper, tuple) else taper}
            if taper is not None and taper != DEFAULT_DRIFT_TAPER else {}),
-        # Like the taper, only non-default Anchor settings change the signature.
+        # Every Anchor task carries its settings and method version, so a new method stales them.
         **({'anchor': anchor} if anchor is not None else {}),
         'task_mode': content.get('task_mode', 'default'),
         'continuity_mode': content.get('continuity_mode', 'shot'),

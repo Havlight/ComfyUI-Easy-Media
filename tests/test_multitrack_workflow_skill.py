@@ -335,6 +335,7 @@ def test_validates_drift_taper_settings(patch_workflow_module, field, value, val
     ("anchor_placement", "keystone_front", True), ("anchor_placement", "middle", False), ("anchor_placement", ["x"], False),
     ("anchor_late", 0.25, True), ("anchor_late", 0.3, False), ("anchor_late", True, False),
     ("anchor_restart", True, True), ("anchor_restart", "yes", False),
+    ("anchor_noise", 0, True), ("anchor_noise", 0.6, True), ("anchor_noise", 0.5, False), ("anchor_noise", True, False),
 ])
 def test_validates_anchor_settings(patch_workflow_module, field, value, valid):
     _check_task_setting(patch_workflow_module, "context_anchor", field, value, valid)

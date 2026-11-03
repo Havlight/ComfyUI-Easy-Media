@@ -141,6 +141,7 @@ def track_data_widget(node: dict[str, Any]) -> tuple[int, dict[str, Any]]:
 
 ANCHOR_PLACEMENTS = ("keystone_front_capstone_back", "keystone_front", "keystone_front_back", "capstone_front_back")
 ANCHOR_LATE_CHOICES = (0, 0.25, 0.5, 0.75)
+ANCHOR_NOISE_CHOICES = (0, 0.6, 0.8, 1)
 
 
 def validate_track_data(
@@ -241,6 +242,10 @@ def validate_track_data(
                 late = content.get("anchor_late")
                 if isinstance(late, bool) or late not in ANCHOR_LATE_CHOICES:
                     raise WorkflowError(f"{where}.content.anchor_late must be 0, 0.25, 0.5 or 0.75")
+            if track_type == "task" and "anchor_noise" in content:
+                noise = content.get("anchor_noise")
+                if isinstance(noise, bool) or noise not in ANCHOR_NOISE_CHOICES:
+                    raise WorkflowError(f"{where}.content.anchor_noise must be 0, 0.6, 0.8 or 1")
             if track_type == "task" and "anchor_restart" in content:
                 if not isinstance(content.get("anchor_restart"), bool):
                     raise WorkflowError(f"{where}.content.anchor_restart must be a boolean")

@@ -58,7 +58,8 @@ def generated_reference_paths(info: dict[str, Any]) -> list[str]:
         matched = False
         for segment in [*manifest.get("segments", {}).values(), *manifest.get("detached_segments", {}).values()]:
             for record in segment.get("generations", {}).values():
-                if path.name in {record.get("video"), record.get("audio"), record.get("last_frame"), record.get("raw_audio")}:
+                if path.name in {record.get("video"), record.get("audio"), record.get("last_frame"), record.get("raw_audio"),
+                                 record.get("lead_in")}:
                     matched = True
                     if record.get("native", {}).get("high", {}).get("metadata", {}).get("source_kind") != "imported_seed":
                         found.add(relative)

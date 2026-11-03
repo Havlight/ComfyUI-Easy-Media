@@ -98,6 +98,8 @@ export interface MultiTrackSegmentContent {
   anchor_placement?: MultiTrackAnchorPlacement
   /** Anchor only: share of the first pass's steps before the back latent comes in (0, 0.25, 0.5, 0.75). Absent means 0.5. */
   anchor_late?: number
+  /** Anchor only: Context Noise on the first pass's held latents (0, 0.6, 0.8, 1). Absent means 0.8. */
+  anchor_noise?: number
   /** Anchor only: this task restarts the anchor for later tasks. Stored only when true. */
   anchor_restart?: boolean
   ref_image_size?: MultiTrackRefImageSize

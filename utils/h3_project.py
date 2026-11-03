@@ -829,6 +829,7 @@ def clear_h3_project_segments_from(
                 "anchor_latent",
                 "anchor_latent_low",
                 "last_frame",
+                "lead_in",
             ):
                 filename = generation.get(key)
                 if not filename:
@@ -856,7 +857,7 @@ def clear_h3_project_segments_from(
         raise RuntimeError(f"Failed to clear project segments: {error}") from error
 
     artifact_pattern = re.compile(
-        r"^\.?(?:video|audio|locked_audio|latent|context_latent|context_latent_low|anchor_latent|anchor_latent_low|staging_video|last_frame)_"
+        r"^\.?(?:video|audio|locked_audio|latent|context_latent|context_latent_low|anchor_latent|anchor_latent_low|staging_video|last_frame|lead_in|staging_lead_in)_"
         r"(\d+)(?:_|\.)"
     )
     for path in project_dir.iterdir():
@@ -952,7 +953,8 @@ def _delete_h3_project_video(project_name: str, segment_index: int, file_path: s
         dependents = dropped_version_dependents(manifest, segment, generation_keys)
         if dependents:
             raise ValueError("This version supplies continuation data to: " + ", ".join(sorted(set(dependents))) + ". Remove the dependent versions first.")
-    artifact_keys = ("video", "audio", "raw_audio", "locked_audio", "latent", "context_latent", "context_latent_low", "last_frame")
+    artifact_keys = ("video", "audio", "raw_audio", "locked_audio", "latent", "context_latent", "context_latent_low", "last_frame",
+                     "lead_in")
     artifacts: set[Path] = set()
     for key in generation_keys:
         for field in artifact_keys:
@@ -1173,6 +1175,9 @@ def _h3_project_data(
                     "native_metadata": candidate["native"]["high"]["metadata"],
                     "raw_audio_path": _project_child_path(project_dir, candidate["raw_audio"]).relative_to(output_dir).as_posix()}
                    if candidate.get("native") and candidate.get("raw_audio") else {}),
+                # The overlap an Anchor continuation drew, played over its predecessor's end.
+                **({"lead_in_path": _project_child_path(project_dir, candidate["lead_in"]).relative_to(output_dir).as_posix()}
+                   if candidate.get("lead_in") and (project_dir / str(candidate["lead_in"])).is_file() else {}),
                 "continuity_mode": _h3_continuity_mode(candidate.get(
                     "continuity_mode",
                     segment.get("continuity_mode", "shot"),
@@ -1339,6 +1344,8 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
             **({"native_metadata": selected_file["native_metadata"],
                 "raw_audio_source": str(output_dir / selected_file["raw_audio_path"])}
                if selected_file.get("native_metadata") and selected_file.get("raw_audio_path") else {}),
+            **({"lead_in_source": str(output_dir / selected_file["lead_in_path"])}
+               if selected_file.get("lead_in_path") else {}),
             "audio_locked": source_clip.get("audio_locked") is True,
             **(
                 {
@@ -1361,12 +1368,13 @@ def compose_h3_project_video(project_name: Any, project_data: Any = None) -> Pat
     if width <= 0 or height <= 0:
         raise ValueError("H3 project width and height must be greater than zero")
 
-    from .h3_native_assembly import build_native_audio_views
+    from .h3_native_assembly import build_native_audio_views, native_lead_in_layers
 
     with tempfile.TemporaryDirectory(prefix="h3-native-audio-", dir=folder_paths.get_temp_directory()) as work:
         build_native_audio_views(timeline_segments, Path(work))
+        # Later segments are drawn over earlier ones, so the layers cover their predecessors' ends.
         temporary = merge_video_track_with_ffmpeg(
-            timeline_segments, cursor, frame_rate, width, height,
+            timeline_segments + native_lead_in_layers(timeline_segments), cursor, frame_rate, width, height,
         )
     if temporary is None:
         raise RuntimeError("FFmpeg could not compose the H3 project video")
