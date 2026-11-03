@@ -9,7 +9,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useCanvasScale } from '@/hooks/use-canvas-scale'
 import { useElementWidth } from '@/hooks/use-element-width'
 import { usePauseMediaOnPageExit } from '@/hooks/use-pause-media-on-page-exit'
+import { useProjectLeadIn } from '@/hooks/use-project-lead-in'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
+import { projectLeadIn, type ProjectLeadIn } from '@/lib/h3-project-playback'
 import { LocaleContext, translate } from '@/lib/i18n'
 import { addMediaRevision, mediaContentToViewUrl } from '@/lib/media-url'
 import { formatMultiTrackTime } from '@/lib/multitrack-utils'
@@ -168,6 +170,11 @@ function projectClipUrl(clip: ProjectClip): string | null {
   return url ? addMediaRevision(url, clip.media_revision) : null
 }
 
+function projectLeadInUrl(leadIn: ProjectLeadIn): string | null {
+  const url = mediaContentToViewUrl({ source_type: 'output', file_path: leadIn.filePath })
+  return url ? addMediaRevision(url, leadIn.mediaRevision) : null
+}
+
 function projectVideoFileUrl(file: ProjectVideoFile): string | null {
   const url = mediaContentToViewUrl({ source_type: 'output', file_path: file.file_path })
   return url ? addMediaRevision(url, file.media_revision) : null
@@ -272,6 +279,17 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     ? activeSelectedFiles.map(projectVideoFileUrl)
     : []
   const isComparing = compareUrls.length === 2 && compareUrls.every(Boolean)
+  // The next clip's drawn overlap covers the end of an Anchor predecessor, as in the combined video.
+  const activeLeadIn = active && !isComparing ? projectLeadIn(active.clip, enabledClips[activeIndex + 1]) : null
+  const leadInUrl = activeLeadIn ? projectLeadInUrl(activeLeadIn) : null
+  const { overlayRef: leadInRef, sync: syncLeadIn } = useProjectLeadIn({
+    clipId: active?.clip.id ?? null,
+    clipStart: active?.start ?? 0,
+    leadIn: leadInUrl ? activeLeadIn : null,
+    frameRate: data.frame_rate,
+    muted,
+    videoRefs,
+  })
 
   function selectClip(clip: ProjectClip) {
     seek(clipStartFrame(data.clips, clip.id))
@@ -600,7 +618,8 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
       playbackRafRef.current = null
     }
     for (const video of videoRefs.current.values()) video.pause()
-  }, [])
+    leadInRef.current?.pause()
+  }, [leadInRef])
 
   usePauseMediaOnPageExit(() => {
     pausePreviewMedia()
@@ -653,6 +672,7 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
         setPlaybackNonce((nonce) => nonce + 1)
       } else if (nextFrame !== currentFrameRef.current) {
         currentFrameRef.current = nextFrame
+        syncLeadIn(nextFrame, true)
         if (now - playbackUiUpdatedAtRef.current >= PLAYBACK_UI_UPDATE_INTERVAL_MS) {
           playbackUiUpdatedAtRef.current = now
           setCurrentFrame(nextFrame)
@@ -666,7 +686,11 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
       if (playbackRafRef.current !== null) cancelAnimationFrame(playbackRafRef.current)
       playbackRafRef.current = null
     }
-  }, [data.clips, data.frame_rate, isPlaying, total])
+  }, [data.clips, data.frame_rate, isPlaying, syncLeadIn, total])
+
+  useEffect(() => {
+    syncLeadIn(currentFrameRef.current, isPlaying)
+  }, [currentFrame, isPlaying, leadInUrl, muted, syncLeadIn])
 
   useEffect(() => {
     const video = active ? videoRefs.current.get(active.clip.id) : undefined
@@ -847,26 +871,42 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                 }}
               />
             ) : activeUrl ? (
-              [
-                { clip: active!.clip, url: activeUrl, visible: true },
-                ...(nextClip && nextUrl ? [{ clip: nextClip, url: nextUrl, visible: false }] : []),
-              ].map(({ clip, url, visible }) => (
-                <video
-                  ref={(element) => {
-                    if (element) videoRefs.current.set(clip.id, element)
-                    else videoRefs.current.delete(clip.id)
-                  }}
-                  key={clip.id}
-                  src={url}
-                  preload="auto"
-                  playsInline
-                  muted={!visible || muted}
-                  aria-hidden={!visible}
-                  className={visible
-                    ? 'h-full max-h-full w-full object-contain'
-                    : 'pointer-events-none absolute left-0 top-0 h-px w-px opacity-0'}
-                />
-              ))
+              <>
+                {[
+                  { clip: active!.clip, url: activeUrl, visible: true },
+                  ...(nextClip && nextUrl ? [{ clip: nextClip, url: nextUrl, visible: false }] : []),
+                ].map(({ clip, url, visible }) => (
+                  <video
+                    ref={(element) => {
+                      if (element) videoRefs.current.set(clip.id, element)
+                      else videoRefs.current.delete(clip.id)
+                    }}
+                    key={clip.id}
+                    src={url}
+                    preload="auto"
+                    playsInline
+                    muted={!visible || muted}
+                    aria-hidden={!visible}
+                    className={visible
+                      ? 'h-full max-h-full w-full object-contain'
+                      : 'pointer-events-none absolute left-0 top-0 h-px w-px opacity-0'}
+                  />
+                ))}
+                {leadInUrl && (
+                  // Shown over the end of the playing clip; useProjectLeadIn sets its visibility each frame.
+                  <video
+                    ref={leadInRef}
+                    key={`lead-in:${active!.clip.id}:${leadInUrl}`}
+                    src={leadInUrl}
+                    preload="auto"
+                    playsInline
+                    muted
+                    aria-hidden
+                    data-testid="project-lead-in"
+                    className="pointer-events-none invisible absolute inset-0 h-full w-full bg-black object-contain p-3"
+                  />
+                )}
+              </>
             ) : <div className="text-xs text-muted-foreground">{t('projectVideoCombine.emptyPreview')}</div>}
           </div>
 

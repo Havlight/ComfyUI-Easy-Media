@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectVideoCombineWidget } from '@/components/widgets/ProjectVideoCombineWidget'
 import type { ReactWidgetProps } from '@/lib/create-react-widget'
-import type { ProjectData } from '@/types/project'
+import type { ProjectData, ProjectNativeMetadata } from '@/types/project'
 
 vi.mock('@/hooks/use-canvas-scale', () => ({ useCanvasScale: () => 1 }))
 vi.mock('@/hooks/use-element-width', () => ({ useElementWidth: () => 480 }))
@@ -554,6 +554,52 @@ describe('ProjectVideoCombineWidget', () => {
     const videosAfter = [...container.querySelectorAll('video')]
     expect(videosAfter[0]).toBe(preloadedSecondVideo)
     expect(videosAfter[0].getAttribute('aria-hidden')).toBe('false')
+  })
+
+  it('plays an Anchor continuation\'s drawn overlap over the end of its predecessor', () => {
+    let animationFrame: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      animationFrame = callback
+      return 1
+    }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const version = (file_path: string, native_metadata: ProjectNativeMetadata, lead_in_path?: string) => ({
+      file_path, file_name: file_path.split('/').pop()!, source_frame_count: 120, native_metadata,
+      ...(lead_in_path ? { lead_in_path } : {}),
+    })
+    const parentMeta: ProjectNativeMetadata = {
+      artifact_id: 'p', source_kind: 'native_sampler', start_frame: 0, end_frame: 120, context_frames: 0, continuity_mode: 'shot',
+    }
+    const childPath = 'easy_media/projects/demo/video_1_2.mp4'
+    const second = {
+      ...projectData.clips[0], id: 'segment-1', index: 1, file_path: childPath, file_name: 'video_1_2.mp4',
+      continuity_mode: 'context_anchor' as const,
+      video_files: [version(childPath, {
+        artifact_id: 'c', parent_artifact_id: 'p', source_kind: 'native_sampler',
+        start_frame: 120, end_frame: 240, context_frames: 39, continuity_mode: 'context_anchor',
+      }, 'easy_media/projects/demo/lead_in_1_2.mp4')],
+    }
+
+    for (const audioLocked of [false, true]) {
+      const first = {
+        ...projectData.clips[0], audio_locked: audioLocked, video_files: [version(projectData.clips[0].file_path, parentMeta)],
+      }
+      const { props } = widgetProps({ value: { ...projectData, clips: [first, second] } })
+      const { container, unmount } = render(<ProjectVideoCombineWidget {...props} />)
+      const leadIn = screen.getByTestId('project-lead-in') as HTMLVideoElement
+      const clipVideo = container.querySelector('video') as HTMLVideoElement
+      expect(leadIn.getAttribute('src')).toContain('lead_in_1_2.mp4')
+      expect(leadIn.style.visibility).toBe('hidden')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+      act(() => animationFrame?.(performance.now() + (100.5 / 24) * 1000))
+      // Frame 100 is 19 frames into the 39-frame overlap, which starts at frame 81.
+      expect(leadIn.style.visibility).toBe('visible')
+      expect(leadIn.currentTime).toBeCloseTo(19 / 24)
+      // The lead-in's sound replaces the clip's, unless the clip keeps a locked sound.
+      expect([leadIn.muted, clipVideo.muted]).toEqual(audioLocked ? [true, false] : [false, true])
+      unmount()
+    }
   })
 
   it('loops playback back to frame zero after reaching the project end', () => {
