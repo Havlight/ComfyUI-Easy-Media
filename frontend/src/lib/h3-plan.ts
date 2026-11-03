@@ -121,15 +121,11 @@ export type H3PlanReference = string | H3PlanReferenceObject
 export type H3PlanSeam = 'soft' | 'clean' | { taper?: number; floor?: number; low_only?: boolean }
 
 /**
- * Anchor settings that differ from the defaults (keystone front + capstone back, the back
- * frame after half the first pass's steps): `restart` makes the task the anchor of the
- * Anchor tasks after it.
+ * The Anchor settings. Agents pick "default" (keystone front + capstone back, the back frame
+ * after half the first pass's steps) or "restart" (the task is the anchor of the Anchor tasks
+ * after it); other settings export as an object.
  */
-export interface H3PlanAnchor {
-  placement?: MultiTrackAnchorPlacement
-  late?: number
-  restart?: boolean
-}
+export type H3PlanAnchor = 'default' | 'restart' | { placement?: MultiTrackAnchorPlacement; late?: number }
 
 export interface H3PlanTask {
   id?: string
@@ -368,12 +364,12 @@ function exportSeam(content: DriftTaperContent): H3PlanSeam {
 }
 
 function exportAnchor(content: AnchorContent): H3PlanAnchor | undefined {
+  if (getAnchorRestart(content)) return 'restart'
   const placement = getAnchorPlacement(content)
   const late = getAnchorLate(content)
-  const anchor: H3PlanAnchor = {
+  const anchor = {
     ...(placement !== ANCHOR_DEFAULT_PLACEMENT ? { placement } : {}),
     ...(late !== ANCHOR_DEFAULT_LATE ? { late } : {}),
-    ...(getAnchorRestart(content) ? { restart: true } : {}),
   }
   return Object.keys(anchor).length ? anchor : undefined
 }
@@ -634,14 +630,15 @@ function parseSeam(raw: unknown): SeamSettings | null {
 
 /** The settings a plan's `anchor` sets, or null when it is not one. Absent keys mean the defaults. */
 function parseAnchor(raw: unknown): AnchorContent | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const object = raw as Record<string, unknown>
-  if (Object.keys(object).some((key) => key !== 'placement' && key !== 'late' && key !== 'restart')) return null
+  const restart = raw === 'restart'
+  const value = raw === 'default' || restart ? {} : raw
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const object = value as Record<string, unknown>
+  if (Object.keys(object).some((key) => key !== 'placement' && key !== 'late')) return null
   const placement = object.placement === undefined ? ANCHOR_DEFAULT_PLACEMENT : normalizeAnchorPlacement(object.placement)
   const late = object.late === undefined ? ANCHOR_DEFAULT_LATE : normalizeAnchorLate(object.late)
   if (placement === undefined || late === undefined) return null
-  if (object.restart !== undefined && typeof object.restart !== 'boolean') return null
-  return { ...anchorPlacementPatch(placement), ...anchorLatePatch(late), ...anchorRestartPatch(object.restart === true) }
+  return { ...anchorPlacementPatch(placement), ...anchorLatePatch(late), ...anchorRestartPatch(restart) }
 }
 
 function seamPatch(seam: SeamSettings): DriftTaperContent {

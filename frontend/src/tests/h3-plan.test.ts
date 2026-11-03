@@ -11,6 +11,7 @@ import {
   type H3PlanFile,
   type H3PlanMediaRequest,
   type H3PlanMediaResult,
+  type H3PlanTask,
 } from '@/lib/h3-plan'
 import type { MultiTrackSegment, TrackData } from '@/types/multitrack'
 
@@ -138,22 +139,31 @@ describe('H3 plan files', () => {
     current.tracks[0].segments[1].content = {
       ...current.tracks[0].segments[1].content, continuity_mode: 'context_anchor', anchor_placement: 'keystone_front', anchor_restart: true,
     }
+    // A task that restarts the anchor exports by name; its placement does nothing.
     const plan = exportH3Plan(current)
-    expect(plan.tasks[1]).toMatchObject({ continuity: 'context_anchor', anchor: { placement: 'keystone_front', restart: true } })
+    expect(plan.tasks[1]).toMatchObject({ continuity: 'context_anchor', anchor: 'restart' })
     expect(plan.tasks[1]).not.toHaveProperty('seam')
+    current.tracks[0].segments[1].content = { ...current.tracks[0].segments[1].content, anchor_restart: undefined }
+    expect(exportH3Plan(current).tasks[1].anchor).toStrictEqual({ placement: 'keystone_front' })
 
     plan.tasks[0] = { ...plan.tasks[0], anchor: { late: 0.25 } }
     plan.tasks[1] = { ...plan.tasks[1], anchor: { late: 0.75 } }
-    plan.tasks.push({ seconds: 5, continuity: 'context_anchor', prompt: 'Run on' })
+    plan.tasks.push({ seconds: 5, continuity: 'context_anchor', prompt: 'Run on', anchor: 'restart' })
     const result = importPlan(current, plan)
     expect(codes(result)).toEqual(['warning:1:anchor_ignored', 'warning:-:past_locked_audio', 'warning:3:timing_adjusted'])
     const [, t2, t3] = result.data!.tracks[0].segments
     // A plan's anchor sets every setting: what it leaves out goes back to the default.
     expect([t2.content.anchor_placement, t2.content.anchor_late, t2.content.anchor_restart]).toEqual([undefined, 0.75, undefined])
-    expect([t3.content.anchor_placement, t3.content.anchor_late]).toEqual([undefined, undefined])
+    expect([t3.content.anchor_placement, t3.content.anchor_late, t3.content.anchor_restart]).toEqual([undefined, undefined, true])
 
-    plan.tasks[1] = { ...plan.tasks[1], anchor: { late: 0.3 } }
-    expect(codes(importPlan(current, plan))).toContain('error:2:invalid_anchor')
+    plan.tasks[1] = { ...plan.tasks[1], anchor: 'default' }
+    const reset = importPlan(current, plan).data!.tracks[0].segments[1].content
+    expect([reset.anchor_placement, reset.anchor_late, reset.anchor_restart]).toEqual([undefined, undefined, undefined])
+
+    for (const anchor of [{ late: 0.3 }, { restart: true }, 'strong']) {
+      plan.tasks[1] = { ...plan.tasks[1], anchor: anchor as H3PlanTask['anchor'] }
+      expect(codes(importPlan(current, plan))).toContain('error:2:invalid_anchor')
+    }
   })
 
   it('lets a plan place whole files and move clips to a task start, and pick the Drift seam', () => {
