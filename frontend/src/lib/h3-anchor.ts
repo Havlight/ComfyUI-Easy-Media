@@ -7,13 +7,13 @@ import type {
 
 /**
  * Per-task settings of Anchor continuity (mirrors utils/h3_anchor.py), after
- * roycho87/clown_context_suite's Clown Keystone and Clown Late Lock: the chain's first
- * task (or the last task that restarted it) is the anchor. Its first single-frame latent
- * (keystone) is locked into each anchored task's first latent, and its last one
- * (capstone) is tacked onto the end of the video from the Late Lock step.
+ * roycho87/geiru_context_suite: the task holds the first 22 of the 39 overlap frames
+ * with Geiru Context Noise and draws the other 17 again. The chain's first task (or the
+ * last task that restarted it) is the anchor. Its first single-frame latent (keystone) is
+ * locked into each anchored task's first latent, and its last one (capstone) is tacked
+ * onto the end of the video from the Late Lock step.
  *
- * Only values that differ from the defaults are stored, so untouched tasks keep the
- * default graph and generation fingerprint.
+ * Only values that differ from the defaults are stored.
  */
 export const ANCHOR_CONTINUITY_MODE: MultiTrackContinuityMode = 'context_anchor'
 export const ANCHOR_PLACEMENTS: readonly MultiTrackAnchorPlacement[] = [
@@ -22,8 +22,11 @@ export const ANCHOR_PLACEMENTS: readonly MultiTrackAnchorPlacement[] = [
 export const ANCHOR_DEFAULT_PLACEMENT: MultiTrackAnchorPlacement = 'keystone_front_capstone_back'
 export const ANCHOR_LATE_OPTIONS = [0, 0.25, 0.5, 0.75] as const
 export const ANCHOR_DEFAULT_LATE = 0.5
+/** Context Noise: 0 is off; the author tested 0.8 and lists 0.6 and 1 to test. */
+export const ANCHOR_NOISE_OPTIONS = [0, 0.6, 0.8, 1] as const
+export const ANCHOR_DEFAULT_NOISE = 0.8
 
-export type AnchorContent = Pick<MultiTrackSegmentContent, 'anchor_placement' | 'anchor_late' | 'anchor_restart'>
+export type AnchorContent = Pick<MultiTrackSegmentContent, 'anchor_placement' | 'anchor_late' | 'anchor_noise' | 'anchor_restart'>
 
 export interface AnchorEligibility {
   format?: string
@@ -41,12 +44,20 @@ export function normalizeAnchorLate(value: unknown): number | undefined {
   return typeof value === 'number' && (ANCHOR_LATE_OPTIONS as readonly number[]).includes(value) ? value : undefined
 }
 
+export function normalizeAnchorNoise(value: unknown): number | undefined {
+  return typeof value === 'number' && (ANCHOR_NOISE_OPTIONS as readonly number[]).includes(value) ? value : undefined
+}
+
 export function getAnchorPlacement(content: AnchorContent): MultiTrackAnchorPlacement {
   return normalizeAnchorPlacement(content.anchor_placement) ?? ANCHOR_DEFAULT_PLACEMENT
 }
 
 export function getAnchorLate(content: AnchorContent): number {
   return normalizeAnchorLate(content.anchor_late) ?? ANCHOR_DEFAULT_LATE
+}
+
+export function getAnchorNoise(content: AnchorContent): number {
+  return normalizeAnchorNoise(content.anchor_noise) ?? ANCHOR_DEFAULT_NOISE
 }
 
 export function getAnchorRestart(content: AnchorContent): boolean {
@@ -66,7 +77,7 @@ export function isAnchorEligible({ format, taskMode, continuityMode, hasContinui
 /** Whether any setting differs from the defaults. */
 export function isAnchorCustomized(content: AnchorContent): boolean {
   return getAnchorPlacement(content) !== ANCHOR_DEFAULT_PLACEMENT || getAnchorLate(content) !== ANCHOR_DEFAULT_LATE
-    || getAnchorRestart(content)
+    || getAnchorNoise(content) !== ANCHOR_DEFAULT_NOISE || getAnchorRestart(content)
 }
 
 /**
@@ -74,7 +85,7 @@ export function isAnchorCustomized(content: AnchorContent): boolean {
  * set to undefined here and deleted by track data normalization on commit.
  */
 export function clearAnchorPatch(): AnchorContent {
-  return { anchor_placement: undefined, anchor_late: undefined, anchor_restart: undefined }
+  return { anchor_placement: undefined, anchor_late: undefined, anchor_noise: undefined, anchor_restart: undefined }
 }
 
 export function anchorPlacementPatch(value: unknown): AnchorContent | null {
@@ -87,6 +98,12 @@ export function anchorLatePatch(value: unknown): AnchorContent | null {
   const late = normalizeAnchorLate(value)
   if (late === undefined) return null
   return { anchor_late: late === ANCHOR_DEFAULT_LATE ? undefined : late }
+}
+
+export function anchorNoisePatch(value: unknown): AnchorContent | null {
+  const noise = normalizeAnchorNoise(value)
+  if (noise === undefined) return null
+  return { anchor_noise: noise === ANCHOR_DEFAULT_NOISE ? undefined : noise }
 }
 
 export function anchorRestartPatch(restart: boolean): AnchorContent {
@@ -115,6 +132,8 @@ export function normalizeAnchorContent(content: MultiTrackSegmentContent): Multi
   if (!isAnchor || late === undefined || late === ANCHOR_DEFAULT_LATE || !anchorHasBack(placement ?? ANCHOR_DEFAULT_PLACEMENT)) {
     delete normalized.anchor_late
   }
+  const noise = normalizeAnchorNoise(normalized.anchor_noise)
+  if (!isAnchor || noise === undefined || noise === ANCHOR_DEFAULT_NOISE) delete normalized.anchor_noise
   if (!isAnchor || normalized.anchor_restart !== true) delete normalized.anchor_restart
   return normalized
 }

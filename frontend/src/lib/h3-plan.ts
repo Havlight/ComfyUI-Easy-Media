@@ -1,14 +1,18 @@
 import {
   ANCHOR_CONTINUITY_MODE,
   ANCHOR_DEFAULT_LATE,
+  ANCHOR_DEFAULT_NOISE,
   ANCHOR_DEFAULT_PLACEMENT,
   anchorLatePatch,
+  anchorNoisePatch,
   anchorPlacementPatch,
   anchorRestartPatch,
   getAnchorLate,
+  getAnchorNoise,
   getAnchorPlacement,
   getAnchorRestart,
   normalizeAnchorLate,
+  normalizeAnchorNoise,
   normalizeAnchorPlacement,
   type AnchorContent,
 } from '@/lib/h3-anchor'
@@ -125,7 +129,8 @@ export type H3PlanSeam = 'soft' | 'clean' | { taper?: number; floor?: number; lo
  * after half the first pass's steps) or "restart" (the task is the anchor of the Anchor tasks
  * after it); other settings export as an object.
  */
-export type H3PlanAnchor = 'default' | 'restart' | { placement?: MultiTrackAnchorPlacement; late?: number }
+export type H3PlanAnchor = 'default' | 'restart'
+  | { placement?: MultiTrackAnchorPlacement; late?: number; noise?: number; restart?: true }
 
 export interface H3PlanTask {
   id?: string
@@ -364,12 +369,16 @@ function exportSeam(content: DriftTaperContent): H3PlanSeam {
 }
 
 function exportAnchor(content: AnchorContent): H3PlanAnchor | undefined {
-  if (getAnchorRestart(content)) return 'restart'
+  const noise = getAnchorNoise(content)
+  const noiseField = noise !== ANCHOR_DEFAULT_NOISE ? { noise } : {}
+  // A task that restarts the anchor is not anchored: only its Context Noise applies.
+  if (getAnchorRestart(content)) return 'noise' in noiseField ? { restart: true, ...noiseField } : 'restart'
   const placement = getAnchorPlacement(content)
   const late = getAnchorLate(content)
   const anchor = {
     ...(placement !== ANCHOR_DEFAULT_PLACEMENT ? { placement } : {}),
     ...(late !== ANCHOR_DEFAULT_LATE ? { late } : {}),
+    ...noiseField,
   }
   return Object.keys(anchor).length ? anchor : undefined
 }
@@ -630,15 +639,22 @@ function parseSeam(raw: unknown): SeamSettings | null {
 
 /** The settings a plan's `anchor` sets, or null when it is not one. Absent keys mean the defaults. */
 function parseAnchor(raw: unknown): AnchorContent | null {
-  const restart = raw === 'restart'
-  const value = raw === 'default' || restart ? {} : raw
+  const value = raw === 'default' ? {} : raw === 'restart' ? { restart: true } : raw
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const object = value as Record<string, unknown>
-  if (Object.keys(object).some((key) => key !== 'placement' && key !== 'late')) return null
+  if (Object.keys(object).some((key) => !['placement', 'late', 'noise', 'restart'].includes(key))) return null
+  const restart = object.restart === true
+  // A task that restarts the anchor is not anchored, so only Context Noise goes with it.
+  if ((object.restart !== undefined && !restart) || (restart && (object.placement !== undefined || object.late !== undefined))) {
+    return null
+  }
   const placement = object.placement === undefined ? ANCHOR_DEFAULT_PLACEMENT : normalizeAnchorPlacement(object.placement)
   const late = object.late === undefined ? ANCHOR_DEFAULT_LATE : normalizeAnchorLate(object.late)
-  if (placement === undefined || late === undefined) return null
-  return { ...anchorPlacementPatch(placement), ...anchorLatePatch(late), ...anchorRestartPatch(restart) }
+  const noise = object.noise === undefined ? ANCHOR_DEFAULT_NOISE : normalizeAnchorNoise(object.noise)
+  if (placement === undefined || late === undefined || noise === undefined) return null
+  return {
+    ...anchorPlacementPatch(placement), ...anchorLatePatch(late), ...anchorNoisePatch(noise), ...anchorRestartPatch(restart),
+  }
 }
 
 function seamPatch(seam: SeamSettings): DriftTaperContent {

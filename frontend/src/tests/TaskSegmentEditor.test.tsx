@@ -400,6 +400,11 @@ describe('TaskSegmentEditor', () => {
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_late: 0 })
     chooseOption('Anchor frames', 'Keystone front only')
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_placement: 'keystone_front' })
+    expect(screen.getByRole('combobox', { name: 'Context noise' }).textContent).toContain('0.8 (default)')
+    fireEvent.click(screen.getByRole('combobox', { name: 'Context noise' }))
+    expect(optionTexts()).toEqual(['Off', '0.6', '0.8 (default)', '1'])
+    fireEvent.click(screen.getByRole('option', { name: 'Off' }))
+    expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_noise: 0 })
     fireEvent.click(screen.getByRole('checkbox', { name: 'Start a new anchor here' }))
     expect(onContentChange.mock.lastCall?.[0]).toStrictEqual({ anchor_restart: true })
 

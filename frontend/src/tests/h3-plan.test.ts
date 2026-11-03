@@ -143,24 +143,29 @@ describe('H3 plan files', () => {
     const plan = exportH3Plan(current)
     expect(plan.tasks[1]).toMatchObject({ continuity: 'context_anchor', anchor: 'restart' })
     expect(plan.tasks[1]).not.toHaveProperty('seam')
+    // Context Noise applies to a restarting task too, so it goes with the restart.
+    current.tracks[0].segments[1].content = { ...current.tracks[0].segments[1].content, anchor_noise: 0 }
+    expect(exportH3Plan(current).tasks[1].anchor).toStrictEqual({ restart: true, noise: 0 })
     current.tracks[0].segments[1].content = { ...current.tracks[0].segments[1].content, anchor_restart: undefined }
-    expect(exportH3Plan(current).tasks[1].anchor).toStrictEqual({ placement: 'keystone_front' })
+    expect(exportH3Plan(current).tasks[1].anchor).toStrictEqual({ placement: 'keystone_front', noise: 0 })
 
     plan.tasks[0] = { ...plan.tasks[0], anchor: { late: 0.25 } }
     plan.tasks[1] = { ...plan.tasks[1], anchor: { late: 0.75 } }
-    plan.tasks.push({ seconds: 5, continuity: 'context_anchor', prompt: 'Run on', anchor: 'restart' })
+    plan.tasks.push({ seconds: 5, continuity: 'context_anchor', prompt: 'Run on', anchor: { restart: true, noise: 1 } })
     const result = importPlan(current, plan)
     expect(codes(result)).toEqual(['warning:1:anchor_ignored', 'warning:-:past_locked_audio', 'warning:3:timing_adjusted'])
     const [, t2, t3] = result.data!.tracks[0].segments
     // A plan's anchor sets every setting: what it leaves out goes back to the default.
-    expect([t2.content.anchor_placement, t2.content.anchor_late, t2.content.anchor_restart]).toEqual([undefined, 0.75, undefined])
-    expect([t3.content.anchor_placement, t3.content.anchor_late, t3.content.anchor_restart]).toEqual([undefined, undefined, true])
+    const settings = (content: typeof t2.content) => [content.anchor_placement, content.anchor_late, content.anchor_noise, content.anchor_restart]
+    expect(settings(t2.content)).toEqual([undefined, 0.75, undefined, undefined])
+    expect(settings(t3.content)).toEqual([undefined, undefined, 1, true])
 
     plan.tasks[1] = { ...plan.tasks[1], anchor: 'default' }
-    const reset = importPlan(current, plan).data!.tracks[0].segments[1].content
-    expect([reset.anchor_placement, reset.anchor_late, reset.anchor_restart]).toEqual([undefined, undefined, undefined])
+    expect(settings(importPlan(current, plan).data!.tracks[0].segments[1].content)).toEqual([undefined, undefined, undefined, undefined])
+    plan.tasks[1] = { ...plan.tasks[1], anchor: 'restart' }
+    expect(settings(importPlan(current, plan).data!.tracks[0].segments[1].content)).toEqual([undefined, undefined, undefined, true])
 
-    for (const anchor of [{ late: 0.3 }, { restart: true }, 'strong']) {
+    for (const anchor of [{ late: 0.3 }, { noise: 0.5 }, { restart: true, late: 0.25 }, { restart: false }, 'strong']) {
       plan.tasks[1] = { ...plan.tasks[1], anchor: anchor as H3PlanTask['anchor'] }
       expect(codes(importPlan(current, plan))).toContain('error:2:invalid_anchor')
     }
