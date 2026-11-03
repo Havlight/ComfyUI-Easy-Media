@@ -16,7 +16,7 @@ from comfy.nested_tensor import NestedTensor  # noqa: E402
 from modules.motion_context import anchor as anchor_core  # noqa: E402
 from modules.motion_context import core  # noqa: E402
 from utils.h3_anchor import (  # noqa: E402
-    DEFAULT_ANCHOR_SETTINGS, anchor_settings, anchor_signature, late_start_step,
+    ANCHOR_METHOD, DEFAULT_ANCHOR_SETTINGS, anchor_settings, anchor_signature, context_noise_ramp, late_start_step,
 )
 from utils.h3_lora_preflight import task_dependencies  # noqa: E402
 from utils.h3_native_status import task_content_signature  # noqa: E402
@@ -30,24 +30,29 @@ def anchor_content(**extra):
     return {"task_mode": "default", "continuity_mode": "context_anchor", **extra}
 
 
-def test_settings_default_to_clown_keystones_recommended_setup():
+def test_settings_default_to_the_geiru_authors_best_setup():
     assert anchor_settings(anchor_content()) == DEFAULT_ANCHOR_SETTINGS
-    assert DEFAULT_ANCHOR_SETTINGS == ("keystone_front_capstone_back", 0.5, False)
+    assert DEFAULT_ANCHOR_SETTINGS == ("keystone_front_capstone_back", 0.5, 0.8, False)
+    assert anchor_settings(anchor_content(anchor_noise=0)).noise == 0.0
     assert anchor_settings({"continuity_mode": "context_drift"}) is None
     assert anchor_settings(anchor_content(task_mode="passthrough")) is None
-    for field, value in (("anchor_placement", "middle"), ("anchor_late", 0.3), ("anchor_late", True), ("anchor_restart", "yes")):
+    for field, value in (("anchor_placement", "middle"), ("anchor_late", 0.3), ("anchor_late", True), ("anchor_restart", "yes"),
+                         ("anchor_noise", 0.5), ("anchor_noise", True), ("anchor_noise", "0.8")):
         with pytest.raises(NativePlanError, match="ANCHOR_VALUE"):
             anchor_settings(anchor_content(**{field: value}))
     # Late Lock's swap_step: 4 of 8 steps at one half, 5 of our 10-step first pass.
     assert late_start_step(0.5, 8) == 4 and late_start_step(0.5, 10) == 5 and late_start_step(0.0, 10) == 0
 
 
-def test_only_non_default_settings_change_the_saved_result_signature():
+def test_every_anchor_task_carries_its_settings_and_method_in_the_saved_result_signature():
     plain = task_content_signature(anchor_content())
-    assert "anchor" not in plain
+    # Results saved by the earlier method have no method version, so they are stale.
+    assert ANCHOR_METHOD == 2 and plain["anchor"] == [2, "keystone_front_capstone_back", 0.5, 0.8, False]
     assert task_content_signature(anchor_content(anchor_late=0.5)) == plain
-    assert task_content_signature(anchor_content(anchor_placement="keystone_front"))["anchor"] == ["keystone_front", 0.5, False]
+    assert task_content_signature(anchor_content(anchor_placement="keystone_front"))["anchor"] == [2, "keystone_front", 0.5, 0.8, False]
+    assert task_content_signature(anchor_content(anchor_noise=0))["anchor"][3] == 0.0
     assert anchor_signature({"continuity_mode": "context"}) is None
+    assert "anchor" not in task_content_signature({"task_mode": "default", "continuity_mode": "context_drift"})
     # Without a back latent the late lock times nothing.
     assert (anchor_signature(anchor_content(anchor_placement="keystone_front", anchor_late=0.0))
             == anchor_signature(anchor_content(anchor_placement="keystone_front")))
@@ -94,20 +99,42 @@ def _streams(latent, key="samples"):
     return list(latent[key].unbind())
 
 
-def test_hold_locks_the_whole_overlap_the_delivered_frames_continue_from():
-    context = _av(12, 3.0)  # 39 frames: two 17-frame blocks and 5 frames
+def _numbered_context():
+    """A 39-frame overlap (two 17-frame blocks and 5 frames, 12 latents) whose latent k holds k + 1."""
+    context = _av(12, 3.0)
+    context["samples"].unbind()[0][:] = torch.arange(1, 13, dtype=torch.float32).view(1, 1, 12, 1, 1)
+    return context
+
+
+def test_hold_keeps_the_first_22_overlap_frames_and_lets_the_task_draw_the_last_17():
     target = _av(22)
-    held, held_steps = anchor_core.anchor_hold_latent(target, context, 39)
+    held, held_steps, originals = anchor_core.anchor_hold_latent(target, _numbered_context(), 39, 22)
     video, audio = _streams(held)
     video_mask, audio_mask = _streams(held, "noise_mask")
-    assert held_steps == 12
-    assert torch.all(video[:, :, :12] == 3) and torch.all(video[:, :, 12:] == 0)
-    assert torch.all(video_mask[:, :, :12] == 0) and torch.all(video_mask[:, :, 12:] == 1)
-    # The audio under the 39 frames (39 * 5 / 3 ticks) is held too.
-    assert torch.all(audio_mask[..., :65] == 0) and torch.all(audio_mask[..., 65:] == 1)
-    assert torch.all(audio[..., :65] == 3) and torch.all(audio[..., 65:] == 0)
-    _, frozen = _streams(anchor_core.anchor_hold_latent(target, context, 39, freeze_audio=True)[0], "noise_mask")
+    # 22 frames are a 17-frame block and 5 frames: latents 0-6, the overlap's first seven.
+    assert held_steps == 7 and originals == {}
+    assert video[0, 0, :7, 0, 0].tolist() == [1, 2, 3, 4, 5, 6, 7] and torch.all(video[:, :, 7:] == 0)
+    assert torch.all(video_mask[:, :, :7] == 0) and torch.all(video_mask[:, :, 7:] == 1)
+    # The audio under the 22 held frames (22 * 5 / 3 ticks, rounded) is held too.
+    assert torch.all(audio_mask[..., :37] == 0) and torch.all(audio_mask[..., 37:] == 1)
+    assert torch.all(audio[..., :37] == 3) and torch.all(audio[..., 37:] == 0)
+    _, frozen = _streams(anchor_core.anchor_hold_latent(target, _numbered_context(), 39, 22, freeze_audio=True)[0], "noise_mask")
     assert torch.all(frozen == 0)
+    with pytest.raises(ValueError, match="do not end on a latent"):
+        anchor_core.anchor_hold_latent(target, _numbered_context(), 39, 20)
+
+
+def test_context_noise_ramps_the_held_latents_after_the_first_down_to_the_join():
+    # Geiru Context Noise at 0.8 on seven held latents: 0.8, 0.64, 0.48, 0.32, 0.16, then the join stays locked.
+    assert context_noise_ramp(7, 0.8) == [(1, 0.8), (2, 0.64), (3, 0.48), (4, 0.32), (5, 0.16)]
+    assert context_noise_ramp(7, 0.0) == [] and context_noise_ramp(1, 0.8) == []
+    held, _, originals = anchor_core.anchor_hold_latent(_av(22), _numbered_context(), 39, 22, noise=0.8)
+    video_mask = _streams(held, "noise_mask")[0]
+    assert [round(float(value), 2) for value in video_mask[0, 0, :8, 0, 0]] == [0, 0.8, 0.64, 0.48, 0.32, 0.16, 0, 1]
+    # The noised latents are the real held ones, kept to be put back after sampling.
+    assert sorted(originals) == [1, 2, 3, 4, 5]
+    assert all(torch.all(originals[index] == index + 1) for index in originals)
+    assert _streams(held)[0][0, 0, :7, 0, 0].tolist() == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_keystone_and_capstone_come_from_the_anchors_single_frame_latents():
@@ -115,17 +142,17 @@ def test_keystone_and_capstone_come_from_the_anchors_single_frame_latents():
     source["samples"].unbind()[0][:, :, :, 0, 0] = torch.arange(37, dtype=torch.float32)
     picked = anchor_core.anchor_source_latents(source, 0)
     assert picked[0, 0, :, 0, 0].tolist() == [0, 35]
-    # A task that restarted mid-chain gives its first delivered single frame: frame 51, latent 15.
-    assert anchor_core.anchor_source_latents(source, 39)[0, 0, :, 0, 0].tolist() == [15, 35]
+    # A task that restarted mid-chain gives the first single frame it drew after its 22 held frames: frame 34, latent 10.
+    assert anchor_core.anchor_source_latents(source, 22)[0, 0, :, 0, 0].tolist() == [10, 35]
 
 
 def test_keystone_replaces_the_held_first_latent_and_keeps_it_for_the_restore():
-    held, _ = anchor_core.anchor_hold_latent(_av(22), _av(12, 3.0), 39)
+    held, _, _ = anchor_core.anchor_hold_latent(_av(22), _av(12, 3.0), 39, 22)
     anchor = torch.stack([torch.full((1, 24, 2, 2), 7.0), torch.full((1, 24, 2, 2), 9.0)], dim=2)
     grafted, originals = anchor_core.graft_keystone(held, anchor, "keystone")
     video = _streams(grafted)[0]
-    assert torch.all(video[:, :, 0] == 7) and torch.all(video[:, :, 1:12] == 3)
-    assert torch.all(_streams(grafted, "noise_mask")[0][:, :, :12] == 0)
+    assert torch.all(video[:, :, 0] == 7) and torch.all(video[:, :, 1:7] == 3)
+    assert torch.all(_streams(grafted, "noise_mask")[0][:, :, :7] == 0)
     assert torch.all(originals[0] == 3)
     assert torch.all(_streams(anchor_core.graft_keystone(held, anchor, "capstone")[0])[0][:, :, 0] == 9)
     with pytest.raises(ValueError, match="does not match"):
@@ -191,9 +218,24 @@ def test_project_anchors_every_pass_with_the_matching_stage(monkeypatch, mode, o
     assert json.loads(graph[prepare]["inputs"]["plan_json"])["anchor_segment_id"] == "a"
     first = nodes[next(k for k in nodes if "first_pass" in k)]["inputs"]
     assert first["anchor"][1] == (5 if mode == "dual" else 4) and first["late"] == 0.5 and first["freeze_audio"] is False
+    assert first["noise"] == 0.8
     if mode == "dual":
+        # The refine anchors from its first step and gets no Context Noise.
         second = nodes[next(k for k in nodes if "second_pass" in k)]["inputs"]
-        assert second["anchor"][1] == 4 and second["late"] == 0.0 and second["freeze_audio"] is True
+        assert second["anchor"][1] == 4 and second["late"] == 0.0 and second["noise"] == 0.0 and second["freeze_audio"] is True
+    # The continuation saves the overlap it drew, for the composed video to play over its predecessor's end.
+    lead_ins = [node for node in graph.values() if node["class_type"] == "easy h3NativeLeadIn"]
+    saved = [node["inputs"] for node in graph.values()
+             if node["class_type"] == "easy h3NativeArtifact" and "lead_in_path" in node["inputs"]]
+    assert len(lead_ins) == 1 and len(saved) == 1 and saved[0]["segment_index"] == 1
+    assert graph[saved[0]["lead_in_path"][0]]["inputs"]["filename_prefix"].endswith("/.staging_lead_in_1")
+
+
+def test_only_anchor_continuations_save_a_lead_in(monkeypatch):
+    module = _load_minimax_node(monkeypatch)
+    graph = module.EasyMultiTrackProject.execute(**native_inputs()).expand
+    assert _task_content(native_inputs())["continuity_mode"] != "context_anchor"
+    assert not any(node["class_type"] == "easy h3NativeLeadIn" for node in graph.values())
 
 
 def test_project_holds_without_an_anchor_on_a_task_that_restarts_it(monkeypatch):
@@ -201,9 +243,9 @@ def test_project_holds_without_an_anchor_on_a_task_that_restarts_it(monkeypatch)
     inputs = native_inputs()
     _task_content(inputs).update(continuity_mode="context_anchor", anchor_restart=True, anchor_placement="keystone_front")
     node = next(iter(_anchor_nodes(module.EasyMultiTrackProject.execute(**inputs).expand).values()))
-    assert "anchor" not in node["inputs"]
+    assert "anchor" not in node["inputs"] and node["inputs"]["noise"] == 0.8
     # The placement means nothing on a task that is not anchored, so it does not mark it edited.
-    assert anchor_settings(_task_content(inputs)) == ("keystone_front_capstone_back", 0.5, True)
+    assert anchor_settings(_task_content(inputs)) == ("keystone_front_capstone_back", 0.5, 0.8, True)
 
 
 class _Model:
@@ -245,3 +287,8 @@ def test_anchor_stage_node_holds_grafts_and_patches_the_model(monkeypatch):
     model, _ = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _av(12, 3.0), sigmas, anchor=anchor,
                                                   placement="keystone_front").values
     assert "model_function_wrapper" not in model.model_options
+    # A task that restarts the anchor holds with Context Noise and puts the noised latents back.
+    model, latent = runtime.EasyH3NativeAnchor.execute(_Model(), _av(22), _av(12, 3.0), sigmas).values
+    assert model.wrappers == [("outer_sample", anchor_core._RESTORE_KEY)] and torch.all(_streams(latent)[0][:, :, 0] == 3)
+    plain = _Model()
+    assert runtime.EasyH3NativeAnchor.execute(plain, _av(22), _av(12, 3.0), sigmas, noise=0.0).values[0] is plain

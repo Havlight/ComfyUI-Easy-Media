@@ -419,7 +419,10 @@ def merge_video_track_with_ffmpeg(
     height: int,
     resize_method: str | None = None,
 ) -> str | None:
-    """Compose file-backed segments on a black full-length timeline."""
+    """Compose file-backed segments on a black full-length timeline.
+
+    Later segments are drawn over earlier ones; a ``video_only`` segment adds its picture only.
+    """
     ffmpeg = get_ffmpeg_path("ffmpeg")
     resize_filter = _ffmpeg_resize_filter(width, height, resize_method) if resize_method else None
     if ffmpeg is None or total_length <= 0 or frame_rate <= 0 or width % 2 or height % 2:
@@ -523,6 +526,9 @@ def merge_video_track_with_ffmpeg(
         )
         current_video = output_label
 
+        if segment.get("video_only") is True:
+            # A picture layer over another segment, which carries the sound.
+            continue
         audio_source = str(segment.get("audio_source", segment["source"]))
         if ffprobe_info(audio_source).get("has_audio"):
             audio_label = f"clipa{index}"

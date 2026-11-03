@@ -123,6 +123,7 @@ class EasyMediaExtension(ComfyExtension):
             EasyH3NativeAnchor,
             EasyH3NativeResult,
             EasyH3NativeMediaView,
+            EasyH3NativeLeadIn,
             EasyH3NativeArtifact,
             EasyH3LastFrame,
             EasyH3PreviousFrame,

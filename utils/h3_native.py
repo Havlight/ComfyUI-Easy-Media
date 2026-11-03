@@ -170,3 +170,29 @@ def trim_native_media(
             raise NativePlanError("DECODE_SHORT", "Decoded audio does not cover its delivered view.")
         audio = {**audio, "waveform": waveform[..., start:end]}
     return images, audio
+
+
+def native_lead_in_media(
+    meta: dict[str, Any], images: torch.Tensor, audio: dict[str, Any],
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """The overlap a continuation drew over its predecessor's last frames, with its audio.
+
+    The composed video plays it in place of those frames. The audio clock starts within a
+    third of a tick of the overlap, so a start before the clock repeats its first sample.
+    """
+    prefix = meta["context_frames"]
+    if not prefix:
+        raise NativePlanError("LEAD_IN", "Only a continuation draws over its predecessor.", meta.get("segment_id", ""))
+    if images.shape[0] < prefix:
+        raise NativePlanError("DECODE_SHORT", "Decoded video does not cover its overlap.")
+    rate = int(audio["sample_rate"])
+    origin = round_ratio(meta["audio_origin_units"] * rate, 120)
+    end = sample_at_frame(meta["start_frame"], rate) - origin
+    start = end - (sample_at_frame(meta["start_frame"], rate) - sample_at_frame(meta["raw_start_frame"], rate))
+    waveform = audio["waveform"]
+    if end <= 0 or end > waveform.shape[-1]:
+        raise NativePlanError("DECODE_SHORT", "Decoded audio does not cover its overlap.")
+    piece = waveform[..., max(0, start):end]
+    if start < 0:
+        piece = torch.cat([piece[..., :1].expand(*piece.shape[:-1], -start), piece], dim=-1)
+    return images[:prefix], {**audio, "waveform": piece}

@@ -547,3 +547,40 @@ def test_video_merge_does_not_expose_black_at_a_fractional_second_boundary(
     assert decode_result.stdout
     blue_channel = decode_result.stdout[2::3]
     assert sum(blue_channel) / len(blue_channel) > 200
+
+
+def test_video_merge_draws_a_video_only_layer_over_its_range_without_its_sound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    module = _load_video_utils_module(tmp_path)
+    source, layer = tmp_path / "source.mp4", tmp_path / "lead.mp4"
+    source.write_bytes(b"video")
+    layer.write_bytes(b"lead")
+    monkeypatch.setattr(module, "get_ffmpeg_path", lambda _name="ffmpeg": "ffmpeg")
+    monkeypatch.setattr(module, "ffprobe_info", lambda _source: {"has_audio": True})
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], capture_output: bool, timeout: float):
+        commands.append(command)
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    output = module.merge_video_track_with_ffmpeg(
+        [
+            {"source": str(source), "start_frame": 0, "end_frame": 56, "source_start_frame": 0},
+            {"source": str(layer), "start_frame": 17, "end_frame": 56, "source_start_frame": 0, "video_only": True},
+        ],
+        total_length=56,
+        frame_rate=24,
+        width=320,
+        height=180,
+    )
+
+    assert output is not None
+    filter_graph = commands[0][commands[0].index("-filter_complex") + 1]
+    # The layer is drawn last, over frames 17-55, and only the first segment's sound is mixed.
+    assert "[timelinev0][clipv1]overlay" in filter_graph and "enable='between(round(t*24),17,55)'" in filter_graph
+    assert "[clipa0]" in filter_graph and "clipa1" not in filter_graph
+    assert "amix=inputs=2" in filter_graph

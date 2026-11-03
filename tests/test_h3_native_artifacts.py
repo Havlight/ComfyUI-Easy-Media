@@ -367,6 +367,58 @@ def test_audio_assembly_twenty_segments_has_no_sample_drift_or_duplicate_overlap
     assert locked['audio_source'] == 'original.wav'
 
 
+def _anchor_child(parent_meta):
+    plan = timing.NativeTaskPlan('b', 56, 107, 'context_anchor', 'a', 39, 17, 90)
+    return native.new_native_metadata(plan, 'single_final', {}, parent_meta)
+
+
+def test_lead_in_is_the_overlap_a_continuation_drew_with_its_audio():
+    parent = native.new_native_metadata(_plan(duration=56), 'single_final', {})
+    meta = _anchor_child(parent)
+    images = torch.arange(90, dtype=torch.float32).view(90, 1, 1, 1)
+    rate = 32000
+
+    def lead_in(meta):
+        origin = timing.round_ratio(meta['audio_origin_units'] * rate, 120)
+        # Each sample holds its own position on the timeline.
+        waveform = (torch.arange(meta['audio_ticks'] * 800, dtype=torch.float32) + origin).view(1, 1, -1)
+        return origin, native.native_lead_in_media(meta, images, {'waveform': waveform, 'sample_rate': rate})
+
+    origin, (frames, audio) = lead_in(meta)
+    assert frames[:, 0, 0, 0].tolist() == list(range(39))
+    start, end = timing.sample_at_frame(17, rate), timing.sample_at_frame(56, rate)
+    assert origin <= start and torch.equal(audio['waveform'][0, 0], torch.arange(start, end, dtype=torch.float32))
+    # An audio clock that starts after the overlap repeats its first sample.
+    late = dict(meta, audio_origin_units=meta['raw_start_frame'] * 5 + 2)
+    origin, (_, audio) = lead_in(late)
+    assert origin > start
+    assert torch.equal(audio['waveform'][0, 0], torch.arange(start, end, dtype=torch.float32).clamp(min=origin))
+    with pytest.raises(timing.NativePlanError, match="LEAD_IN"):
+        native.native_lead_in_media(parent, images, {'waveform': torch.zeros(1, 1, 10), 'sample_rate': rate})
+
+
+def test_an_anchor_continuation_draws_over_its_predecessors_end_only_at_an_intact_seam():
+    assembly = importlib.import_module('native_artifact_unit.utils.h3_native_assembly')
+    parent = native.new_native_metadata(_plan(duration=56), 'single_final', {})
+    child = _anchor_child(parent)
+    first = {'start_frame': 0, 'end_frame': 56, 'source_start_frame': 0, 'native_metadata': parent}
+    second = {'start_frame': 56, 'end_frame': 107, 'source_start_frame': 0, 'native_metadata': child,
+              'lead_in_source': 'lead.mp4'}
+    layer = {'source': 'lead.mp4', 'start_frame': 17, 'end_frame': 56, 'source_start_frame': 0, 'video_only': True}
+    assert assembly.native_lead_in_layers([first, second]) == [layer]
+    # Trimmed seams, another version, other continuity modes and a missing lead-in keep each clip's own frames.
+    for changed in (dict(second, source_start_frame=3), dict(second, lead_in_source=None),
+                    dict(second, native_metadata=dict(child, parent_artifact_id='other')),
+                    dict(second, native_metadata=dict(child, continuity_mode='context_drift'))):
+        assert assembly.native_lead_in_layers([first, changed]) == []
+    assert assembly.native_lead_in_layers([dict(first, end_frame=50), dict(second, start_frame=50, end_frame=101)]) == []
+    # A predecessor trimmed shorter than the overlap is covered from its own start.
+    short = dict(first, end_frame=26, source_start_frame=30)
+    assert assembly.native_lead_in_layers([short, dict(second, start_frame=26, end_frame=77)]) == [
+        dict(layer, start_frame=0, end_frame=26, source_start_frame=13)]
+    assert assembly.overlap_owner(first, second) is child and assembly.overlap_owner(second, first) is None
+
+
 def test_masked_source_is_immutable_video_is_hard_and_audio_releases_over_eight_ticks():
     drift = importlib.import_module('native_artifact_unit.modules.motion_context.drift_control_av')
     parent = _latent(_plan(duration=56))
