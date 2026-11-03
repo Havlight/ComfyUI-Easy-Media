@@ -62,8 +62,13 @@ def _h3_native_output(
     graph: GraphBuilder, task_index: int, project_name: str, info: dict[str, Any],
     final_latent: Any, low_latent: Any, state: Any, vae: Any, audio_vae: Any,
     locked_audio: Any, audio_only: bool, previous: Any, run_state: Any, project_save: str,
+    lead_in: bool = False,
 ) -> Any:
-    """Decode a delivered view while publishing the untouched raw sampler source."""
+    """Decode a delivered view while publishing the untouched raw sampler source.
+
+    ``lead_in`` also saves the overlap an Anchor continuation drew, which the composed video
+    plays in place of the predecessor's last frames.
+    """
     result = graph.node("easy h3NativeResult", id=f"native_result_{task_index}",
                         latent=final_latent, native_state=state,
                         **({"low_latent": low_latent} if low_latent is not None else {}))
@@ -86,6 +91,14 @@ def _h3_native_output(
                            filename_prefix=f"easy_media/projects/{project_name}/.staging_video_{task_index}")
         media = {"video_path": saved.out(1), "last_frame": graph.node(
             "easy h3LastFrame", id=f"tail_frame_{task_index}", images=view.out(0)).out(0)}
+        if lead_in:
+            overlap = graph.node("easy h3NativeLeadIn", id=f"native_lead_in_{task_index}",
+                                 native_state=result.out(2), audio=decoded_audio, images=images)
+            media["lead_in_path"] = graph.node(
+                "easy saveVideo", id=f"save_lead_in_{task_index}", input_mode="images+audio",
+                **{"input_mode.images": overlap.out(0), "input_mode.audio": overlap.out(1),
+                   "input_mode.fps": 24.0, "output_mode": "hide&save"},
+                filename_prefix=f"easy_media/projects/{project_name}/.staging_lead_in_{task_index}").out(1)
     if locked_audio is not None:
         media["locked_audio"] = locked_audio
     return graph.node("easy h3NativeArtifact", id=f"artifact_{task_index}", project_name=project_name,
@@ -1646,6 +1659,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                         sigmas=first_pass_sigmas,
                         placement=anchor.placement,
                         late=anchor.late,
+                        noise=anchor.noise,
                         freeze_audio=False,
                         **({"anchor": prepared_native.out(5 if has_second_pass else 4)} if anchored else {}),
                     )
@@ -1885,7 +1899,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 if uses_context and previous_hires_context_latent is not None and anchor is not None:
                     report_segment_step(0.59)
                     # Anchor tasks hold the hi-res tail and anchor the refine from its first step:
-                    # the first pass already settled the pose.
+                    # the first pass already settled the pose. Context Noise is a first-pass setting:
+                    # the refine starts at low noise and the author's tests had no second pass.
                     second_anchor = graph.node(
                         "easy h3NativeAnchor",
                         id=f"second_pass_anchor_{task_index}",
@@ -1895,6 +1910,7 @@ class EasyMultiTrackProject(io.ComfyNode):
                         sigmas=segment_second_pass_sigmas,
                         placement=anchor.placement,
                         late=0.0,
+                        noise=0.0,
                         freeze_audio=True,
                         **({"anchor": prepared_native.out(4)} if anchored else {}),
                     )
@@ -2000,7 +2016,8 @@ class EasyMultiTrackProject(io.ComfyNode):
                 graph, task_index, safe_project_name, output_info, final_latent,
                 low_stage_context_latent if has_second_pass or is_selflift else None,
                 native_state, vae, audio_vae, task_locked_audio if has_task_locked_audio else None,
-                audio_only, previous_artifact, run_state, project_save)
+                audio_only, previous_artifact, run_state, project_save,
+                lead_in=anchor is not None and uses_context)
             previous_hires_context_latent = previous_low_context_latent = None
             segment_nodes.update({node_id: task_index for node_id in graph.nodes.keys() - previous_graph_nodes})
             report_segment_step(1.0)

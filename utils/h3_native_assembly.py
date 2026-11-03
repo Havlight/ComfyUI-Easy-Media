@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
-from .h3_native_timing import NativePlanError, round_ratio, sample_at_frame
+from .h3_native_timing import ANCHOR_MODE, NativePlanError, round_ratio, sample_at_frame
 
 
 def raw_audio_window(waveform: np.ndarray, metadata: dict[str, Any], rate: int,
@@ -23,6 +23,33 @@ def incoming_overlap(parent: dict[str, Any], child: dict[str, Any]) -> bool:
     return bool(parent.get('source_kind') == child.get('source_kind') == 'native_sampler'
                 and child.get('parent_artifact_id') == parent.get('artifact_id')
                 and parent['end_frame'] == child['start_frame'] and child['context_frames'])
+
+
+def overlap_owner(segment: dict[str, Any], following: dict[str, Any]) -> dict[str, Any] | None:
+    """The following clip's native metadata when its generated overlap replaces the end of
+    ``segment``, else None: the clips are adjacent, the seam is untrimmed on both sides, and
+    the following clip continued from this exact version."""
+    parent, child = segment.get('native_metadata'), following.get('native_metadata')
+    if not parent or not child or following.get('source_start_frame', 0):
+        return None
+    end = parent['start_frame'] + segment.get('source_start_frame', 0) + segment['end_frame'] - segment['start_frame']
+    return child if end == parent['end_frame'] and incoming_overlap(parent, child) else None
+
+
+def native_lead_in_layers(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Picture-only layers that play an Anchor continuation's drawn overlap over the end of
+    its predecessor, which Geiru Context leaves to the continuation. The audio views already
+    give that overlap the continuation's sound."""
+    layers = []
+    for segment, following in zip(segments, segments[1:]):
+        child = overlap_owner(segment, following)
+        if child is None or child.get('continuity_mode') != ANCHOR_MODE or not following.get('lead_in_source'):
+            continue
+        frames = int(child['context_frames'])
+        start = max(segment['start_frame'], segment['end_frame'] - frames)
+        layers.append({'source': following['lead_in_source'], 'start_frame': start, 'end_frame': segment['end_frame'],
+                       'source_start_frame': frames - (segment['end_frame'] - start), 'video_only': True})
+    return layers
 
 
 def build_native_audio_views(segments: list[dict[str, Any]], directory: Path) -> None:
@@ -42,9 +69,8 @@ def build_native_audio_views(segments: list[dict[str, Any]], directory: Path) ->
         view = raw_audio_window(waveform, metadata, rate, start, end)
         if index + 1 < len(segments):
             following = segments[index + 1]
-            child = following.get('native_metadata')
-            if (child and not following.get('source_start_frame', 0)
-                    and end == metadata['end_frame'] and incoming_overlap(metadata, child)):
+            child = overlap_owner(segment, following)
+            if child is not None:
                 child_waveform, child_rate = sf.read(following['raw_audio_source'], dtype='float32', always_2d=True)
                 if child_rate != rate:
                     raise NativePlanError('ASSEMBLY_RATE', 'Adjacent native audio sources use different sample rates.')

@@ -1435,7 +1435,7 @@ export function TaskSegmentEditor({
                       <SelectValue />
                     </SelectTrigger>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-72">
+                  <TooltipContent side="bottom" className="max-w-72 whitespace-pre-line">
                     {t('multitrack.continuityModeTooltip')}
                   </TooltipContent>
                 </Tooltip>

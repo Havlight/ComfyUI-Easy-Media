@@ -507,7 +507,7 @@ def test_delete_video_saves_remaining_generation_and_preserves_other_segments(mo
     monkeypatch.setattr("utils.video.ffprobe_info", lambda _path: {"frame_count": 120})
     manifest_path = project_dir / "project.json"
     manifest = json.loads(manifest_path.read_text())
-    for key, filename in (("last_frame", "last_frame_0_1.png"),):
+    for key, filename in (("last_frame", "last_frame_0_1.png"), ("lead_in", "lead_in_0_1.mp4")):
         manifest["segments"]["0"]["generations"]["1"][key] = filename
         (project_dir / filename).write_bytes(b"version artifact")
     manifest["segments"]["0"]["generations"]["2"] = {"video": "video_0_2.mp4"}
@@ -523,6 +523,7 @@ def test_delete_video_saves_remaining_generation_and_preserves_other_segments(mo
     assert not (project_dir / "video_0_1.mp4").exists()
     assert not (project_dir / "locked_audio_0_1.wav").exists()
     assert not (project_dir / "last_frame_0_1.png").exists()
+    assert not (project_dir / "lead_in_0_1.mp4").exists()
     assert (project_dir / "video_0_2.mp4").read_bytes() == b"remaining"
     assert result["clips"][0]["file_name"] == "video_0_2.mp4"
     assert result == load_h3_project_data("demo")
@@ -998,3 +999,45 @@ def test_float_audio_sidecar_preserves_samples_without_pcm_clipping(tmp_path):
     loaded, rate = sf.read(path, dtype='float32', always_2d=True)
     assert rate == 32000
     assert np.array_equal(loaded[:, 0], waveform[0, 0].numpy())
+
+
+def test_compose_h3_project_video_plays_an_anchor_continuations_lead_in_over_its_predecessor(monkeypatch, tmp_path):
+    project_dir = tmp_path / "easy_media" / "projects" / "demo"
+    project_dir.mkdir(parents=True)
+    for name in ("video_0_1.mp4", "video_0_3.mp4", "video_1_2.mp4", "lead_in_1_2.mp4",
+                 "raw_audio_0_1.wav", "raw_audio_0_3.wav", "raw_audio_1_2.wav"):
+        (project_dir / name).write_bytes(b"media")
+    parent = {"stage": "single_final", "source_kind": "native_sampler", "artifact_id": "p", "parent_artifact_id": None,
+              "start_frame": 0, "end_frame": 120, "context_frames": 0, "continuity_mode": "shot"}
+    child = {**parent, "artifact_id": "c", "parent_artifact_id": "p", "start_frame": 120, "end_frame": 240,
+             "context_frames": 39, "continuity_mode": "context_anchor"}
+
+    def generation(index, version, meta, **extra):
+        return {"video": f"video_{index}_{version}.mp4", "raw_audio": f"raw_audio_{index}_{version}.wav",
+                "native": {"high": {"metadata": meta}}, **extra}
+
+    manifest = {"project_name": "demo", "width": 1280, "height": 720, "fps": 24,
+                "task_segments": [{"index": 0}, {"index": 1}],
+                "segments": {
+                    "0": {"active_generation": 1, "continuity_mode": "shot", "generations": {
+                        "1": generation(0, 1, parent), "3": generation(0, 3, {**parent, "artifact_id": "q"})}},
+                    "1": {"active_generation": 2, "continuity_mode": "context_anchor", "generations": {
+                        "2": generation(1, 2, child, lead_in="lead_in_1_2.mp4")}}}}
+    (project_dir / "project.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr("utils.h3_project.folder_paths.get_output_directory", lambda: str(tmp_path))
+    monkeypatch.setattr("utils.video.ffprobe_info", lambda _path: {"frame_count": 120})
+    monkeypatch.setattr("utils.h3_native_assembly.build_native_audio_views", lambda segments, directory: None)
+    captured = []
+    monkeypatch.setattr("utils.video.merge_video_track_with_ffmpeg",
+                        lambda segments, *args: captured.append(segments) or str(tmp_path / "combined.mp4"))
+
+    compose_h3_project_video("demo")
+    first, second, layer = captured[-1]
+    assert (first["start_frame"], first["end_frame"], second["start_frame"]) == (0, 120, 120)
+    assert layer == {"source": str((project_dir / "lead_in_1_2.mp4").resolve()), "start_frame": 81, "end_frame": 120,
+                     "source_start_frame": 0, "video_only": True}
+    # Another version of the predecessor is not what the continuation drew over.
+    data = load_h3_project_data("demo")
+    compose_h3_project_video("demo", {**data, "clips": [
+        {**data["clips"][0], "file_path": "easy_media/projects/demo/video_0_3.mp4"}, data["clips"][1]]})
+    assert len(captured[-1]) == 2

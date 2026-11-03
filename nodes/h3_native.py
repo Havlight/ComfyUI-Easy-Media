@@ -13,8 +13,8 @@ import torch
 from comfy_api.latest import io
 
 from ..utils.h3_native import (
-    anchor_stage_compatible, new_native_metadata, prepare_native_canvas, slice_native_context,
-    stamp_native_result, trim_native_media, validate_native_latent,
+    anchor_stage_compatible, native_lead_in_media, new_native_metadata, prepare_native_canvas,
+    slice_native_context, stamp_native_result, trim_native_media, validate_native_latent,
 )
 from ..utils.h3_native_artifacts import (
     commit_native_generation, file_checksum, load_native_latent, media_version_id, native_child_path,
@@ -23,7 +23,7 @@ from ..utils.h3_native_artifacts import (
 from ..utils.h3_native_lock import freeze_native_audio, validate_native_locked_video
 from ..utils.h3_lora_preflight import preflight_project_loras, task_lora_recipe, upstream_lora_warnings
 from ..utils.h3_native_sources import encode_native_seed, read_delivered_seed
-from ..utils.h3_native_timing import NativePlanError, NativeTaskPlan, compile_native_plan
+from ..utils.h3_native_timing import ANCHOR_MODE, NativePlanError, NativeTaskPlan, compile_native_plan
 from ..utils.h3_native_preflight import (
     generation_snapshot, native_stage_layout, parent_stage_labels, preflight_native_sources, run_source,
     validate_parent_range,
@@ -310,6 +310,7 @@ class EasyH3NativePrepare(io.ComfyNode):
         anchor_ids: dict[str, str] = {}
         if plan.anchor_segment_id:
             from ..modules.motion_context.anchor import anchor_source_latents
+            from ..utils.h3_anchor import anchor_drawn_from
 
             directory = _project_directory(project_name)
             source = (run_source(run_state, plan.anchor_segment_id) if run_state is not None
@@ -324,7 +325,7 @@ class EasyH3NativePrepare(io.ComfyNode):
                     meta = validate_native_latent(saved)
                     if anchor_stage_compatible(meta["stage"], stage) and tuple(saved["samples"].unbind()[0].shape[-2:]) == size:
                         anchor_ids[label] = meta["artifact_id"]
-                        return {"samples": anchor_source_latents(saved, meta["context_frames"])}
+                        return {"samples": anchor_source_latents(saved, anchor_drawn_from(meta))}
                 raise NativePlanError("ANCHOR_SOURCE", "The anchor task has no version of this stage at this size; "
                                       "run it in this sampling mode first.", plan.segment_id)
 
@@ -354,6 +355,14 @@ class EasyH3NativePrepare(io.ComfyNode):
         for label, metadata in (("high", high_meta), ("low", low_meta if first_pass is None else None)):
             if metadata is not None and label in anchor_ids:
                 metadata.setdefault("reference_artifact_ids", []).append(anchor_ids[label])
+        if plan.continuity_mode == ANCHOR_MODE and plan.context_frames:
+            from ..utils.h3_anchor import anchor_held_frames
+
+            # The Anchor stage holds as much of the overlap as its predecessor allows (see
+            # anchor_held_frames); a task anchored to this one takes its keystone after those frames.
+            for metadata, parent in ((high_meta, high_parent), (low_meta if first_pass is None else None, low_parent)):
+                if metadata is not None and parent is not None:
+                    metadata["anchor_held_frames"] = anchor_held_frames(parent["source_kind"])
         state = {"high": high_meta, "low": low_meta}
         if previous_frame_source:
             identity = json.loads(previous_frame_source)
@@ -397,13 +406,14 @@ class EasyH3NativeDriftModel(io.ComfyNode):
 
 
 class EasyH3NativeAnchor(io.ComfyNode):
-    """Anchor continuity for one sampling pass: hold the previous task's tail, lock the
-    anchor's keystone into the first latent, tack its capstone onto the back from the
-    Late Lock step, and put the held first latent back after sampling."""
+    """Anchor continuity for one sampling pass: hold the start of the previous task's tail
+    with Context Noise, lock the anchor's keystone into the first latent, tack its capstone
+    onto the back from the Late Lock step, and put the held latents back after sampling."""
 
     @classmethod
     def define_schema(cls) -> io.Schema:
-        from ..utils.h3_anchor import ANCHOR_LATE_CHOICES, ANCHOR_PLACEMENTS, DEFAULT_ANCHOR_LATE, DEFAULT_ANCHOR_PLACEMENT
+        from ..utils.h3_anchor import (ANCHOR_LATE_CHOICES, ANCHOR_PLACEMENTS, DEFAULT_ANCHOR_LATE,
+                                       DEFAULT_ANCHOR_NOISE, DEFAULT_ANCHOR_PLACEMENT)
 
         return io.Schema(node_id="easy h3NativeAnchor", display_name="H3 Native Anchor Stage", category="EasyUse/H3/dev",
                          is_dev_only=True,
@@ -412,27 +422,31 @@ class EasyH3NativeAnchor(io.ComfyNode):
                                  io.Combo.Input("placement", options=list(ANCHOR_PLACEMENTS), default=DEFAULT_ANCHOR_PLACEMENT),
                                  io.Float.Input("late", default=DEFAULT_ANCHOR_LATE, min=min(ANCHOR_LATE_CHOICES),
                                                 max=max(ANCHOR_LATE_CHOICES), step=0.25),
+                                 io.Float.Input("noise", default=DEFAULT_ANCHOR_NOISE, min=0.0, max=1.0, step=0.05),
                                  io.Boolean.Input("freeze_audio", default=False)],
                          outputs=[io.Model.Output("model"), io.Latent.Output("latent")])
 
     @classmethod
     def execute(cls, model: Any, latent: dict[str, Any], context_latent: dict[str, Any], sigmas: torch.Tensor,
                 anchor: dict[str, Any] | None = None, placement: str = "keystone_front_capstone_back",
-                late: float = 0.5, freeze_audio: bool = False) -> io.NodeOutput:
+                late: float = 0.5, noise: float = 0.8, freeze_audio: bool = False) -> io.NodeOutput:
         from ..modules.motion_context.anchor import anchor_hold_latent, graft_keystone, install_anchor_model
-        from ..utils.h3_anchor import ANCHOR_PLACEMENTS, late_start_step
+        from ..utils.h3_anchor import ANCHOR_PLACEMENTS, anchor_held_frames, late_start_step
         from ..utils.h3_native_timing import CONTEXT_FRAMES
 
-        held, _ = anchor_hold_latent(latent, context_latent, CONTEXT_FRAMES, freeze_audio=bool(freeze_audio))
+        parent = context_latent.get("h3_native_source") or {}
+        held, _, originals = anchor_hold_latent(latent, context_latent, CONTEXT_FRAMES,
+                                                anchor_held_frames(parent.get("source_kind")),
+                                                noise=float(noise), freeze_audio=bool(freeze_audio))
         if anchor is None:
-            # A task that restarts the anchor holds the previous tail like Clown Context alone.
-            return io.NodeOutput(model, held)
+            # A task that restarts the anchor holds the previous tail like Geiru Context and Context Noise alone.
+            return io.NodeOutput(install_anchor_model(model, None, 0, originals), held)
         front, back = ANCHOR_PLACEMENTS[placement]
         samples = anchor["samples"]
-        grafted, originals = graft_keystone(held, samples, front)
+        grafted, replaced = graft_keystone(held, samples, front)
         back_latent = None if back is None else samples[:, :, (0 if back == "keystone" else 1):][:, :, :1]
         start = late_start_step(late, max(0, int(sigmas.numel()) - 1))
-        return io.NodeOutput(install_anchor_model(model, back_latent, start, originals), grafted)
+        return io.NodeOutput(install_anchor_model(model, back_latent, start, {**originals, **replaced}), grafted)
 
 
 class EasyH3NativeLockedVideoInfo(io.ComfyNode):
@@ -576,6 +590,23 @@ class EasyH3NativeMediaView(io.ComfyNode):
         return io.NodeOutput(images, audio)
 
 
+class EasyH3NativeLeadIn(io.ComfyNode):
+    """The overlap an Anchor continuation drew, which the composed video plays in place of
+    its predecessor's last frames."""
+
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(node_id="easy h3NativeLeadIn", display_name="H3 Native Lead-In", category="EasyUse/H3/dev",
+                         is_dev_only=True, inputs=[io.AnyType.Input("native_state"), io.Audio.Input("audio"),
+                                                   io.Image.Input("images")],
+                         outputs=[io.Image.Output("images"), io.Audio.Output("audio")])
+
+    @classmethod
+    def execute(cls, native_state: dict[str, Any], audio: dict[str, Any], images: torch.Tensor) -> io.NodeOutput:
+        images, audio = native_lead_in_media(native_state["high"], images, audio)
+        return io.NodeOutput(images, audio)
+
+
 class EasyH3NativeArtifact(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -587,7 +618,8 @@ class EasyH3NativeArtifact(io.ComfyNode):
                                  io.Audio.Input("audio", optional=True), io.Audio.Input("locked_audio", optional=True), io.String.Input("video_path", default="", optional=True),
                                  io.Image.Input("last_frame", optional=True), io.AnyType.Input("previous", optional=True),
                                  io.AnyType.Input("run_state", optional=True),
-                                 io.Combo.Input("project_save", options=["new", "override"], default="new", optional=True)],
+                                 io.Combo.Input("project_save", options=["new", "override"], default="new", optional=True),
+                                 io.String.Input("lead_in_path", default="", optional=True)],
                          outputs=[io.String.Output("project_name")])
 
     @classmethod
@@ -595,7 +627,8 @@ class EasyH3NativeArtifact(io.ComfyNode):
                 raw_audio: dict[str, Any], low_latent: dict[str, Any] | None = None,
                 audio: dict[str, Any] | None = None, video_path: str = "", last_frame: torch.Tensor | None = None,
                 previous: Any = None, locked_audio: dict[str, Any] | None = None,
-                run_state: dict[str, Any] | None = None, project_save: str = "new") -> io.NodeOutput:
+                run_state: dict[str, Any] | None = None, project_save: str = "new",
+                lead_in_path: str = "") -> io.NodeOutput:
         del previous
         if project_save not in {"new", "override"}:
             raise ValueError("project_save must be 'new' or 'override'")
@@ -637,6 +670,8 @@ class EasyH3NativeArtifact(io.ComfyNode):
             if last_frame is not None:
                 media["last_frame"] = Path(work) / "last.png"
                 save_tail_image(last_frame, media["last_frame"])
+            if lead_in_path:
+                media["lead_in"] = _h3_project_source_path(lead_in_path, Path(folder_paths.get_output_directory()).resolve())
             saved = commit_native_generation(directory, segment_index, fields, record, latents, media,
                                              replace=project_save == "override")
             if run_state is not None:
@@ -645,12 +680,13 @@ class EasyH3NativeArtifact(io.ComfyNode):
                 version = next(key for key, item in segment['generations'].items()
                                if item.get('native', {}).get('high', {}).get('metadata', {}).get('artifact_id') == meta['artifact_id'])
                 run_state['produced'][meta['segment_id']] = {'segment_index': segment_index, 'generation': version, 'record': saved}
-            staged_video = media.get("video")
-            if (staged_video is not None and staged_video.name.startswith(".staging_video_")
-                    and staged_video.parent.resolve() == directory.resolve()):
-                try:
-                    staged_video.unlink()
-                except OSError as error:
-                    logging.warning("Native generation saved; could not remove temporary video %s: %s", staged_video.name, error)
+            for field, prefix in (("video", ".staging_video_"), ("lead_in", ".staging_lead_in_")):
+                staged_video = media.get(field)
+                if (staged_video is not None and staged_video.name.startswith(prefix)
+                        and staged_video.parent.resolve() == directory.resolve()):
+                    try:
+                        staged_video.unlink()
+                    except OSError as error:
+                        logging.warning("Native generation saved; could not remove temporary video %s: %s", staged_video.name, error)
         _notify_multitrack_project_refresh(name, "after_save", segment_index)
         return io.NodeOutput(name)
