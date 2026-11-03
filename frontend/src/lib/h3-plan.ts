@@ -126,11 +126,13 @@ export type H3PlanSeam = 'soft' | 'clean' | { taper?: number; floor?: number; lo
 
 /**
  * The Anchor settings. Agents pick "default" (keystone front + capstone back, the back frame
- * after half the first pass's steps) or "restart" (the task is the anchor of the Anchor tasks
- * after it); other settings export as an object.
+ * after half the first pass's steps, context noise 0.8) or "restart" (the task is the anchor of
+ * the Anchor tasks after it); other settings export as an object. A restart is not anchored, so
+ * only its context noise can go with it.
  */
 export type H3PlanAnchor = 'default' | 'restart'
-  | { placement?: MultiTrackAnchorPlacement; late?: number; noise?: number; restart?: true }
+  | { placement?: MultiTrackAnchorPlacement; late?: number; noise?: number; restart?: never }
+  | { restart: true; noise?: number; placement?: never; late?: never }
 
 export interface H3PlanTask {
   id?: string

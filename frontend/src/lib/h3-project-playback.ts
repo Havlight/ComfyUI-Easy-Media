@@ -7,6 +7,8 @@ export interface ProjectLeadIn {
   mediaRevision?: string
   /** Frame of the (trimmed) clip where the lead-in starts covering it. */
   startFrame: number
+  /** The clip's length: the lead-in covers it up to here. */
+  endFrame: number
   /** Frame of the lead-in video shown at ``startFrame``. */
   sourceStartFrame: number
   /** The lead-in's own sound plays, unless the clip keeps a locked song or video sound. */
@@ -42,6 +44,7 @@ export function projectLeadIn(clip: ProjectClip, following: ProjectClip | undefi
     filePath: file.lead_in_path,
     mediaRevision: file.media_revision,
     startFrame: duration - frames,
+    endFrame: duration,
     sourceStartFrame: child.context_frames - frames,
     audible: clip.audio_locked !== true,
   }

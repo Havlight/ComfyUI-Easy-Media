@@ -64,6 +64,8 @@ describe('Anchor continuity settings', () => {
     expect(normalizeAnchorContent({ ...anchor, anchor_placement: 'keystone_front_capstone_back', anchor_late: 0.5, anchor_noise: 0.8, anchor_restart: false }))
       .toStrictEqual(anchor)
     expect(normalizeAnchorContent({ ...anchor, anchor_noise: 0.5 })).toStrictEqual(anchor)
+    expect(normalizeAnchorContent({ ...anchor, continuity_mode: 'context_drift', anchor_noise: 0 }))
+      .toStrictEqual({ ...anchor, continuity_mode: 'context_drift' })
     expect(normalizeAnchorContent({ ...anchor, continuity_mode: 'context', anchor_late: 0.25 }))
       .toStrictEqual({ ...anchor, continuity_mode: 'context' })
     // Without a back frame the late lock times nothing.

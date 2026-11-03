@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, Loader2, Maximize2, Minimize2, Pause, Play, RefreshCw, Trash2, Volume2, VolumeX, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -290,6 +290,9 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     muted,
     videoRefs,
   })
+  // The rendered clip's timeline range: playback re-renders as soon as it leaves it.
+  const activeRangeRef = useRef<{ start: number; end: number } | null>(null)
+  activeRangeRef.current = active ? { start: active.start, end: active.start + clipDuration(active.clip) } : null
 
   function selectClip(clip: ProjectClip) {
     seek(clipStartFrame(data.clips, clip.id))
@@ -673,7 +676,9 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
       } else if (nextFrame !== currentFrameRef.current) {
         currentFrameRef.current = nextFrame
         syncLeadIn(nextFrame, true)
-        if (now - playbackUiUpdatedAtRef.current >= PLAYBACK_UI_UPDATE_INTERVAL_MS) {
+        const range = activeRangeRef.current
+        const leftClip = range !== null && (nextFrame < range.start || nextFrame >= range.end)
+        if (leftClip || now - playbackUiUpdatedAtRef.current >= PLAYBACK_UI_UPDATE_INTERVAL_MS) {
           playbackUiUpdatedAtRef.current = now
           setCurrentFrame(nextFrame)
         }
@@ -688,9 +693,10 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
     }
   }, [data.clips, data.frame_rate, isPlaying, syncLeadIn, total])
 
-  useEffect(() => {
+  // Before paint, so a mute toggle or clip change never lets the clip's own sound through.
+  useLayoutEffect(() => {
     syncLeadIn(currentFrameRef.current, isPlaying)
-  }, [currentFrame, isPlaying, leadInUrl, muted, syncLeadIn])
+  }, [active?.start, activeLeadIn?.audible, activeLeadIn?.startFrame, currentFrame, isPlaying, leadInUrl, muted, syncLeadIn])
 
   useEffect(() => {
     const video = active ? videoRefs.current.get(active.clip.id) : undefined
@@ -903,7 +909,8 @@ export function ProjectVideoCombineWidget({ value, onChange, app, node }: Readon
                     muted
                     aria-hidden
                     data-testid="project-lead-in"
-                    className="pointer-events-none invisible absolute inset-0 h-full w-full bg-black object-contain p-3"
+                    onLoadedData={() => syncLeadIn(currentFrameRef.current, isPlaying)}
+                    className="pointer-events-none invisible absolute inset-0 h-full w-full object-contain p-3"
                   />
                 )}
               </>

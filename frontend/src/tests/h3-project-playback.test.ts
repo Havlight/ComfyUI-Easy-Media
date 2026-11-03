@@ -24,7 +24,7 @@ describe('projectLeadIn', () => {
 
   it('covers the end of the version an Anchor continuation continued from, like the combined video', () => {
     expect(projectLeadIn(parent, child)).toStrictEqual({
-      filePath: 'lead.mp4', mediaRevision: '7', startFrame: 17, sourceStartFrame: 0, audible: true,
+      filePath: 'lead.mp4', mediaRevision: '7', startFrame: 17, endFrame: 56, sourceStartFrame: 0, audible: true,
     })
     // A clip that keeps a locked sound keeps it under the lead-in.
     expect(projectLeadIn({ ...parent, audio_locked: true }, child)?.audible).toBe(false)
@@ -37,6 +37,9 @@ describe('projectLeadIn', () => {
       clip('b', 51, childMeta),
       clip('b', 51, { ...childMeta, parent_artifact_id: 'other' }, {}, 'lead.mp4'),
       clip('b', 51, { ...childMeta, continuity_mode: 'context_drift' }, {}, 'lead.mp4'),
+      clip('b', 51, { ...childMeta, start_frame: 60 }, {}, 'lead.mp4'),
+      clip('b', 51, { ...childMeta, source_kind: 'imported_seed' }, {}, 'lead.mp4'),
+      clip('b', 51, { ...childMeta, context_frames: 0 }, {}, 'lead.mp4'),
       { ...child, file_path: 'missing.mp4' },
     ]) {
       expect(projectLeadIn(parent, following)).toBeNull()
@@ -46,6 +49,6 @@ describe('projectLeadIn', () => {
 
   it('covers a predecessor trimmed shorter than the overlap from its own start', () => {
     const short = { ...parent, source_start_frame: 30 }
-    expect(projectLeadIn(short, child)).toMatchObject({ startFrame: 0, sourceStartFrame: 13 })
+    expect(projectLeadIn(short, child)).toMatchObject({ startFrame: 0, endFrame: 26, sourceStartFrame: 13 })
   })
 })

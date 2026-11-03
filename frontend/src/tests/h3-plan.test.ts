@@ -164,6 +164,8 @@ describe('H3 plan files', () => {
     expect(settings(importPlan(current, plan).data!.tracks[0].segments[1].content)).toEqual([undefined, undefined, undefined, undefined])
     plan.tasks[1] = { ...plan.tasks[1], anchor: 'restart' }
     expect(settings(importPlan(current, plan).data!.tracks[0].segments[1].content)).toEqual([undefined, undefined, undefined, true])
+    plan.tasks[1] = { ...plan.tasks[1], anchor: { restart: true } }
+    expect(settings(importPlan(current, plan).data!.tracks[0].segments[1].content)).toEqual([undefined, undefined, undefined, true])
 
     for (const anchor of [{ late: 0.3 }, { noise: 0.5 }, { restart: true, late: 0.25 }, { restart: false }, 'strong']) {
       plan.tasks[1] = { ...plan.tasks[1], anchor: anchor as H3PlanTask['anchor'] }
