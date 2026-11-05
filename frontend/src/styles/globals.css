@@ -83,29 +83,30 @@
  * after the Tailwind CSS build step. */
 @layer base {
   .__CUSTOM_NODE_CLASS__ {
-    /* Standard Tailwind-compatible variables - Light theme */
-    --checker-a: oklch(1 0 0);
-    --checker-b: oklch(1 0 0);
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
+    /* Standard Tailwind-compatible variables. light-dark() follows the
+     * color-scheme the ComfyUI frontend sets from the active palette. */
+    --checker-a: light-dark(oklch(1 0 0), oklch(0.145 0 0));
+    --checker-b: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+    --background: light-dark(oklch(1 0 0), oklch(0.145 0 0));
+    --foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+    --card: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+    --card-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+    --popover: light-dark(oklch(1 0 0), oklch(0.205 0 0));
+    --popover-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+    --primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
+    --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+    --secondary: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+    --secondary-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
     --muted: var(--comfy-input-bg);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
+    --muted-foreground: light-dark(oklch(0.556 0 0), oklch(0.708 0 0));
+    --accent: light-dark(oklch(0.97 0 0), oklch(0.269 0 0));
+    --accent-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+    --destructive: light-dark(oklch(0.577 0.245 27.325), oklch(0.704 0.191 22.216));
     --destructive-foreground: oklch(0.985 0 0);
-    --highlight: oklch(73.286% 0.16689 115.634);
-    --prompt-semantic: oklch(0.62 0.19 48);
+    --highlight: light-dark(oklch(73.286% 0.16689 115.634), oklch(96.109% 0.18336 113.683));
+    --prompt-semantic: light-dark(oklch(0.62 0.19 48), oklch(0.78 0.17 65));
     --prompt-dialogue: #cf3976;
-    --panorama-axis-z: oklch(0.58 0.2 255);
+    --panorama-axis-z: light-dark(oklch(0.58 0.2 255), oklch(0.72 0.16 250));
     --image-tile-foreground: oklch(0.985 0 0);
     --warning: oklch(0.922 0.191 90);
     --multitrack-video-bg: oklch(0.42 0.08 195);
@@ -129,8 +130,8 @@
     --multitrack-subtitle-text: #ffffff;
     --multitrack-waveform: oklch(0.55 0.09 185);
     --border: var(--border-color);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --input: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 15%));
+    --ring: light-dark(oklch(0.708 0 0), oklch(0.556 0 0));
     --radius: 0.5rem;
 
     .nodeNew{
@@ -141,55 +142,6 @@
     * {
         border-color: var(--border);
     }
-  }
-
-  /* Dark theme - active when body has dark-theme class */
-  .dark-theme .__CUSTOM_NODE_CLASS__{
-    --checker-a: oklch(0.145 0 0);
-    --checker-b: oklch(0.205 0 0);
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: var(--comfy-input-bg);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --destructive-foreground: oklch(0.985 0 0);
-    --prompt-semantic: oklch(0.78 0.17 65);
-    --prompt-dialogue: #cf3976;
-    --panorama-axis-z: oklch(0.72 0.16 250);
-    --multitrack-video-bg: oklch(0.42 0.08 195);
-    --multitrack-video-bg-strong: oklch(0.34 0.09 195);
-    --multitrack-video-border: oklch(0.82 0.08 195);
-    --multitrack-video-text: oklch(0.96 0.02 195);
-    --multitrack-video-waveform: #0A777E;
-    --multitrack-audio-bg: #0E3058;
-    --multitrack-audio-bg-strong: #0E3058;
-    --multitrack-audio-title-bg: #274569;
-    --multitrack-audio-waveform: #1581B3;
-    --multitrack-audio-border: oklch(0.7 0.1 220);
-    --multitrack-audio-text: oklch(0.96 0.02 245);
-    --multitrack-task-bg: #744A82;
-    --multitrack-task-bg-strong: #5F3B6A;
-    --multitrack-task-border: #A783B2;
-    --multitrack-task-text: oklch(0.96 0.01 260);
-    --multitrack-subtitle-bg: #9D4937;
-    --multitrack-subtitle-bg-strong: #7D3A2C;
-    --multitrack-subtitle-border: #C9705A;
-    --multitrack-subtitle-text: #ffffff;
-    --multitrack-waveform: oklch(0.55 0.09 185);
-    --border: var(--border-color);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --highlight: oklch(96.109% 0.18336 113.683);
   }
 }
 
