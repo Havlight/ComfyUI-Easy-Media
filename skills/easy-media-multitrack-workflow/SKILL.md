@@ -19,7 +19,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 - **一个专案一次一个执行**：上一次还没结束就不要再排同一个专案。
 - **重跑上限**：同一个需求最多自动重新生成 3 轮，再要重跑先问用户。
 - **看画面检查默认关闭**：只有 `config.yaml` 的 `AGENT_FRAME_REVIEW: true` 或用户要求检查结果时才用 `review_frames.py`；模型不能看图就不要用，改为回报输出文件。每轮只看这轮重新生成的段落。
-- **skill 文件只在用户要求时改**：通用写法（`references/craft.md`）、模块（`references/modules/`）等 skill 文件，用户要求才修改，怎么筛、放哪里见 [references/writing.md](references/writing.md)「修改写法与模块」。生成中发现的问题在交付时告诉用户，不自己写进 skill。
+- **skill 文件只在用户要求时改**：通用写法（`references/craft.md`）、模块（`references/modules/`）、选用层（`references/optional/`）等 skill 文件，用户要求才修改，怎么筛、放哪里见 [references/writing.md](references/writing.md)「修改写法与模块」。生成中发现的问题在交付时告诉用户，不自己写进 skill。
 - **环境**：需要一个开着的 ComfyUI 页面。Codex 等有沙盒的工具要允许连到 ComfyUI 地址（本机网络）。地址依序取用户给的地址、节点包 `config.yaml` 的 `COMFYUI_URL`、`http://127.0.0.1:8188`。
 - **Python 与路径**：脚本用 ComfyUI 的 Python：免安装版是 ComfyUI 文件夹旁边的 `python_embeded/python.exe`，其他安装方式用它的 venv（系统的 `python` 在 Windows 上可能只是 Microsoft Store 的空壳）。Windows 上规划里的路径写 `C:/…`，不要写 Git Bash 的 `/c/…`。规划文件用编辑工具写，不要用 shell heredoc，提示词常有引号。
 

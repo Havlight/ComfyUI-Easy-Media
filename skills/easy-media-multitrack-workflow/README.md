@@ -5,7 +5,7 @@
 ## 它能做什么
 
 - 读取 ComfyUI 开着的工作流分页（含未存档的修改），用 H3 规划文件描述影片（任务、提示词、参考素材、时间轴上的歌曲或影片、片段 LoRA）并写回分页，执行、等待结果，在 `output/easy_media/agent/<专案>/` 留下规划与执行纪录，并可选择抽画面检查后自行修改重跑。流程见 [自动循环](references/automation.md)。
-- 按 H3 提示词指南写每段提示词（`references/prompts/` 下的完整参考与一般模式两份官方指南），多段时保持角色、风格与动作衔接一致，见 [写提示词与多段规划](references/writing.md)。不分风格的写法在 [通用写法](references/craft.md)；画风、运镜、影片类型的写法是 `references/modules/` 里的模块，用得上才读，删掉文件就移除。
+- 按 H3 提示词指南写每段提示词（`references/prompts/` 下的完整参考与一般模式两份官方指南），多段时保持角色、风格与动作衔接一致，见 [写提示词与多段规划](references/writing.md)。不分风格的写法在 [通用写法](references/craft.md)；画风、运镜、影片类型的写法是 `references/modules/` 里的模块，用得上才读，删掉文件就移除；光影、难做的运镜、特效等选用内容在 `references/optional/`，用户要求才读。
 - 将本地图片、视频和音频上传到 ComfyUI `input` 目录或指定子目录。
 - 自动创建和编排任务、视频、音频时间线片段。
 - 把用户提示词、系统提示词和参考图片放入对应任务片段。
@@ -143,6 +143,10 @@ easy-media-multitrack-workflow/
 │   │   ├── camera-one-take.md
 │   │   ├── camera-pov.md
 │   │   └── type-vlog.md
+│   ├── optional/
+│   │   ├── camera.md
+│   │   ├── effects-and-props.md
+│   │   └── lighting.md
 │   ├── plan-file.md
 │   ├── prompts/
 │   │   ├── base.md
