@@ -19,6 +19,7 @@ from urllib.request import urlopen
 # ComfyUI's embedded Python does not put a script's own folder on the import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from patch_workflow import utf8_output  # noqa: E402
 from submit_workflow import read_config_value, request_json, resolve_comfyui_url  # noqa: E402
 
 OFF_MESSAGE = (
@@ -52,7 +53,9 @@ def download(base_url: str, item: dict, target: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    utf8_output()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     allow_abbrev=False)
     parser.add_argument("--project", required=True, help="The project_name the run used")
     parser.add_argument("--tasks", help="Comma-separated task ids; default every task with a video")
     parser.add_argument("--versions", action="store_true",

@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 # ComfyUI's embedded Python does not put a script's own folder on the import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from patch_workflow import WorkflowError, choose_editor, choose_project  # noqa: E402
+from patch_workflow import WorkflowError, choose_editor, choose_project, utf8_output  # noqa: E402
 
 
 class SettingsError(ValueError):
@@ -218,7 +218,8 @@ def record_run(base_url: str, content: dict, result: dict) -> dict | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    utf8_output()
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("workflow", nargs="?", type=Path, help="A workflow file to open in a new tab (instead of --tab)")
     parser.add_argument("--tab", help="Run this tab or saved workflow (opening it): its key as listed by plan_workflow.py tabs, or a name only one has")
     parser.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")

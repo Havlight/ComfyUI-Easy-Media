@@ -33,6 +33,10 @@ def test_only_one_client_is_selected_automatically():
     with pytest.raises(web.HTTPConflict) as error:
         store.submit(payload())
     assert "Multiple browser pages" in error.value.text
+    # A mistyped id is not "no page open": it names the pages there are.
+    with pytest.raises(web.HTTPNotFound) as error:
+        store.submit(payload(client_id="page"))
+    assert "page-1, page-2" in error.value.text
     result = store.submit(payload(client_id="page-2"))
     assert result["client_id"] == "page-2"
     assert register(store) is None
