@@ -2,47 +2,35 @@
 
 This guide explains how rewrite outputs are organized and written in full-reference mode.
 
-**Language Rule:** Write all actual prompt content in English, except for dialogue, lyrics, and text visibly present in the scene, which must remain in their original language. Format instructions, fixed keywords, reference labels, field names, relationship markers, and language tags remain in their defined English form.
-
-**Video Continuity Rule:** By default, generate a single, continuous, natural video timeline. Do not proactively introduce camera cuts, jumps, time skips, or viewpoint changes unless the user explicitly requests them or the target video clearly requires them.
-
-* Keep a continuous action within the same `[Shot]` whenever possible. Do not split a continuous action into multiple shots merely to increase description detail.
-* Create a new `[Shot]` only when there is a genuine camera cut or other meaningful shot transition. `[Shot]` represents a camera-shot boundary, not a new action or a new paragraph of description.
-* The first frame of a new `[Shot]` must naturally continue the final state of the previous `[Shot]`, preserving subject pose, position, action, props, environment, lighting, and temporal continuity unless the transition itself intentionally changes one of these elements.
-* Maintain the same shooting direction and visual axis by default. Do not abruptly switch between frontal, side, rear, overhead, or close-up viewpoints without a clear cinematic reason.
-* Prefer continuous, smooth camera movement within a shot. Do not add jump cuts, sudden zooms, abrupt angle changes, or instantaneous composition changes merely to make the video more visually varied.
-* Multiple `<Picture N>` references should normally be treated as references to one continuous visual state rather than automatically being converted into separate shots. Create separate shots only when the references or user instructions clearly establish a real shot change.
-* When there is no clear reason for a cut, prefer using camera movement, subject movement, or gradual composition changes within the same shot to achieve visual development.
-* Every subsequent shot must inherit the relevant ending state of the previous shot rather than regenerating a new pose, position, action state, or viewpoint from scratch.
-* A continuous timeline does not prohibit legitimate cuts. When a real cut occurs, preserve continuity of state across the cut unless the reference or user instruction intentionally establishes a discontinuity.
+Write all six rewrite sections in English. Preserve the original language only for dialogue and lyrics inside `<d>` and for text visibly present in the scene.
 
 **Description detail:** Make `detailed_description` as detailed and explicit as possible. For each shot, clearly establish the current composition, subject appearance and position, environment and lighting, actions and state changes, camera movement, current sound, and the points where referenced content actually appears or takes effect. Avoid reducing the description to a plot summary or a list of reference relationships.
 
-> The basic formats for shots, camera movement, speakers, dialogue, and ordinary sound are shared with the Video Prompt Writing Guide (T2VA / I2VA / FL2VA / L2VA). This guide focuses on the reference labels, analysis sections, continuity rules, and format differences specific to full-reference mode.
+> The basic formats for shots, camera movement, speakers, dialogue, and ordinary sound are shared with the Video Prompt Writing Guide (T2VA / I2VA / FL2VA / L2VA). This guide focuses on the reference labels, analysis sections, and format differences specific to full-reference mode.
 
 ## 1. Overall Structure
 
 A complete rewrite output consists of six sections in the following order:
 
-| Section                | Purpose                                                                  |
-| ---------------------- | ------------------------------------------------------------------------ |
-| `subject_definitions`  | Defines referenced content and its reference labels                      |
-| `summary`              | Summarizes the task type, target video, and main reference relationships |
-| `retention_analysis`   | Describes how referenced content is preserved, transferred, or reused    |
+| Section | Purpose |
+| --- | --- |
+| `subject_definitions` | Defines referenced content and its reference labels |
+| `summary` | Summarizes the task type, target video, and main reference relationships |
+| `retention_analysis` | Describes how referenced content is preserved, transferred, or reused |
 | `detailed_description` | Describes visuals, actions, shots, sound, and dialogue in playback order |
-| `overall_soundscape`   | Summarizes ambience and physical sounds                                  |
-| `non_diegetic_music`   | Describes background music audible only to the audience                  |
+| `overall_soundscape` | Summarizes ambience and physical sounds |
+| `non_diegetic_music` | Describes background music audible only to the audience |
 
 ## 2. Reference Labels and Definitions (`subject_definitions`)
 
 Full-reference rewrites use four types of labels to identify the source and role of referenced content:
 
-| Label         | Meaning                                                                                                           |
-| ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `<Subject N>` | Visible content abstracted from reference assets that can be reused or modified in the target video               |
-| `<Picture N>` | A reference image used as a concrete target frame or shot-planning anchor                                         |
-| `<Video N>`   | A reference video that provides an editing source, continuation starting point, or whole-video temporal structure |
-| `<Audio N>`   | An audio signal that is copied or referenced                                                                      |
+| Label | Meaning |
+| --- | --- |
+| `<Subject N>` | Visible content abstracted from reference assets that can be reused or modified in the target video |
+| `<Picture N>` | A reference image used as a concrete target frame or shot-planning anchor |
+| `<Video N>` | A reference video that provides an editing source, continuation starting point, or whole-video temporal structure |
+| `<Audio N>` | An audio signal that is copied or referenced |
 
 > Once a reference label is assigned to a piece of content, it keeps the same meaning across `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`, and the audio sections.
 
@@ -52,10 +40,10 @@ Full-reference rewrites use four types of labels to identify the source and role
 
 `<Subject N>` is used for reusable visible content, including:
 
-* People, animals, or objects
-* Scenes, backgrounds, or environments
-* Clothing, props, interfaces, or visual effects
-* Styles, actions, expressions, or poses
+- People, animals, or objects
+- Scenes, backgrounds, or environments
+- Clothing, props, interfaces, or visual effects
+- Styles, actions, expressions, or poses
 
 It represents a content unit that will actually be used in the target video, rather than the source file itself. One subject may be defined by multiple reference assets, and one reference asset may provide multiple subjects.
 
@@ -85,19 +73,13 @@ When an image acts as a storyboard or shot-planning reference, state which shots
 <Picture 3> is a storyboard reference for [Shot 1] and [Shot 2], defining their viewpoint, subject placement, and shot order.
 ```
 
-When multiple pictures describe a continuous visual state, do not automatically assign each picture to a separate shot. State their temporal or compositional relationship when necessary:
-
-```text
-<Picture 1> and <Picture 2> are references for the same continuous shot, with <Picture 1> establishing the opening composition and <Picture 2> defining the later composition reached through subject movement and camera movement.
-```
-
 ### 2.3 `<Video N>`
 
 `<Video N>` is reserved for whole-video relationships, such as:
 
-* Editing an original video
-* Continuing from the end of an original video
-* Referencing the original video's camera movement, cuts, rhythm, or temporal structure
+- Editing an original video
+- Continuing from the end of an original video
+- Referencing the original video's camera movement, cuts, rhythm, or temporal structure
 
 ```text
 <Video 1> is the source video for the target video edit.
@@ -105,17 +87,15 @@ When multiple pictures describe a continuous visual state, do not automatically 
 
 If a person, object, scene, action, or effect from a reference video is reused as visible content, it still belongs under `<Subject N>`. `<Video N>` identifies the asset or structural source and does not replace subject labels.
 
-When a reference video provides only motion, pacing, camera behavior, or structural guidance, do not imply that the target video is directly editing or continuing the source video.
-
 ### 2.4 `<Audio N>`
 
 `<Audio N>` represents a standalone audio asset or an enabled synchronized audio track from a reference video. Common uses include:
 
-* Copying all or part of an audio signal
-* Referencing a background-music style
-* Referencing a speaker's voice timbre and delivery
-* Using dialogue, lyrics, or sound effects from the original audio
-* Referencing beat, rhythm, or audio continuity
+- Copying all or part of an audio signal
+- Referencing a background-music style
+- Referencing a speaker's voice timbre and delivery
+- Using dialogue, lyrics, or sound effects from the original audio
+- Referencing beat, rhythm, or audio continuity
 
 When an `<Audio N>` explicitly corresponds to a target speaker, reuse that speaker's global ID in the definition: write `<Subject N> (Sx)` when the speaker maps to a defined subject, or use a stable voice description followed by `(Sx)` otherwise. The ID comes from the target video's global speaker order and is not independently assigned or renumbered in the audio definition. See Section 5.4 for the speaker-numbering rules:
 
@@ -149,16 +129,16 @@ This section uses one short English paragraph to summarize the target video and 
 
 Choose task types according to the actual role each reference asset plays in the target video:
 
-| Task type              | When to use it                                                                                                                                                                                                                   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `keyframe completion`  | An image serves as the target video's first frame, keyframe, last frame, edited keyframe, or another concrete frame anchor                                                                                                       |
+| Task type | When to use it |
+| --- | --- |
+| `keyframe completion` | An image serves as the target video's first frame, keyframe, last frame, edited keyframe, or another concrete frame anchor |
 | `reference generation` | An image, video, or audio asset provides generation guidance for a character, scene, style, action, camera movement, storyboard, and so on, without serving as a concrete frame or as the source video being edited or continued |
-| `video editing`        | An existing source video is directly modified; editing an image or generating between still keyframes does not belong to this type                                                                                               |
-| `video continuation`   | New content continues, extends, resumes, or transitions from an existing source video                                                                                                                                            |
-| `audio reuse`          | The same audio signal is reused in full or in part                                                                                                                                                                               |
-| `audio reference`      | The audio signal is not copied directly; only its music style, timbre, dialogue or lyric content, sound-effect texture, beat, or continuity is referenced                                                                        |
+| `video editing` | An existing source video is directly modified; editing an image or generating between still keyframes does not belong to this type |
+| `video continuation` | New content continues, extends, resumes, or transitions from an existing source video |
+| `audio reuse` | The same audio signal is reused in full or in part |
+| `audio reference` | The audio signal is not copied directly; only its music style, timbre, dialogue or lyric content, sound-effect texture, beat, or continuity is referenced |
 
-When a task satisfies multiple relationships, combine the task types with `+` and do not repeat a type. For example, continuing from a source video while using an image as the last frame is written as `[video continuation + keyframe completion]`. Editing a source video while retaining its original audio may be written as `[video editing + audio reuse]`.
+When a task satisfies multiple relationships, combine the task types with ` + ` and do not repeat a type. For example, continuing from a source video while using an image as the last frame is written as `[video continuation + keyframe completion]`. Editing a source video while retaining its original audio may be written as `[video editing + audio reuse]`.
 
 The mere presence of video or audio does not automatically create a corresponding task type. If a reference video provides only camera movement, cuts, or rhythm, it normally belongs to `reference generation`. Use `video editing` or `video continuation` only when that video is directly edited or continued.
 
@@ -180,12 +160,12 @@ This section describes how each piece of referenced content is preserved, transf
 
 `<Subject N>`, `<Picture N>`, and `<Video N>` use the following relationship markers. These markers are fixed English values in the output format:
 
-| Relationship marker   | Meaning                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `fully_preserved`     | The defined role of the referenced content is fully preserved                                                 |
+| Relationship marker | Meaning |
+| --- | --- |
+| `fully_preserved` | The defined role of the referenced content is fully preserved |
 | `partially_preserved` | The referenced content is still used, but some defined characteristics are changed or only partially retained |
-| `attribute_transfer`  | Referenced characteristics are transferred to a different identifiable target subject                         |
-| `weak_reference`      | Only broad similarity in style, category, composition, or atmosphere is retained                              |
+| `attribute_transfer` | Referenced characteristics are transferred to a different identifiable target subject |
+| `weak_reference` | Only broad similarity in style, category, composition, or atmosphere is retained |
 
 Subject entry:
 
@@ -205,18 +185,16 @@ Video-structure entry:
 <Video 1> (cut and pacing structure): weak_reference - ...
 ```
 
-Continuity itself is not a reference-retention relationship. Do not mark a subject as partially preserved merely because its pose, position, action, or framing changes naturally over time. Such changes are expected unless they alter the referenced characteristics defined for that subject.
-
 ### 4.2 Audio
 
 `<Audio N>` uses the following relationship markers:
 
-| Relationship marker | Meaning                                                                                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `fully_copy`        | The complete source audio serves as the target video's complete final audio track                                            |
-| `partially_copy`    | Only part of the timeline or selected audio layers are copied, or other sounds are added, removed, or replaced after copying |
-| `reference`         | The signal is not copied directly; only timbre, rhythm, music style, dialogue content, or sound texture is referenced        |
-| `weak_reference`    | Only broad similarity in category or atmosphere is retained                                                                  |
+| Relationship marker | Meaning |
+| --- | --- |
+| `fully_copy` | The complete source audio serves as the target video's complete final audio track |
+| `partially_copy` | Only part of the timeline or selected audio layers are copied, or other sounds are added, removed, or replaced after copying |
+| `reference` | The signal is not copied directly; only timbre, rhythm, music style, dialogue content, or sound texture is referenced |
+| `weak_reference` | Only broad similarity in category or atmosphere is retained |
 
 ```text
 <Audio 1>: fully_copy - <Audio 1> is reused 1:1 as the target video's complete final audio track.
@@ -236,43 +214,36 @@ This is the main body of a full-reference rewrite. It describes visuals, actions
 
 The basic format follows the Video Prompt Writing Guide (T2VA / I2VA / FL2VA / L2VA):
 
-* Write the body in English. Preserve the original language of dialogue, lyrics, and visible text.
-* `[Shot 1]` marks the opening shot and has no timestamp. Later shots use `[Shot N] At MM:SS.mmm, ...` to mark genuine shot cuts or meaningful shot transitions.
-* A `[Shot]` should represent a real camera-shot boundary, not merely a new action, pose, description paragraph, or reference image.
-* Keep continuous actions within the same shot whenever possible.
-* Write camera movement as natural English within the current shot, including movement type, amplitude, and speed when they need to be expressed.
-* Prefer smooth, continuous camera movement and gradual composition changes unless a genuine cut or abrupt transition is established by the source or user.
-* When a new shot begins, describe how its opening state continues from the preceding shot whenever continuity is relevant.
-* Give vocal sources stable `(S1)`, `(S2)`, and subsequent IDs. Write dialogue and lyrics as `<d>[Language] ...</d>`.
-* Use `<scenetrans>`, `<cutoff>`, and the corresponding continuity descriptions for dialogue crossing a cut, speech truncated by the video ending, and continuous audio across shots.
+- Write the body in English. Preserve the original language of dialogue, lyrics, and visible text.
+- `[Shot 1]` marks the opening shot and has no timestamp. Later shots use `[Shot N] At MM:SS.mmm, ...` to mark cut times.
+- Write camera movement as natural English within the current shot, including movement type, amplitude, and speed when they need to be expressed.
+- Give vocal sources stable `(S1)`, `(S2)`, and subsequent IDs. Write dialogue and lyrics as `<d>[Language] ...</d>`.
+- Use `<scenetrans>`, `<cutoff>`, and the corresponding continuity descriptions for dialogue crossing a cut, speech truncated by the video ending, and continuous audio across shots.
 
 For complete rules and examples covering camera vocabulary, group speech, voice-over, dialogue across cuts, and visible text, see the Video Prompt Writing Guide (T2VA / I2VA / FL2VA / L2VA).
 
 ### 5.2 Full-Reference Mode Differences
 
-| Dimension             | T2VA                                   | Full-reference mode                                                                                                      |
-| --------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Main field            | `integrated_multimodal_description`    | `detailed_description`                                                                                                   |
-| Style opening         | Written after `[Shot 1]`               | Established in one or two English sentences before `[Shot 1]`                                                            |
-| Reference information | Does not use full-reference labels     | Inserts `<Subject N>`, `<Picture N>`, `<Video N>`, and `<Audio N>` at their first appearance and where their roles apply |
-| Audio relationships   | Describes the target video's own sound | Cites `<Audio N>` in the corresponding shot or audio phase and states whether the signal is copied or referenced         |
-| Shot continuity       | Follows the general video-prompt rules | Explicitly preserves temporal, spatial, pose, action, prop, and visual continuity across shots                           |
+| Dimension | T2VA | Full-reference mode |
+| --- | --- | --- |
+| Main field | `integrated_multimodal_description` | `detailed_description` |
+| Style opening | Written after `[Shot 1]` | Established in one or two English sentences before `[Shot 1]` |
+| Reference information | Does not use full-reference labels | Inserts `<Subject N>`, `<Picture N>`, `<Video N>`, and `<Audio N>` at their first appearance and where their roles apply |
+| Audio relationships | Describes the target video's own sound | Cites `<Audio N>` in the corresponding shot or audio phase and states whether the signal is copied or referenced |
 
 Opening example:
 
 ```text
-The target video is in a cinematic, literary music-video style with soft lighting and a slightly desaturated color palette. Camera movement remains smooth and continuous unless a genuine shot transition is required.
+The target video is in a cinematic, literary music-video style with soft lighting and a slightly desaturated color palette.
 [Shot 1] The scene opens in a crowded urban street...
-[Shot 2] At 00:09.000, the shot cuts naturally to an extreme close-up while preserving the subject's ongoing action and screen direction...
+[Shot 2] At 00:09.000, the shot cuts to an extreme close-up...
 ```
 
-For generation tasks, `detailed_description` is normally 350-500 English words. Dialogue-dense content prioritizes fitting the complete spoken timeline rather than mechanically reaching a word count. Video-editing descriptions scale with the complexity of the source video and do not have to follow the generation-task range. A single shot does not automatically justify a shorter description; distribute detail according to the information load of the shot and the complexity of the continuous action.
+For generation tasks, `detailed_description` is normally 350-500 English words. Dialogue-dense content prioritizes fitting the complete spoken timeline rather than mechanically reaching a word count. Video-editing descriptions scale with the complexity of the source video and do not have to follow the generation-task range. A single shot does not automatically justify a shorter description; distribute detail across multiple shots according to their information load.
 
 ### 5.3 Using Reference Labels in Shots
 
 At the first clear appearance of an important `<Subject N>`, describe its referenced characteristics, position in the frame, and current action within what is actually visible in the shot. Continue using the same label in later shots without redefining what the label represents.
-
-When a subject continues from a previous shot, preserve its relevant ending state rather than regenerating its pose, position, action, clothing, props, or environment independently.
 
 Use natural phrasing for concrete frame anchors:
 
@@ -280,12 +251,6 @@ Use natural phrasing for concrete frame anchors:
 the shot begins from <Picture 1>
 the shot's keyframe corresponds to <Picture 2>
 the shot ends on <Picture 3>
-```
-
-When multiple pictures represent a continuous state, explicitly describe the transition between them rather than automatically treating them as separate shots:
-
-```text
-The composition gradually transitions from <Picture 1> toward the framing established by <Picture 2> through continuous camera movement.
 ```
 
 When editing or continuing an original video, cite `<Video N>` naturally where its source state, structure, or continuation relationship applies. Cite `<Audio N>` in the shot or semantic phase where the audio relationship is active.
@@ -339,6 +304,9 @@ Write complete dialogue and lyrics only inside `<d>` in `detailed_description`; 
 
 ## 7. Complete Example
 
+<details>
+<summary>Show the complete example</summary>
+
 ```text
 subject_definitions:
 <Subject 1> is the coffee-shop environment in <Picture 1>, featuring an exposed brick wall, an orange tufted sofa with patterned pillows, a neon sign, and a wooden coffee table.
@@ -348,7 +316,7 @@ subject_definitions:
 <Audio 1> is the voice-timbre reference for <Subject 3> (S1), containing a spoken English vocal layer.
 
 summary:
-[reference generation + audio reference] The target video shows <Subject 3> eating a cookie in <Subject 1>. <Subject 4> enters with <Subject 2>, which lunges toward the cookie. The sequence is presented as one continuous visual progression with natural camera movement and only necessary shot transitions. <Audio 1> provides the voice-timbre reference for <Subject 3>, and a canned audience laugh is added at the end.
+[reference generation + audio reference] The target video shows <Subject 3> eating a cookie in <Subject 1>. <Subject 4> enters with <Subject 2>, which lunges toward the cookie. The three-shot exchange uses <Audio 1> as the voice-timbre reference for <Subject 3> and ends with a canned audience laugh.
 
 retention_analysis:
 <Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - the exposed brick wall, orange tufted sofa, patterned pillows, neon sign, and wooden coffee table are retained.
@@ -358,17 +326,16 @@ retention_analysis:
 <Audio 1>: reference - its vocal timbre guides the dialogue delivery of <Subject 3> without copying the original signal.
 
 detailed_description:
-The target video uses a realistic multi-camera sitcom style with warm indoor lighting, natural spatial continuity, and smooth camera movement. The sequence avoids unnecessary cuts and preserves the subjects' positions, actions, and props across genuine shot transitions.
-
-[Shot 1] A medium shot establishes <Subject 1>, the coffee shop with its exposed brick wall, orange tufted sofa, patterned pillows, neon sign, and wooden coffee table. <Subject 3> (S1), the young woman with long blonde hair and a light-pink button-down shirt with rolled-up sleeves, sits on the sofa holding a chocolate-chip cookie. From the left, <Subject 4>, the young man with short wavy brown hair and a dark-grey hoodie with drawstrings, enters holding the leash of <Subject 2>, the thick-furred white Samoyed with pointed ears, a dark nose, and a curved tail. The dog gradually approaches the cookie and then lunges toward it, pulling the leash taut. <Subject 3> (S1) naturally pulls her hand back and guards the cookie. Using the clear youthful voice timbre referenced from <Audio 1>, she exclaims with light annoyance, <d>[English] Hey! Watch your dog!</d> She closes her lips and keeps the cookie close while <Subject 4> pulls the dog back. The camera remains stable and allows the action to develop naturally without an unnecessary cut.
-
-[Shot 2] At 00:03.000, a genuine camera cut moves to a closer view of <Subject 4> (S2), while preserving the spatial relationship established in Shot 1. He is now seated beside <Subject 3> and holding <Subject 2> securely in his arms, continuing naturally from the previous action state. <Subject 4> (S2) says in a casual young male voice with a playful tone and an easy conversational pace, <d>[English] He just likes cookies more than me.</d> He closes his mouth into an apologetic smile and strokes the dog's thick white fur. The camera holds the close framing with only a subtle, smooth adjustment rather than introducing another abrupt viewpoint change.
-
-[Shot 3] At 00:05.000, another genuine camera cut moves to a close-up of <Subject 3> (S1), maintaining her seated position, screen direction, and relationship to the other subjects. Her annoyance softens as she looks toward the Samoyed. <Subject 3> (S1) replies in the same clear youthful voice referenced from <Audio 1>, with an amused cadence, <d>[English] Well, he has good taste at least.</d> She smiles and raises the cookie in a small toast-like gesture. The action remains a direct continuation of her previous state rather than a newly generated pose. A classic canned audience laugh begins immediately after the line and continues through the final frame.
+The target video uses a realistic multi-camera sitcom style with warm indoor lighting.
+[Shot 1] A medium shot establishes <Subject 1>, the coffee shop with its exposed brick wall, orange tufted sofa, patterned pillows, neon sign, and wooden coffee table. <Subject 3> (S1), the young woman with long blonde hair and a light-pink button-down shirt with rolled-up sleeves, sits on the sofa holding a chocolate-chip cookie. From the left, <Subject 4>, the young man with short wavy brown hair and a dark-grey hoodie with drawstrings, enters holding the leash of <Subject 2>, the thick-furred white Samoyed with pointed ears, a dark nose, and a curved tail. The dog lunges toward the cookie and pulls the leash taut. <Subject 3> (S1) jerks her hand back and, using the clear youthful voice timbre referenced from <Audio 1>, exclaims with light annoyance, <d>[English] Hey! Watch your dog!</d> She closes her lips and guards the cookie while <Subject 4> pulls the dog back.
+[Shot 2] At 00:03.000, the shot cuts to a close-up of <Subject 4> (S2), the young man in the dark-grey hoodie from Shot 1, sitting beside <Subject 3> on the sofa and holding <Subject 2> securely in his arms. <Subject 4> (S2) says in a casual young male voice with a playful tone and an easy conversational pace, <d>[English] He just likes cookies more than me.</d> He closes his mouth into an apologetic smile and strokes the dog's thick white fur.
+[Shot 3] At 00:05.000, the shot cuts to a close-up of <Subject 3> (S1), the blonde woman in the light-pink shirt from Shot 1. Her annoyance softens as she looks toward the Samoyed. <Subject 3> (S1) replies in the same clear youthful voice referenced from <Audio 1> with an amused cadence, <d>[English] Well, he has good taste at least.</d> She smiles and raises the cookie in a small toast-like gesture. A classic canned audience laugh begins immediately after the line and continues through the final frame.
 
 overall_soundscape:
-Soft indoor coffee-shop room tone continues throughout the scene, with subtle environmental movement and natural leash, clothing, and handling sounds accompanying the physical actions.
+Soft indoor coffee-shop room tone continues throughout the scene.
 
 non_diegetic_music:
 N/A
 ```
+
+</details>

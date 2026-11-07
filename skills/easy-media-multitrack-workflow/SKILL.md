@@ -19,12 +19,13 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 - **一个专案一次一个执行**：上一次还没结束就不要再排同一个专案。
 - **重跑上限**：同一个需求最多自动重新生成 3 轮，再要重跑先问用户。
 - **看画面检查默认关闭**：只有 `config.yaml` 的 `AGENT_FRAME_REVIEW: true` 或用户要求检查结果时才用 `review_frames.py`；模型不能看图就不要用，改为回报输出文件。每轮只看这轮重新生成的段落。
+- **skill 文件只在用户要求时改**：通用写法（`references/craft.md`）、模块（`references/modules/`）、选用层（`references/optional/`）等 skill 文件，用户要求才修改，怎么筛、放哪里见 [references/writing.md](references/writing.md)「修改写法与模块」。生成中发现的问题在交付时告诉用户，不自己写进 skill。
 - **环境**：需要一个开着的 ComfyUI 页面。Codex 等有沙盒的工具要允许连到 ComfyUI 地址（本机网络）。地址依序取用户给的地址、节点包 `config.yaml` 的 `COMFYUI_URL`、`http://127.0.0.1:8188`。
 - **Python 与路径**：脚本用 ComfyUI 的 Python：免安装版是 ComfyUI 文件夹旁边的 `python_embeded/python.exe`，其他安装方式用它的 venv（系统的 `python` 在 Windows 上可能只是 Microsoft Store 的空壳）。Windows 上规划里的路径写 `C:/…`，不要写 Git Bash 的 `/c/…`。规划文件用编辑工具写，不要用 shell heredoc，提示词常有引号。
 
 ## 选路线
 
-1. **分页 + 规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片、片段 LoRA、专案名称、从第几段跑，以及用户要求的 Project 与 Editor 设置。规划格式见 [references/plan-file.md](references/plan-file.md)，分段与提示词写法见 [references/writing.md](references/writing.md)，读分页、套用、执行、等待与纪录见 [references/automation.md](references/automation.md)。
+1. **分页 + 规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片、片段 LoRA、专案名称、从第几段跑，以及用户要求的 Project 与 Editor 设置。规划格式见 [references/plan-file.md](references/plan-file.md)，分段与提示词写法见 [references/writing.md](references/writing.md)（通用写法 [references/craft.md](references/craft.md)，画风、运镜、影片类型的模块在 `references/modules/`），读分页、套用、执行、等待与纪录见 [references/automation.md](references/automation.md)。
 2. **直接改工作流文件**：用户要求修改某个工作流文件，或要做字幕、loader／attention 替换时。按下方「直接改工作流文件」。
 
 ## 自动循环
@@ -32,7 +33,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 1. `plan_workflow.py tabs` 确认用哪个分页（用户没指定就问）；用户说的工作流没打开时用 `tabs --saved 关键字` 找。
 2. `plan_workflow.py read --tab 分页 -o current.json`：看 Project 与 Editor 的设置（`settings`，含 `project_save`、采样、分辨率）、影音轨、输出节点、目前的规划，以及每段已存结果是否还跟内容相符（`status`）。分页内容跟专案纪录对不上时先问用户，要还原就 `apply --from-run last`。
 3. `plan_workflow.py probe` 读出歌曲、影片长度，据此分段。
-4. 在 `current.json` 上改出规划（空白分页就新写）；分段与提示词按 [references/writing.md](references/writing.md)，提示词用对应 mode 的 H3 指南写。
+4. 在 `current.json` 上改出规划（空白分页就新写）；分段与提示词按 [references/writing.md](references/writing.md) 与 [references/craft.md](references/craft.md)，选用相符的模块（writing.md「模块」），提示词用对应 mode 的 H3 指南写。
 5. `plan_workflow.py apply 规划 --tab 分页 --project-name 名称`（用户要求改设置时加 `--set`）：有错误就修正规划或设置再套用；确认警告、每段的标签对应（`labels`）、每段的 `status` 与要跑的范围。
 6. 用户授权执行后：`submit_workflow.py --tab 分页 --until-done`（放后台）或 `--wait 540`。
 7. `plan_workflow.py project --name 名称` 确认每段用哪一版、怎么生成的、接在哪一版后面、有没有备用方式；（可选）`review_frames.py --project 名称 --tasks 重跑的段落`。
@@ -76,4 +77,4 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 交付
 
-说明用了哪个分页（这次打开的要说明，并提醒修改还没存，Ctrl+S 会写回原文件，要保留原文件就另存）、专案名称、任务与时间轴摘要、锁定轨与公用媒体、每段用了哪些 LoRA、改了哪些设置、要跑的范围，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态、输出文件与专案纪录的位置；不以「已排队」冒充「已生成」。输出文件的 `type` 是 `temp` 时，提醒用户那是预览档，ComfyUI 重开会被清掉；要保留就把输出节点（如 Save Video）改成存档，或另存一份。各段影片固定存在 `output/easy_media/projects/<专案>/`。
+说明用了哪个分页（这次打开的要说明，并提醒修改还没存，Ctrl+S 会写回原文件，要保留原文件就另存）、专案名称、用了哪些写法模块、任务与时间轴摘要、锁定轨与公用媒体、每段用了哪些 LoRA、改了哪些设置、要跑的范围，以及有没有上传素材。执行过的再报告 `request_id`、`prompt_id`、最终状态、输出文件与专案纪录的位置；不以「已排队」冒充「已生成」。输出文件的 `type` 是 `temp` 时，提醒用户那是预览档，ComfyUI 重开会被清掉；要保留就把输出节点（如 Save Video）改成存档，或另存一份。各段影片固定存在 `output/easy_media/projects/<专案>/`。
