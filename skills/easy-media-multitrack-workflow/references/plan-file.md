@@ -102,7 +102,7 @@ agent 可以做的只有这些：
 
 | 字段 | 意思 |
 |---|---|
-| `lora` | LoRA 文件名，照 ComfyUI LoRA 列表的写法（如 `mmh3/style.safetensors`）；列表里没有时报错 |
+| `lora` | LoRA 文件名，照 ComfyUI LoRA 列表的写法（如 `mmh3/style.safetensors`）；列表里没有时报错，停用的规则只警告 |
 | `strength` | 强度，默认 1 |
 | `stage` | `all`（默认，一采二采都用）、`first`（只用在一采）、`second`（只用在二采） |
 | `at`、`until` | 第一个与最后一个套用的任务，写法同片段的 `at`／`until`（任务 id 或文件里的序号）；没写 `at` 从第一段开始，没写 `until` 套到最后 |
