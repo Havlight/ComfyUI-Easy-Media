@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import io
 import json
 import math
 import os
@@ -33,6 +34,14 @@ SettingsCheck = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 class WorkflowError(ValueError):
     """Raised when a workflow cannot be patched without ambiguity."""
+
+
+def utf8_output() -> None:
+    """Print UTF-8 whatever the console's code page: reports and errors carry Chinese text that
+    code pages such as cp950 cannot encode, and a print that fails hides the error it reports."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
 
 
 def load_object(path: Path, label: str) -> dict[str, Any]:
@@ -504,7 +513,7 @@ def write_json_atomic(path: Path, value: dict[str, Any]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     subparsers = parser.add_subparsers(dest="command", required=True)
     inspect_parser = subparsers.add_parser("inspect", help="summarize MultiTrack targets")
     inspect_parser.add_argument("workflow", type=Path)
@@ -514,6 +523,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--output", type=Path)
     apply_parser.add_argument("--write", action="store_true", help="write the output file")
     for sub in (inspect_parser, apply_parser):
+        sub.allow_abbrev = False
         sub.add_argument("--url", help="ComfyUI, which checks the settings (default: config.yaml COMFYUI_URL, "
                                        "then http://127.0.0.1:8188)")
         sub.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
@@ -530,6 +540,7 @@ def comfyui_check(args: argparse.Namespace) -> SettingsCheck:
 
 
 def main() -> int:
+    utf8_output()
     args = build_parser().parse_args()
     try:
         workflow = load_object(args.workflow, "workflow")

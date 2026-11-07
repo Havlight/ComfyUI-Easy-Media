@@ -190,7 +190,8 @@ function readRules(
       report('error', 'invalid_lora_name', { lora })
       return
     }
-    if (target.files && !target.files.includes(lora)) report('error', 'lora_missing', { lora })
+    // Runs skip a disabled rule, so its missing file only matters once someone enables it.
+    if (target.files && !target.files.includes(lora)) report(item.enabled === false ? 'warning' : 'error', 'lora_missing', { lora })
     if (item.strength !== undefined && !(typeof item.strength === 'number' && Number.isFinite(item.strength))) {
       report('error', 'invalid_lora_strength')
     }

@@ -50,6 +50,7 @@ from patch_workflow import (  # noqa: E402
     choose_project,
     load_object,
     track_data_widget,
+    utf8_output,
     write_json_atomic,
 )
 from submit_workflow import (  # noqa: E402
@@ -415,7 +416,10 @@ def tabs(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
     clients = request_json(base_url, "/easy-media/workflow/clients")["clients"]
     if args.client_id:
+        open_ids = [client["client_id"] for client in clients]
         clients = [client for client in clients if client["client_id"] == args.client_id]
+        if not clients:
+            raise PlanError(f"No browser page has client_id {args.client_id}; open pages: {', '.join(open_ids) or 'none'}")
     words = args.saved.lower().split() if args.saved is not None else None
     pages = []
     for client in clients:
@@ -645,7 +649,8 @@ def select(args: argparse.Namespace) -> int:
 
 def record(args: argparse.Namespace) -> int:
     base_url = resolve_comfyui_url(args.url, args.config)
-    path = put_record(base_url, args.project, args.name or args.file.name, args.file.read_text(encoding="utf-8"))
+    # The project's one note; whatever the local file is called, it is kept as README.md.
+    path = put_record(base_url, args.project, "README.md", args.file.read_text(encoding="utf-8"))
     print(json.dumps({"path": path}, ensure_ascii=False, indent=2))
     return 0
 
@@ -684,7 +689,8 @@ def probe(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     allow_abbrev=False)
     commands = parser.add_subparsers(dest="command", required=True)
     tabs_parser = commands.add_parser("tabs", help="List the workflow tabs open in each ComfyUI page")
     tabs_parser.add_argument("--saved", nargs="?", const="", metavar="WORDS",
@@ -714,10 +720,9 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser.add_argument("--name", required=True, help="The project_name")
     select_parser.add_argument("--task", type=int, required=True, help="The task number, from 1")
     select_parser.add_argument("--version", type=int, required=True, help="The version number, as the project command lists it")
-    record_parser = commands.add_parser("record", help="Keep a note file in the project's agent records")
+    record_parser = commands.add_parser("record", help="Replace the project's note (README.md in its agent records) with a file")
     record_parser.add_argument("file", type=Path)
     record_parser.add_argument("--project", required=True)
-    record_parser.add_argument("--name", help="Record name; default: the file name (README.md)")
     loras_parser = commands.add_parser("loras", help="Read or replace the LoRA notes every project shares")
     loras_parser.add_argument("--find", nargs="?", const="", metavar="WORDS",
                               help="Also list installed LoRAs whose name has every word (all of them without words)")
@@ -729,12 +734,14 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--timeout", type=float, default=150, help="Seconds to wait for the page")
     for sub in (tabs_parser, read_parser, apply_parser, project_parser, select_parser, record_parser, loras_parser,
                 probe_parser):
+        sub.allow_abbrev = False
         sub.add_argument("--url", help="Override config.yaml COMFYUI_URL (fallback: http://127.0.0.1:8188)")
         sub.add_argument("--config", type=Path, help="Path to the Easy Media config.yaml")
     return parser
 
 
 def main() -> int:
+    utf8_output()
     args = build_parser().parse_args()
     if args.command == "apply" and args.start != "auto" and not (args.start.isdigit() and int(args.start) >= 1):
         print('--start must be "auto" or a task number from 1', file=sys.stderr)

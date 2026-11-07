@@ -100,6 +100,13 @@ describe('segment LoRA rules in H3 plan files', () => {
     expect(importWith({ loras: [{ lora: 'mmh3/a.safetensors', enabled: false }] }, inactive).issues).toEqual([])
   })
 
+  it('keeps a disabled rule whose file is gone, with a warning, so a read plan applies back', () => {
+    const result = importWith({ loras: [{ id: 'off', lora: 'mmh3/gone.safetensors', enabled: false, at: 's02' }] }, target())
+    expect(result.issues).toEqual([{ level: 'warning', lora: 1, code: 'lora_missing', params: { lora: 'mmh3/gone.safetensors' } }])
+    expect(result.data).not.toBeNull()
+    expect(result.loras!.rules.rules).toMatchObject([{ id: 'off', enabled: false, lora: 'mmh3/gone.safetensors', start_segment: 2 }])
+  })
+
   it('needs no LoRA node for an empty list', () => {
     const result = importWith({ loras: [] }, undefined)
     expect(result.issues).toEqual([])

@@ -675,6 +675,33 @@ def test_running_a_tab_records_the_run_and_waits_for_it(tmp_path):
     assert fake.record("mv-alice", "plans/run-001.json") == page.plan()
 
 
+def test_record_keeps_any_note_file_as_the_projects_readme(tmp_path):
+    fake, page = FakeComfy(tmp_path), template_page()
+    notes = tmp_path / "notes.md"
+    notes.write_text("# mv\n", encoding="utf-8")
+    code, _stdout, stderr = with_comfy(fake, page, 0, str(SCRIPTS / "plan_workflow.py"), "record", str(notes), "--project", "mv")
+    assert code == 0, stderr
+    assert (fake.records / "mv" / "README.md").read_text(encoding="utf-8") == "# mv\n"
+
+
+def test_reports_print_on_a_console_whose_code_page_lacks_their_characters(tmp_path, monkeypatch):
+    # cp950 (Traditional Chinese Windows) has no 条; the report must still come out, as UTF-8.
+    monkeypatch.setenv("PYTHONIOENCODING", "cp950")
+    code, stdout, stderr = with_comfy(FakeComfy(tmp_path), template_page(), 0, str(SCRIPTS / "plan_workflow.py"),
+                                      "tabs", "--client-id", "条")
+    assert code == 2, stderr
+    assert json.loads(stdout) == {"errors": ["No browser page has client_id 条; open pages: page-1"]}
+
+
+def test_options_are_not_abbreviated(tmp_path):
+    # submit_workflow has both --client-id and --clients, so a shortened --client cannot mean
+    # one of them there; it means none of them anywhere.
+    for script in ("plan_workflow.py", "submit_workflow.py"):
+        args = ["tabs"] if script == "plan_workflow.py" else []
+        code, _stdout, stderr = asyncio.run(run_script(str(SCRIPTS / script), *args, "--client", "page-1"))
+        assert code == 2 and "error: unrecognized arguments: --client" in stderr, (script, stderr)
+
+
 def test_probe_reads_lengths_and_uploads_what_the_server_cannot_see(tmp_path):
     fake = FakeComfy(tmp_path)
     song = tmp_path / "song.wav"

@@ -99,6 +99,8 @@ class WorkflowSubmissions:
                 raise web.HTTPConflict(text="Multiple browser pages available; select client_id from GET /easy-media/workflow/clients")
             client_id = next(iter(self.clients), None)
         if client_id not in self.clients:
+            if self.clients:
+                raise web.HTTPNotFound(text=f"No browser page has client_id {client_id}; open pages: {', '.join(self.clients)}")
             raise web.HTTPServiceUnavailable(text="Open or refresh a ComfyUI page with the Easy Media extension first")
         if any(job["client_id"] == client_id and job["status"] in {"pending", "loading", "unknown"} for job in self.jobs.values()):
             raise web.HTTPConflict(text="This browser already has an unfinished submission; check its status before retrying")

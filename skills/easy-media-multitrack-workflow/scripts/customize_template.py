@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from patch_workflow import WorkflowError, load_object, write_json_atomic
+from patch_workflow import WorkflowError, load_object, utf8_output, write_json_atomic
 
 
 HYBRID_LOADER = "MiniMaxH3HybridLoader"
@@ -218,7 +218,7 @@ def assert_only_nodes_changed(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("workflow", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--replace-loader", action="store_true")
@@ -237,6 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    utf8_output()
     args = build_parser().parse_args()
     try:
         original = load_object(args.workflow, "workflow")
