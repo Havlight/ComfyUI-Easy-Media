@@ -105,6 +105,13 @@ python scripts/submit_workflow.py --tab "workflows/mmh3/MV.json" --until-done
   python scripts/submit_workflow.py --status <request_id> --wait 540
   ```
 
+  request_id 只保留一小时。之后，或不知道 request_id 时，用专案名称查这个专案最后一次执行（专案纪录的 `history.json` 记着它的 `prompt_id`）。`--status`、`--project` 不加 `--wait` 时只查一次目前的状态：
+
+  ```bash
+  python scripts/submit_workflow.py --project mv-alice --wait 540
+  ```
+
+- 一次排几个专案（例如整晚的批次）：每个专案各自 `apply`，再 `submit_workflow.py --tab 分页`，不加 `--wait`。排进去的是当时分页的内容，回报 `queued` 后就能套下一个规划。之后用 `--project 名称` 查每个专案。
 - 返回码：0 成功（`generation.outputs` 列出输出文件），2 失败（`generation.node_type`、`message`），3 还在跑（`generation.state` 为 `running` 或 `pending`）。改了分辨率或采样方式后接续旧段落，可能在开始生成前失败（`VAE_FALLBACK_REQUIRED`），见 SKILL.md 的「分辨率」。
 
 执行结束后用 `plan_workflow.py project --name 名称` 确认每段的版本：目前用哪一版（`active`）、怎么生成的（`sampling_pass`：`single`、`second` 即 dual、`selflift`；`size` 成品尺寸，dual 另有 `first_pass_size`；`seed`；从已存一采放大的有 `upscaled_from` 版本号与 `keep_1st_pass_audio`）、接在哪一版后面（`continued_from`，如 `f05@7`）、有没有沿用锁定音频（`locked_audio`）、有没有改用备用方式（`fallback`）、是否因前一段换了版本而过期（`stale`）。

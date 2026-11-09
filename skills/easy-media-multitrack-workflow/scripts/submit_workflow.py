@@ -229,11 +229,12 @@ def main() -> int:
     parser.add_argument("--request-id", help="Reuse the same id and payload after an uncertain response")
     parser.add_argument("--no-queue", action="store_true", help="Open the workflow file without running it")
     parser.add_argument("--clients", action="store_true", help="List available browser pages")
-    parser.add_argument("--status", metavar="REQUEST_ID", help="Read an existing submission without resubmitting")
+    parser.add_argument("--status", metavar="REQUEST_ID", help="Read an existing submission without resubmitting (kept for an hour)")
+    parser.add_argument("--project", metavar="NAME", help="Read the last run recorded for this project, also after its request_id expired")
     parser.add_argument("--timeout", type=float, default=150, help="Seconds to wait for browser acknowledgement, not generation")
     wait = parser.add_mutually_exclusive_group()
     wait.add_argument("--wait", type=float, default=0, metavar="SECONDS",
-                      help="After queueing (or with --status), wait up to this long for the generation to finish; "
+                      help="After queueing (or with --status or --project), wait up to this long for the generation to finish; "
                            "exit 3 while it still runs, so the same command can be repeated")
     wait.add_argument("--until-done", action="store_true",
                       help="Wait however long the generation takes; for running in the background")
@@ -242,14 +243,23 @@ def main() -> int:
         parser.error("--timeout must be between 0 and 3600 seconds")
     if not 0 <= args.wait <= 3600:
         parser.error("--wait must be between 0 and 3600 seconds")
-    if not args.clients and not args.status and (args.workflow is None) == (args.tab is None):
-        parser.error("give a workflow file or --tab (or use --clients or --status)")
+    reading = bool(args.status or args.project)
+    if not args.clients and not reading and (args.workflow is None) == (args.tab is None):
+        parser.error("give a workflow file or --tab (or use --clients, --status or --project)")
     try:
         base_url = resolve_comfyui_url(args.url, args.config)
         if args.clients:
             result = request_json(base_url, "/easy-media/workflow/clients")
         elif args.status:
             result = request_json(base_url, f"/easy-media/workflow/submissions/{quote(args.status, safe='')}")
+        elif args.project:
+            # history.json only lists queued runs; the page forgets a submission after an hour.
+            runs = json.loads(get_record(base_url, args.project, "history.json") or "[]")
+            if not runs:
+                raise ValueError(f"No run is recorded for project {args.project}")
+            last = runs[-1]
+            result = {"status": "queued", "project_name": args.project, "run": last["run"], "queued_at": last["queued_at"],
+                      "request_id": last["request_id"], "prompt_id": last["prompt_id"]}
         else:
             request_id = args.request_id or str(uuid.uuid4())
             client = {"client_id": args.client_id} if args.client_id else {}
@@ -278,7 +288,7 @@ def main() -> int:
                     recorded = {"error": f"The run was queued but not recorded: {error}"}
                 if recorded:
                     result["record"] = recorded
-        if (args.wait or args.until_done) and result.get("status") == "queued" and result.get("prompt_id"):
+        if (args.wait or args.until_done or reading) and result.get("status") == "queued" and result.get("prompt_id"):
             result["generation"] = wait_for_generation(base_url, result["prompt_id"], None if args.until_done else args.wait)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if "generation" in result:

@@ -28,8 +28,8 @@ python3 scripts/submit_workflow.py RESULT.json                  # 把工作流�
 - `--clients` 列出在线页面；一个页面时可省略 `--client-id`，多个页面必须指定目标，不能选择第一个或广播。
 - `client_id` 是本接口为每个页面生成的 ID；`session_id` 是对应 ComfyUI WebSocket ID。同一个页面里的多个工作流 tab 不计为多个客户端。
 - `--request-id ID` 提供重试标识；脚本在 POST 前把它输出到 stderr。相同 ID 和相同参数只返回已有请求，不重复执行；相同 ID 更换参数会报错。
-- `--status ID` 查询已有请求，不再次提交。`--timeout` 仅控制等待浏览器回执的秒数，不代表生成时限，不取消已经提交的任务。
-- `--wait 秒数` 在入队后（或配合 `--status`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --wait 540` 继续等，不重新提交。
+- `--status ID` 查询已有请求与生成状态，不再次提交。请求只保留一小时；之后用 `--project 专案名称` 查专案纪录里最后一次执行。`--timeout` 仅控制等待浏览器回执的秒数，不代表生成时限，不取消已经提交的任务。
+- `--wait 秒数` 在入队后（或配合 `--status`、`--project`）等待生成结束：返回码 0 成功并列出 `generation.outputs`，2 失败并给出 `node_type` 与 `message`，3 仍在运行或排队。单次最多等 540 秒，避免超过 agent 工具的指令时间上限；返回 3 时用 `--status ID --wait 540` 继续等，不重新提交。
 - `--until-done` 不限时间等到结束，给能在背景执行指令、结束时通知的工具用；等待期间不必查询。
 
 提交开始后到返回 `queued` / `loaded` 前，不要在目标页面手动切换工作流或连续点击运行；冲突会停止自动提交并报告错误。

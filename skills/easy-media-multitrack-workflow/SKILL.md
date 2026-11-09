@@ -15,7 +15,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 - **任务 id 固定**：规划里每段任务都写自己的 `id`（如 `s01`、`s02`），修改时保留。已存结果依 id 对应。
 - **以分页为准**：每次修改都先 `read --tab 分页 -o current.json`，在读出来的规划上改再 `apply`，用户在分页里改过的地方（提示词、秒数等）才会留着。不要拿自己之前的规划文件直接套。
 - **路径**：素材写绝对路径。ComfyUI 读不到时（agent 在 WSL、容器或另一台机器），脚本会自动上传。
-- **生成时不要空等**：工具能在后台执行指令并在结束时通知的（如 Claude Code 的背景指令），用 `submit_workflow.py --tab 分页 --until-done` 放后台，结束前不要查询、不要另外排程。不能的，用 `--wait 540`；返回码 3 表示还在跑，之后 `--status <request_id> --wait 540` 继续等，不要重新提交。
+- **生成时不要空等**：工具能在后台执行指令并在结束时通知的（如 Claude Code 的背景指令），用 `submit_workflow.py --tab 分页 --until-done` 放后台，结束前不要查询、不要另外排程。不能的，用 `--wait 540`；返回码 3 表示还在跑，之后 `--status <request_id> --wait 540` 继续等（request_id 只保留一小时，之后用 `--project 专案名称`），不要重新提交。
 - **一个专案一次一个执行**：上一次还没结束就不要再排同一个专案。
 - **重跑上限**：同一个需求最多自动重新生成 3 轮，再要重跑先问用户。
 - **看画面检查默认关闭**：只有 `config.yaml` 的 `AGENT_FRAME_REVIEW: true` 或用户要求检查结果时才用 `review_frames.py`；模型不能看图就不要用，改为回报输出文件。每轮只看这轮重新生成的段落。

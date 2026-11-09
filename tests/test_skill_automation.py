@@ -675,6 +675,23 @@ def test_running_a_tab_records_the_run_and_waits_for_it(tmp_path):
     assert fake.record("mv-alice", "plans/run-001.json") == page.plan()
 
 
+def test_project_status_reads_the_last_recorded_run(tmp_path):
+    fake = FakeComfy(tmp_path)
+    (fake.records / "mv-alice").mkdir(parents=True)
+    (fake.records / "mv-alice/history.json").write_text(json.dumps([
+        {"run": 1, "queued_at": "2026-11-09T01:00:00+08:00", "request_id": "r0", "prompt_id": "p0"},
+        {"run": 2, "queued_at": "2026-11-09T02:00:00+08:00", "request_id": "r1", "prompt_id": "p1"}]), encoding="utf-8")
+    # The page no longer knows r1, and no --wait is given: the state is read once.
+    code, stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "submit_workflow.py"), "--project", "mv-alice")
+    assert code == 0, stderr
+    result = json.loads(stdout)
+    assert (result["run"], result["prompt_id"], result["generation"]["state"]) == (2, "p1", "success")
+    assert result["generation"]["outputs"][0]["filename"] == "mv.mp4"
+
+    code, _stdout, stderr = with_comfy(fake, template_page(), 0, str(SCRIPTS / "submit_workflow.py"), "--project", "mv-bob")
+    assert code == 1 and "No run is recorded for project mv-bob" in stderr
+
+
 def test_record_keeps_any_note_file_as_the_projects_readme(tmp_path):
     fake, page = FakeComfy(tmp_path), template_page()
     notes = tmp_path / "notes.md"
