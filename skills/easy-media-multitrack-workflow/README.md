@@ -135,6 +135,7 @@ easy-media-multitrack-workflow/
 ├── assets/templates/v1.3.0-blank-workflow.json
 ├── references/
 │   ├── automation.md
+│   ├── continuity-values.md
 │   ├── craft.md
 │   ├── multitrack-schema.md
 │   ├── execution-api.md
@@ -142,6 +143,7 @@ easy-media-multitrack-workflow/
 │   │   ├── 2d-anime.md
 │   │   ├── camera-one-take.md
 │   │   ├── camera-pov.md
+│   │   ├── type-adult.md
 │   │   └── type-vlog.md
 │   ├── optional/
 │   │   ├── camera.md
