@@ -83,7 +83,7 @@ Non_diegetic_music: N/A
 - **角色唤醒绑定句**：有参考图的角色在 `subject_definitions:` 写：
   `<Subject 1> is the woman with exact face, age, body, hair, hairstyle, skin-tone, body-size, and outfit from <Picture 1>, characters are brought to life.`
   同场无参考图的次要角色写 `without a reference.`。正文前可加对齐句：`For the target video, at 0.00 seconds into the target video, (s1) and (s2) are fully referenced.`。
-- **NSFW 性器／局部独立子主体拆分（高精细接触镜推荐）**：当参考槽挂有勃起阴茎或女性私处特写板 `<Picture M>` 时（遵守 [optional/A-pov-immersive-longform.md](A-pov-immersive-longform.md) 的槽位隔离原则，单人私处板不与多人交合灰模混挂），在 `subject_definitions:` 将器官拆成独立 `<Subject K>` 隶属到对应角色，正文中直接指派 `(sK)` 参与互动：
+- **NSFW 性器／局部独立子主体拆分（高精细接触镜推荐）**：当参考槽挂有勃起阴茎或女性私处特写板 `<Picture M>` 时（遵守 [modules/type-adult.md](../modules/type-adult.md) 的槽位隔离原则，单人私处板不与多人交合灰模混挂），在 `subject_definitions:` 将器官拆成独立 `<Subject K>` 隶属到对应角色，正文中直接指派 `(sK)` 参与互动：
   - 男性性器子主体：`<Subject 2> is (s1)'s erect penis, mushroom-shaped glans, and testicles from <Picture 2>.`
   - 女性私处子主体：`<Subject 2> is (s1)'s wet juicy pussy, defined pussy-lips, and anus from <Picture 2>.`
 - **环境参考与 3D 灰模姿势图隔离**：环境图 `<Picture E>` 点名 2–3 个具体家具与光源地标；末位若挂 3D 无五官灰模姿势图 `<Picture K>`，在 `[Shot 1]` 首句写明：`following only the camera perspective, body posture, and coupling geometry from <Picture K> while ignoring its grey clay mannequin surface and simple block furniture.`。
