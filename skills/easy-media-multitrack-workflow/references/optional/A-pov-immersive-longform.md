@@ -2,7 +2,7 @@
 
 # 成人预设 A：主观沉浸 POV、多阶参考板与灰模长片编排
 
-适用代号：**预设 A（AV 预设 A）**。启用本预设时，凡涉及**视角比重、景别取景、角色服装阶段、构图／姿势参考图策略与长片巡检流程**，一律**以本文件覆盖** [craft.md](../craft.md) 与 [modules/type-adult.md](../modules/type-adult.md) 的通用默认排法；时间轴对齐、标签编号照 [SKILL.md](../../SKILL.md)，工作流使用 10Eros Beta 7 系列模型时提示词格式一并照 [optional/eros-beta7.md](eros-beta7.md) 写三段式纯英文自然语言。
+适用代号：**预设 A（AV 预设 A）**。启用本预设时，凡涉及**视角比重、景别取景、角色服装阶段、构图／姿势参考图策略与长片巡检流程**，一律**以本文件覆盖** [craft.md](../craft.md) 与 [modules/type-adult.md](../modules/type-adult.md) 的通用默认排法；时间轴对齐、标签编号照 [SKILL.md](../../SKILL.md)，工作流使用 10Eros Beta 7 系列模型时提示词格式照 [optional/eros-beta7.md](eros-beta7.md) 写三段式纯英文自然语言（若工作流使用 Ultima 系列模型则改照 [optional/ultima-hybrid.md](ultima-hybrid.md)）。
 
 ## 一、核心演出底线
 

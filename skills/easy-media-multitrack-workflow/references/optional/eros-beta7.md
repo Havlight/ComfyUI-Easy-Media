@@ -10,7 +10,8 @@
 - **紧凑三段式纯英文现在式自然语言**：`参考锁定与场景地标 → 空间基准与主词集中的动作演进 → 1–2 句克制的同步物理／环境实音`，不在动作段末尾补写「镜头保持稳定、自然肤色」等画质套话。
 - 单镜片段不写 `[Shot N]` 与时间戳；只有同一段内确需硬切多镜时，才加 `[Shot 2] At MM:SS.mmm, the camera cuts to …`。
 - 台词直接给说话角色标 `(S1)` 并用 `<d>[Language] …</d>`；不要背景音乐时，末尾写明 `with no background music`（防模型自行配乐）。
-- 光线写柔和具体的光源（如 `soft diffused indoor light`、`warm dim bedside lamp light`），少写强烈发光词以防过曝；细微声音加 `soft`、`subtle` 等克制形容词。
+- 光线写柔和具体的光源（如 `soft diffused indoor light`、`warm dim bedside lamp light`），少写强烈发光词以防过曝；环境底噪与细微声响加 `soft`、`subtle` 等克制形容词。
+- **NSFW 场景词汇禁委婉化**：上方「克制形容词」仅限光影与环境底噪；凡拍成人亲密与性爱镜头，性器官、口手奉仕、插入抽送与体液质感**必须使用直白、精确的英文词汇**（见 [modules/type-adult.md](../modules/type-adult.md)「直白精确英文词汇表」），严禁用 `intimate act`、`member`、`oral attention` 等委婉词替代，否则接触部位易模糊变形。
 
 ## 模式一：`default`（首帧 I2V ／ 纯文字 T2V）
 
