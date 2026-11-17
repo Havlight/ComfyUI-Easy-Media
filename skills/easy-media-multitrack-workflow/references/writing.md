@@ -13,6 +13,7 @@ H3 的提示词有固定的写法。两份指南讲怎么写好**一段**；本�
 
 - 指南是写给「改写用户描述」的模型看的：你从用户需求整理出的这段内容，就是指南说的原始描述。
 - `<Video N>`、`<Audio N>` 只在 `ref`、`edit` 有意义；`default`、`l2v` 只用图片当画面帧。
+- 目标工作流分页使用 `10Eros Beta 7` 系列模型时提示词格式改照 [optional/eros-beta7.md](optional/eros-beta7.md)，使用 `Ultima`（含 `Ultima NSFW Hybrid`）系列模型或用户指名时改照 [optional/ultima-hybrid.md](optional/ultima-hybrid.md)，取代上表官方指南的固定栏位。
 
 ## 标签与秒数
 

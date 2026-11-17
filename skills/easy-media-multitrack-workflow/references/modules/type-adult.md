@@ -4,13 +4,11 @@
 
 在 [craft.md](../craft.md) 镜头分工（胸上表情反应近景 ↔ 脸部出画的局部接触特写）的基础上，补充成人题材通用的防崩坏工程底线、直白词汇与资产规范。
 
-## 预设方案与模型格式路由（优先检查）
+## 预设方案路由（优先检查）
 
-规划前先检查用户是否指定预设代号，或按默认方案载入（预设文件内有不同规定时，**以预设文件覆盖本文件与 `craft.md` 默认**）：
+规划前先检查用户是否指定预设代号，或按默认方案载入（预设文件内有不同规定时，**以预设文件覆盖本文件与 `craft.md` 默认**；提示词模型格式照 [writing.md](../writing.md)「用哪份指南」对应分页模型）：
 
 - **预设 A（默认生效）**——[optional/A-adult-director-preset.md](../optional/A-adult-director-preset.md)：摄影基调锁定、单人贴身跟拍与主观 POV 机位调度、轻量情境与动作节奏层次编排。用户说「照预设 A／AV 预设 A」，或未指定其他成人预设时默认选用（在分镜方案开头注明「套用预设 A」；若日后 `optional/` 下新增 `B-...`、`C-...` 等其他成人预设且用户未指明，先列出一句话让用户选）。
-- **10Eros Beta 7 模型格式联动**：若目标工作流分页使用 `10Eros`／`Eros Beta 7` 系列模型，一并读取 [optional/eros-beta7.md](../optional/eros-beta7.md) 采用三段式自然语言提示词。
-- **Ultima 系列模型格式联动**：若目标工作流分页使用 `Ultima`（含 `Ultima NSFW Hybrid`）系列模型，或用户指名采用 Ultima 写法时，一并读取 [optional/ultima-hybrid.md](../optional/ultima-hybrid.md) 采用 `<Subject N>` 绑定＋骨骼关节力学锚点＋尾端百分比物理滑杆格式。
 
 ## 分镜、遮挡与人数防崩坏底线
 
