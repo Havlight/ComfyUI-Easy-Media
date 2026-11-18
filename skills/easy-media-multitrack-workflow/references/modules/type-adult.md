@@ -30,7 +30,7 @@
 - **六大类正向精确词汇速查（按镜头需要选用，不写底线标签）**：
   1. **男性性器（防无特征肉柱／香肠化）**
      - 核心直白词：`erect penis`、`thick erect cock`、`slick shaft`、`heavy testicles / balls`
-     - 解剖结构锚点：`distinct mushroom-shaped glans and coronal ridge`（伞状龟头与冠状沟边缘）、`subtle surface veins along the shaft`、`taut glistening foreskin / shaft skin`
+     - 解剖结构锚点：`distinct mushroom-shaped glans and coronal ridge`（伞状龟头与冠状沟边缘——**仅用于口手奉仕或外射等龟头外露镜；已插入抽插时龟头在体内不可见，禁写龟头外观，改写阴唇紧包进入的轴身根部与骨盆贴撞**）、`subtle surface veins along the shaft`、`taut glistening foreskin / shaft skin`
   2. **女性私处、乳房与后庭（防肉块糊成一片）**
      - 核心直白词：`wet juicy pussy`、`glistening pussy-lips`、`exposed clitoris`、`puckered anus`、`soft natural breasts`、`erect nipples`
      - 解剖与软组织受力：`parted inner labia glistening with clear arousal fluid`、`plump outer labia`、`teardrop breast sag with natural gravity sway`、`soft thigh and breast flesh compressing at the contact point`

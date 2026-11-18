@@ -1,4 +1,4 @@
-内容：Ultima（含 Ultima NSFW Hybrid）系列的提示词写法（保留 <Subject N> 与 (s1) 绑定、写实与骨骼关节力学锚点、直白精确词汇与尾端百分比物理滑杆，SFW／NSFW 通用，分 default 与 ref 两种模式）；不默认的原因：仅适用于 Ultima 系列模型，与原生 H3 官方栏位格式及 10Eros Beta 7 无标签三段式不同
+内容：Ultima（含 Ultima NSFW Hybrid）系列的提示词写法（结构化栏位、极简特征与 <Subject N> 双重定位、retention_analysis 权重分级、写实骨骼锚点与精简物理辅助词，分 default 与 ref 两种模式）；不默认的原因：仅适用于 Ultima 系列模型，与原生 H3 完整六栏格式及 10Eros Beta 7 无标签三段式不同
 
 # Ultima 系列提示词写法
 
@@ -6,138 +6,100 @@
 
 ## 共通规则
 
-- **精简四段式骨架（保留 `<Subject N>`，省去冗长摘要栏）**：
-  1. **`subject_definitions:` 主体定义**：逐行定义 `<Subject 1>`、`<Subject 2>`……正文中统一混用 `<Subject 1>` 或简写 `(s1)`、`(s2)` 指代同一主体；省略冗长的 `summary:` 与 `retention_analysis:`。
-  2. **真人实拍与骨骼关节力学锚点**：紧接 1–2 句固定写实锚点，锁定真皮质感、关节铰接、重心分配与皮肉挤压（见下方范例原句，按室内／日光微调光源词）。
-  3. **`[Shot 1]` 镜头与动作正文**：写明机位景别、人物所处的固定支撑面（床垫、座椅、地板、台面）、主词集中的连续动作与表情细节。
-  4. **`overall_soundscape:` ＋ 百分比物理滑杆 ＋ `Non_diegetic_music:`**：先用 1–2 句写与当前画面完全同步的物理／环境实音，接着列出 4–8 条按需选配的 `*_physics: XX%` 控制滑杆，最后以 `Non_diegetic_music: N/A`（无配乐）或 `<Audio N>` 配乐说明收尾。
-- **多模态标签严格首字母大写**：底层分词器只识别首字母大写的 `<Picture 1>`、`<Video 1>`、`<Audio 1>`，禁止写成小写 `<picture 1>` 或 `<audio 1>`。
-- **对嘴台词与语气微表情外置**：口音、神态与动作停顿括号一律放在 `<d>` 标签**外侧**，需发声对嘴的台词收进 `<d>[Language] …</d>` 内，例如：
-  `(s1) (cheerful sarcastic British accent, lazily raising an eyebrow) says: <d>[English] Oh, don't mind him, hope you like my setup.</d>`
-  既保留 Ultima 对语气与微表情括号的高响应度，又避免把舞台指示当台词念出声。口部被亲吻或含覆占用时严禁放 `<d>` 台词。
-- **SFW／NSFW 直白精确原则（零委婉词、零负面句）**：
-  - SFW 镜头具体写出服装材质、器械交互、脚步重心与自然光影。
-  - NSFW 镜头**必须直球写出通俗触发词与精确解剖／流体光学描述**（直接选用 [modules/type-adult.md](../modules/type-adult.md)「直白精确英文词汇表」），严禁 `intimate act`、`member`、`manhood`、`without being overly explicit` 等自我审查委婉词（会导致接触部位模糊融化或动作悬空），也严禁写 `no face`、`not white` 等否定句（H3 无负面框，出现否定名词反而会画出该特征）。
-- **画风纯粹与音效对齐**：不混写冲突画风（如在真人实拍里混写 `anime` 或同时堆叠多位风格相悖的导演名）；`overall_soundscape:` 与尾端滑杆只写本段实际存在的环境与动作，换场后立即清除上一段残留的环境音或流体词。
+- **精简结构化栏位（省去 `summary:` 与 `For the target video…` 开场句）**：依序组织 `subject_definitions:` ➔ 独立一行写实与人体骨骼关节力学锚点句 ➔（`ref` 模式加 `retention_analysis:`）➔ `detailed_description:` 正文 `[Shot 1]` ➔ `overall_soundscape:` ＋ 4–6 条贴合当镜动作的 `*_physics: XX%` 辅助词 ➔ `non_diegetic_music: N/A`（或配乐说明）。
+- **视觉 `<Subject N>` 搭配极简特征定位，`(S1)` 仅作发声编号**：
+  - 视觉主体统一用 `<Subject 1>`、`<Subject 2>`……定义时点破区分角色所需的**极简发色发型／穿搭特征**（五官细节交由参考图决定）；正文首次出场及多人肢体交错处以「`<Subject N>` ＋ 极简特征／性别部位词」双重锁定归属（如 `<Subject 1>, the black-haired woman`、`<Subject 1>'s slender hands`、`<Subject 3>'s muscular thighs`），**严禁用自创小写 `(s1)`、`(s2)` 指代视觉主体或身体器官**（易导致跨角色长错手脚）。
+  - 大写 **`(S1)`、`(S2)` 严格只代表开口发声者编号（Audio Speaker ID）**，仅标在有 `<d>` 台词的角色后方，不发声的角色与器官一律不标。
+- **标签大写与同段切镜语法**：参考标签严格首字母大写（`<Picture 1>`、`<Video 1>`、`<Audio 1>`）。单镜片段只写 `[Shot 1]`（不标时间戳）；同一段内需硬切多镜时，每个镜头独立换行写 `[Shot 2] At MM:SS.mmm, the camera cuts to …`、`[Shot 3] At MM:SS.mmm, the camera cuts to …`（单镜内有蓄力到爆发的阶段转折亦可标 `At 0.00s … Within 2.0s …`）。
+- **对嘴台词与外置语气微表情**：口音、情绪与神态括号一律放在 `<d>` 标签**外侧**，发声内容收在 `<d>[Language] …</d>` 内，如 `<Subject 1> (S1) (teasing whisper, half-lidded eyes) says: <d>[English] …</d>`；口部被亲吻或含覆占用时严禁放对嘴 `<d>` 台词。
+- **SFW／NSFW 直白精确与遮挡一致**：SFW 具体写出材质与重心交互；NSFW 直接选用 [modules/type-adult.md](../modules/type-adult.md)「直白精确英文词汇表」，禁委婉词与否定词（`no / not X`），且只描写当前画面外部可见的部位（已插入时不写体内的龟头外观）。
 
 ## 模式一：`default`（纯文字 T2V ／ 首帧 I2V）
 
-- **纯文字 T2V（无参考图）**：仍然保留 `subject_definitions:`，每个主体句尾显式注明 `without a reference.`（如 `<Subject 1> is a 26-year-old athletic woman in a grey cropped tank top without a reference.`），全文不写任何 `<Picture N>` 标签。
-- **首帧 I2V（挂 1 张起始图 `<Picture 1>`）**：`<Subject 1>` 绑定 `from <Picture 1>, characters are brought to life.`，`[Shot 1]` 首句直接锚定首帧已有的构图、光线与起始支撑姿势，再往下推进动作。
+- **纯文字 T2V（无参考图）**：`subject_definitions:` 中每个角色句尾注明 `without a reference.`，全文不写 `<Picture N>`，省去 `retention_analysis:`。
+- **首帧 I2V（挂 1 张起始图 `<Picture 1>`）**：`<Subject 1>` 绑定 `from <Picture 1>, characters are brought to life.`（不加 `For the target video…` 句），`[Shot 1]` 首句直接锚定首帧构图、光线与起始支撑姿态后顺势推进动作。
 
-### SFW 范例（手持 Vlog 日常喜剧互动，`default` 首帧或单角色）
+`default` 范例（单镜连续手持互动）：
 
 ```text
 subject_definitions:
-<Subject 1> is a young woman with exact face, age, body, hair, hairstyle, skin-tone, body-size, and outfit from <Picture 1>, characters are brought to life.
-<Subject 2> is a 24-year-old man in casual athletic shorts without a reference.
+<Subject 1> is a young woman (long dark hair, cropped grey tank top) with exact face, hairstyle, skin-tone, body proportions, and outfit from <Picture 1>, characters are brought to life.
+<Subject 2> is a 24-year-old athletic man in casual shorts without a reference.
 
 Photorealistic, warm indoor ambient lighting with colourful RGB monitor glow, high res, detailed, real-life footage, realistic skin texture, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, and realistic body movement.
 
-[Shot 1]
-Single continuous handheld GoPro-style POV medium shot inside (s1)'s cozy gaming bedroom. Walking smoothly across the wooden floor while holding the wide-angle camera at arm's length, (s1) shows off her glowing dual-monitor desk setup with a smug, playful expression as the camera sways naturally with her steps.
+detailed_description:
+[Shot 1] Single continuous handheld GoPro-style POV medium shot inside <Subject 1>'s cozy gaming bedroom. Walking smoothly across the wooden floor while holding the wide-angle camera at arm's length, <Subject 1>, the dark-haired woman, shows off her glowing dual-monitor desk setup with a playful expression as the camera sways naturally with her steps. <Subject 1> (S1) (cheerful sarcastic British accent, lazily raising an eyebrow) says: <d>[English] Hi guys, this is where I play games when I'm bored.</d> She casually pans the handheld camera toward the bed, revealing <Subject 2> lying flat on the mattress with his wrists loosely tied to the headboard with prop ribbons in wide-eyed disbelief while <Subject 1> covers a mischievous smirk and swings the lens back toward her monitors.
 
-(s1) (cheerful sarcastic British accent, lazily raising an eyebrow) says: <d>[English] Hi guys, this is where I play games when I'm bored. Hope you like it.</d>
-
-She casually pans the handheld camera toward her bed, revealing (s2) lying flat on his back on the mattress with his wrists tied loosely to the headboard with soft prop ribbons as part of a staged prank, staring into the lens in wide-eyed disbelief. (s1) freezes briefly, covers a mischievous smirk, rolls her eyes playfully, and swings the camera smoothly back toward her monitors.
-
-overall_soundscape: close clear female voice, soft bare footsteps on bedroom wood flooring, subtle clothing rustle, quiet computer fan hum in a small furnished room.
-
+overall_soundscape:
+Close clear female voice, soft bare footsteps on bedroom wood flooring, subtle clothing rustle, and quiet computer fan hum.
 Dialogue_Clarity: 100%
-Natural_Human_Speech: 100%
 Character_Voice_Consistency: 100%
 Facial_Microexpressions: 100%
-Clothing_And_Movement_Sounds: 85%
+Naturalistic_body_physics: 100%
+Naturalistic_hands_physics: 100%
 Camera_shaking: 20%
 
-Non_diegetic_music: N/A
+non_diegetic_music:
+N/A
 ```
 
-### NSFW 范例（直白解剖与微动作，`default` T2V）
+## 模式二：`ref`（多图参考 ／ 局部与灰模权重分级 ／ 音色参考）
+
+- **`subject_definitions:` 角色唤醒与单一主体原则**：
+  - 露脸角色写 `<Subject 1> is the young woman (极简发色发型／穿搭词) with exact face, exact hairstyle, exact skin-tone, exact body proportions, and exact outfit from <Picture 1>, characters are brought to life.`。
+  - **禁止把同一张全身图拆成两个 Subject**：全身男角板 `<Picture M>` 只定义一个 `<Subject>`，且直接只列出该镜实际入镜的局部（如 `<Subject 3> is the seated athletic man's taut lower abdomen, muscular thighs, and single upright erect penis from <Picture 3>.`）；**仅当参考槽额外挂了一张独立的局部私处特写图时**，才为该图单独设 `<Subject>`。
+  - 环境图定义为一个 `<Subject>` 并点名 2–3 个具体家具与光源地标；末位 3D 灰模或姿势图 `<Picture K>` 只写 `<Picture K> is a loose camera-angle and spatial posture guide only.`（不写 `brought to life`）。
+- **`retention_analysis:` 三级权重与分镜出场隔离（必写，防长错手脚与灰模污染）**：
+  - 完整入镜主角与场景标 `fully_preserved`（同段内含多镜硬切且某角色不在所有 Shot 出场时，注明 `(appears in [Shot 1], [Shot 3])`，防模型把未出场角色硬塞进局部特写镜）；
+  - **仅局部入镜的角色板（如只露腰腿或扶握双手的男角板）标 `partially_preserved`**，指明仅哪些部位出现在画面边缘（防止模型把未入镜的男方上半身或肌肉手臂强行嫁接到女角身上）；
+  - 末位 3D 灰模 `<Picture K>` 标 `weak_reference`，指明对应哪个 `[Shot N]` 的机位角度与摆位几何，忽略灰泥人偶材质与几何块。
+- **挂 `<Audio N>` 音色或配乐**：在 `subject_definitions:` 写 `<Audio 1> is the [语气] voice-timbre reference for <Subject 1> (S1).`，`retention_analysis:` 标 `reference - guides vocal timbre without copying the raw signal.`。
+
+`ref` 多参考图＋同段多镜切换范例（`[Shot 1] ➔ [Shot 2] ➔ [Shot 3]`）：
 
 ```text
 subject_definitions:
-<Subject 1> is a 32-year-old curvy woman with dark wavy hair in an unbuttoned silk blouse without a reference.
-<Subject 2> is a 25-year-old athletic man seated in casual open trousers without a reference.
+<Subject 1> is Sena (long blonde hair, open-chest burgundy knit dress exposing bare full breasts, sheer black stockings) with exact face, exact hairstyle, exact fair skin-tone, exact body proportions, and exact outfit from <Picture 1>, characters are brought to life.
+<Subject 2> is Rin (sleek black bob, open black shrug exposing bare perky breasts, black garter stockings) with exact face, exact hairstyle, exact fair skin-tone, exact body proportions, and exact outfit from <Picture 2>, characters are brought to life.
+<Subject 3> is the seated athletic man's taut lower abdomen, spread muscular thighs, and single upright erect penis from <Picture 3>.
+<Subject 4> is the warm lamp-lit living room with charcoal velvet sofa and cream plush rug from <Picture 4>.
+<Picture 5> is a loose camera-angle and spatial framing guide for [Shot 1] only.
+<Audio 1> is the teasing voice-timbre reference for <Subject 2> (S1).
 
-Photorealistic, soft diffused warm bedroom lamp light, high res, detailed, real-life footage, realistic skin texture, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, natural skin compression, and realistic body movement.
+Photorealistic, warm dim indoor tungsten lamp light, high res, detailed, real-life footage, realistic skin texture, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, natural skin compression, and realistic body movement.
 
-[Shot 1]
-High-angle first-person POV medium close-up looking down from (s2)'s seated perspective on the edge of the bed. Kneeling steadily on the carpet between (s2)'s thighs with her left hand braced firmly on his bare upper thigh and her right fingers wrapped around the base of his erect penis, (s1) hollow-cheeks and sucks his slick shaft rhythmically past her glossy stretched lips while glancing up to hold teasing eye contact. Smooth strands of clear glistening saliva stretch from her chin along the wet shaft with its distinct mushroom-shaped glans as her head bobs at a steady, unhurried pace, her soft breasts shifting subtly inside the open blouse with each breath.
+retention_analysis:
+<Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - her face, long blonde hair, fair skin-tone, and bare full breasts stay sharp and undistorted.
+<Subject 2> (appears in [Shot 1], [Shot 3]): fully_preserved - her face, sleek black bob, fair skin-tone, and bare perky breasts stay sharp and undistorted.
+<Subject 3> (appears in [Shot 1], [Shot 2]): partially_preserved - only the seated man's lower abdomen, thighs, and single erect shaft appear at the frame margin.
+<Subject 4>: fully_preserved - the charcoal velvet sofa, cream rug, and warm lamp glow are retained across all shots.
+<Picture 5> ([Shot 1] composition guide): weak_reference - only the 45-degree downward camera angle and three-person placement in [Shot 1] are referenced, completely ignoring its matte grey mannequin material and plain studio blocks.
+<Audio 1>: reference - guides <Subject 2>'s teasing vocal timbre in [Shot 3] without copying the raw signal.
 
-overall_soundscape: rhythmic wet sucking and slick saliva sounds, soft nasal breathing from (s1), subtle fabric rustle against the mattress edge, quiet bedroom room tone.
+detailed_description:
+Warm dim indoor tungsten lamp light illuminates <Subject 4> with natural skin highlights and shallow depth of field.
+[Shot 1] In a 45-degree downward medium close-up inside <Subject 4>, only three people exist in the frame: along the bottom-right edge, <Subject 3> shows only the seated man's lower abdomen, thighs on the charcoal velvet sofa, and upright erect cock. Kneeling on the cream rug against his thigh, <Subject 1>, the blonde woman, rests her slender hand on his quadriceps and leans in to wrap her glossy stretched lips around the upper half of <Subject 3>'s wet shaft while <Subject 2>, the black-haired woman on the left, cups and gently squeezes <Subject 1>'s bare full breast.
+[Shot 2] At 00:03.200, the camera cuts to a tight close-up focused on <Subject 1>'s lower face and <Subject 3>'s wet shaft, where <Subject 1> hollows her cheeks and sucks rhythmically along the slick shaft and distinct mushroom-shaped glans with thin strands of clear saliva glistening at her chin while her slender fingers stroke the base.
+[Shot 3] At 00:05.800, the camera cuts to a chest-up medium close-up of both women pressed bare-chested together beside the sofa; <Subject 1> catches her breath with glossy parted lips while <Subject 2> turns her dark eyes from <Subject 1> straight into the lens. <Subject 2> (S1) (sultry teasing whisper, subtle smirk) says in the vocal timbre referenced from <Audio 1>: <d>[English] Look how eagerly she takes you in her mouth.</d>
 
-Natural_sucking_motion: 80%
-Natural_bobbing_head_while_sucking: 65%
-VFX_natural_devouring_penis_physics: 75%
+overall_soundscape:
+Rhythmic wet sucking and slick saliva sounds, soft nasal breaths from <Subject 1>, <Subject 2>'s clear close teasing voice, and subtle plush rug rustle.
+Dialogue_Clarity: 100%
+Character_Voice_Consistency: 100%
+Facial_Microexpressions: 100%
 Naturalistic_body_physics: 100%
 Naturalistic_hands_physics: 100%
-Naturalistic_fingers_physics: 100%
+Natural_sucking_motion: 85%
+Natural_bobbing_head_while_sucking: 70%
 Naturalistic_water_physics: 05%
 
-Non_diegetic_music: N/A
+non_diegetic_music:
+N/A
 ```
 
-## 模式二：`ref`（多图参考 ／ 性器子主体拆分 ／ 音色与配乐卡点）
+## 尾端物理辅助词选配（每段挑 4–6 条贴合当镜动作，不堆砌无关词）
 
-- **角色唤醒绑定句**：有参考图的角色在 `subject_definitions:` 写：
-  `<Subject 1> is the woman with exact face, age, body, hair, hairstyle, skin-tone, body-size, and outfit from <Picture 1>, characters are brought to life.`
-  同场无参考图的次要角色写 `without a reference.`。正文前可加对齐句：`For the target video, at 0.00 seconds into the target video, (s1) and (s2) are fully referenced.`。
-- **NSFW 性器／局部独立子主体拆分（高精细接触镜推荐）**：当参考槽挂有勃起阴茎或女性私处特写板 `<Picture M>` 时（遵守 [modules/type-adult.md](../modules/type-adult.md) 的槽位隔离原则，单人私处板不与多人交合灰模混挂），在 `subject_definitions:` 将器官拆成独立 `<Subject K>` 隶属到对应角色，正文中直接指派 `(sK)` 参与互动：
-  - 男性性器子主体：`<Subject 2> is (s1)'s erect penis, mushroom-shaped glans, and testicles from <Picture 2>.`
-  - 女性私处子主体：`<Subject 2> is (s1)'s wet juicy pussy, defined pussy-lips, and anus from <Picture 2>.`
-- **环境参考与 3D 灰模姿势图隔离**：环境图 `<Picture E>` 点名 2–3 个具体家具与光源地标；末位若挂 3D 无五官灰模姿势图 `<Picture K>`，在 `[Shot 1]` 首句写明：`following only the camera perspective, body posture, and coupling geometry from <Picture K> while ignoring its grey clay mannequin surface and simple block furniture.`。
-- **挂 `<Audio N>` 音色参考**：在 `subject_definitions:` 下方补写 `<Audio 1> provides the vocal timbre, pitch, and delivery style for (s1) without copying the audio signal.`，台词写 `In the vocal timbre of <Audio 1>, (s1) (soft breathy tone, half-lidded eyes) says: <d>[Japanese] …</d>`。
-- **三种时间推进模式（依镜头需求择一）**：
-  1. **单镜连续顺叙（默认最稳）**：`[Shot 1]` 不标细碎秒数，顺叙固定支撑点上的连续动作与视线转换。
-  2. **段内秒数节拍（单镜蓄力→爆发）**：同一镜内有明确阶段转折（如快节奏抚弄后在特定时刻潮吹喷涌或停顿抬头），用 `At 0.00s … Within the first 1.5 seconds … At 3.0s …` 分段推进。
-  3. **多镜硬切或配乐卡点（动作快剪／MV）**：同组参考素材内多镜快切写 `SHOT 1 — …` 接 `HARD CUT — SHOT 2 — …`；挂配乐 `<Audio 1>` 卡点运镜时，在音效段写 `Background music is <Audio 1>. The camera tracks (s1) in sync with <Audio 1>: on every strong bass hit, the camera makes a quick push-in; during melodic phrasing, it arcs smoothly around her.`。
-
-### 多图参考＋性器子主体拆分范例（`ref` 模式）
-
-```text
-subject_definitions:
-<Subject 1> is the woman with exact face, age, body, hair, hairstyle, skin-tone, body-size, and sheer black stockings from <Picture 1>, characters are brought to life.
-<Subject 2> is (s1)'s wet juicy pussy, defined glistening pussy-lips, and anus from <Picture 2>.
-
-Photorealistic, warm dim bedside lamp light, high res, detailed, real-life footage, realistic skin texture, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, natural skin compression, and realistic body movement.
-
-For the target video, at 0.00 seconds into the target video, (s1) and (s2) are fully referenced.
-
-[Shot 1]
-Tight low-angle close-up on the dark grey linen bed from <Picture 3>, framing (s1)'s hips, sheer-stockinged thighs spread wide on the mattress, and fully exposed wet pussy from (s2) while her upper back rests against stacked pillows. At 0.00s her right middle and index fingers rub rapidly in wet circular motions between the glistening pink pussy-lips of (s2) while her left hand grips the crumpled bedsheet beside her hip, her lower stomach tensing and thighs trembling softly. Within 2.0 seconds her pelvis arches sharply off the mattress and a pressurized continuous stream of water-clear transparent squirt liquid spurts outward from (s2), splashing across her inner thighs and darkening the linen sheet beneath her until the end of the clip.
-
-overall_soundscape: heavy rhythmic breathing and sharp gasps from (s1), rapid wet finger rubbing sounds, clear continuous liquid spurting and splashing onto fabric bedding, quiet indoor room tone.
-
-VFX_naturalistic_tender_pussy_physics: 75%
-Naturalistic_body_physics: 100%
-Naturalistic_legs_physics: 100%
-Naturalistic_hands_physics: 100%
-Naturalistic_fingers_physics: 100%
-Naturalistic_urinating_water_physics: 50%
-Naturalistic_water_physics: 50%
-natural_sexually_sitting_pose: 100%
-
-Non_diegetic_music: N/A
-```
-
-## 按需选配：尾端百分比物理滑杆速查表（`*_physics: XX%`）
-
-放在 `overall_soundscape:` 之后、`Non_diegetic_music:` 之前，每段只挑与画面直接相关的 **4–8 条**（统一用 `VFX_`，不堆砌无关词）：
-
-- **通用人体骨骼、重量与动作力学（SFW／NSFW 通用基底）**
-  - `Naturalistic_body_physics: 100%`、`Naturalistic_legs_physics: 100%`、`Naturalistic_arms_physics: 100%`
-  - `Naturalistic_hands_physics: 100%`、`Naturalistic_fingers_physics: 100%`（手部抓握、抚弄或持物特写必带）
-  - `VFX_realistic_gravity_and_weight_physics: 80%`、`Real_time_motion: 100%`（跑跳、跨坐起伏、身体下沉压床）
-- **手持运镜与配乐节拍同步（Vlog／动作／MV）**
-  - `Camera_shaking: 20%`（手持微晃设 `15%–35%`；固定机位或滑轨镜头不写）
-  - `SFX_body_motion_match_song: 88%`、`VFX_body_motion_physics_match_song: 88%`（仅在挂 `<Audio N>` 音乐卡点时启用）
-- **对白清晰度与微表情（含 `<d>` 说话镜）**
-  - `Dialogue_Clarity: 100%`、`Natural_Human_Speech: 100%`、`Character_Voice_Consistency: 100%`
-  - `Facial_Microexpressions: 100%`、`Clothing_And_Movement_Sounds: 85%`
-- **NSFW 口部奉仕、私处张力与体液水柱两档开关**
-  - 口交奉仕：`Natural_sucking_motion: 80%`、`Natural_bobbing_head_while_sucking: 65%`、`VFX_natural_devouring_penis_physics: 75%`
-  - 女性私处与体位张力：`VFX_naturalistic_tender_pussy_physics: 75%`、`natural_sexually_pose: 100%`（坐姿可写 `natural_sexually_sitting_pose: 100%`）
-  - **体液流体两档控制（严禁混用错档）**：
-    - *第一档（常规湿润／唾液拉丝，防乱喷水）*：`Naturalistic_water_physics: 05%`（或直接省略水物理项）。
-    - *第二档（高压潮吹喷涌／大剂量射精水柱）*：Ultima 对 `urinating_water` 水流物理响应极强，正文写明 `pressurized stream` 与流体透明／半透明质感，滑杆同步开启 `Naturalistic_urinating_water_physics: 50%` 与 `Naturalistic_water_physics: 50%`。
+- **通用骨骼与重力**：`Naturalistic_body_physics: 100%`、`Naturalistic_legs_physics: 100%`、`Naturalistic_hands_physics: 100%`、`Naturalistic_fingers_physics: 100%`、`VFX_realistic_gravity_and_weight_physics: 85%`、`Real_time_motion: 100%`
+- **对白、手持与配乐同步**：有 `<d>` 台词加 `Dialogue_Clarity: 100%`、`Character_Voice_Consistency: 100%`、`Facial_Microexpressions: 100%`；手持微晃加 `Camera_shaking: 20%`；挂 `<Audio N>` 音乐卡点加 `SFX_body_motion_match_song: 88%`、`VFX_body_motion_physics_match_song: 88%`
+- **NSFW 动作与流体两档控制**：口交加 `Natural_sucking_motion: 85%`、`Natural_bobbing_head_while_sucking: 70%`、`VFX_natural_devouring_penis_physics: 75%`；私处与体位张力加 `VFX_naturalistic_tender_pussy_physics: 75%`、`natural_sexually_pose: 100%`。**常规湿润只写 `Naturalistic_water_physics: 05%`（防乱喷水）；仅在潮吹喷涌或大剂量射精水柱镜同时开启 `Naturalistic_urinating_water_physics: 50%` 与 `Naturalistic_water_physics: 50%`**。
