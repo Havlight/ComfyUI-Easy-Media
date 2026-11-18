@@ -36,7 +36,7 @@
      - 解剖与软组织受力：`parted inner labia glistening with clear arousal fluid`、`plump outer labia`、`teardrop breast sag with natural gravity sway`、`soft thigh and breast flesh compressing at the contact point`
   3. **口交、手交、足交与乳交微动作（锁死唇手接触几何）**
      - 口部奉仕：`sucking his erect penis rhythmically`、`stretched glossy lips wrapped tightly around the wet shaft`、`hollowed cheeks`、`flattened tongue licking along the underside vein from base to glans`、`taking the shaft deep with a subtle throat bulge`
-     - 手／足／胸奉仕：`fingers wrapped firmly around the base stroking up and down`、`pressing her soft oiled breasts tightly together around the slick shaft (titjob)`、`arched soles in sheer stockings gripping and stroking the erect shaft`
+     - 手／足／胸奉仕：`fingers wrapped firmly around the base stroking up and down`、`pressing her soft bare breasts tightly together around the slick shaft (titjob)`、`arched soles in sheer stockings gripping and stroking the erect shaft`
   4. **插入、抽送耦合与肉体受力反应（防悬空错位）**
      - 耦合与抽送：`erect cock sliding / thrusting steadily into her wet stretched pussy`、`glistening pussy-lips clinging tightly around the entering shaft`、`hips driving forward in rhythmic deep thrusts`、`riding up and down on his erect shaft`
      - 物理受力反馈：`soft flesh ripple across her buttock cheeks on each hip impact`、`lower stomach tensing`、`toes curling against the sheets`
@@ -57,5 +57,5 @@
   1. `krea2-t2i-kroma` 照 `models/krea2/guide.md` 生成苗条紧致体态（细腰与胸型拆写防肥胖遮挡）、正向透视角度、半进入动态或抵住入口且下半截勃起轴身清楚外露的构图底稿；
   2. `mmh3-edit` 照 `models/mmh3/guide.md` 转为纯灰泥雕塑人偶与简易几何块，剥离五官、发色、肤色与房间材质污染；
   3. H3 提示词指明 `<Picture K>` 仅借用机位角度、多人姿态与耦合几何，忽略灰色雕塑材质与几何块。
-- **接续与两阶段交付巡检**：接续照 [SKILL.md](../../SKILL.md) 通用原则——同场主体与互动延续优先用 `context_anchor`（空间或构图大幅转换时可配段内切镜或标 `anchor: "restart"`），仅在换场景、切换角色服装阶段设定板（防旧衣残留）、跳过穿脱／远距对准过程或前段末尾变形时用 `shot` 切开。长片先跑一采 `single` 用 `review_frames.py` 加密抽帧排查多长手脚、无参考角色乱生假脸或穿模（局部问题微调构图词／撤冲突板或换 seed 重抽，最多 3 轮），全数通过后再跑 `upscale` 二采放大并合成存档 MP4。
+- **接续与两阶段交付巡检**：`context_anchor` 仅用于本段开头（`0.00s`）直接承接上一段末尾的**同一环境、体位支撑、人物相对位置与机位构图**（进段后可平滑推拉运镜，或用 `[Shot 2]` 段内切镜；段内走位或构图大改且后续仍要接续时标 `"anchor": "restart"`），且**单条接续链控制在 `5 段以内`**。凡从段首直接硬切新机位角度／独立特写、更换体位或位置、切换服装阶段板、换场景，或单链已满 5 段需重置色偏与肤质时，一律用 `shot` 切开。长片先跑一采 `single` 用 `review_frames.py` 加密抽帧排查多长手脚、无参考角色乱生假脸或穿模（局部问题微调构图词／撤冲突板或换 seed 重抽，最多 3 轮），全数通过后再跑 `upscale` 二采放大并合成存档 MP4。
 - **外部词库与参考音声**：若环境装有 `adult-kb` 可按需查阅体位支撑几何与微动作并全部转译为纯英文自然语言（禁写底线标签或编号）；若本机存在 `G:/我的雲端硬碟/blender/asset/smutbase/sounds/ref-voice/README.md`，挂参考音声前先读该引导档挑档。

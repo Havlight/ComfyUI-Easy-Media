@@ -8,7 +8,7 @@
 
 - **精简四段式骨架（保留 `<Subject N>`，省去冗长摘要栏）**：
   1. **`subject_definitions:` 主体定义**：逐行定义 `<Subject 1>`、`<Subject 2>`……正文中统一混用 `<Subject 1>` 或简写 `(s1)`、`(s2)` 指代同一主体；省略冗长的 `summary:` 与 `retention_analysis:`。
-  2. **真人实拍与骨骼关节力学锚点**：紧接 1–2 句固定写实锚点，锁定真皮质感、关节铰接、重心分配与皮肉挤压（见下方范例原句，按室内／日光微调光源词）。
+  2. **真人实拍与骨骼关节力学锚点**：紧接 1–2 句固定写实锚点，锁定关节铰接、重心分配与皮肉挤压（见下方范例原句，按室内／日光微调光源词；挂有 `<Picture 1>` 角色图时删去 `realistic skin texture` 以保留参考图原本肤质，仅无图 T2V 保留）。
   3. **`[Shot 1]` 镜头与动作正文**：写明机位景别、人物所处的固定支撑面（床垫、座椅、地板、台面）、主词集中的连续动作与表情细节。
   4. **`overall_soundscape:` ＋ 百分比物理滑杆 ＋ `Non_diegetic_music:`**：先用 1–2 句写与当前画面完全同步的物理／环境实音，接着列出 4–8 条按需选配的 `*_physics: XX%` 控制滑杆，最后以 `Non_diegetic_music: N/A`（无配乐）或 `<Audio N>` 配乐说明收尾。
 - **多模态标签严格首字母大写**：底层分词器只识别首字母大写的 `<Picture 1>`、`<Video 1>`、`<Audio 1>`，禁止写成小写 `<picture 1>` 或 `<audio 1>`。
@@ -32,7 +32,7 @@ subject_definitions:
 <Subject 1> is a young woman with exact face, age, body, hair, hairstyle, skin-tone, body-size, and outfit from <Picture 1>, characters are brought to life.
 <Subject 2> is a 24-year-old man in casual athletic shorts without a reference.
 
-Photorealistic, warm indoor ambient lighting with colourful RGB monitor glow, high res, detailed, real-life footage, realistic skin texture, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, and realistic body movement.
+Photorealistic, warm indoor ambient lighting with colourful RGB monitor glow, high res, detailed, real-life footage, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, and realistic body movement.
 
 [Shot 1]
 Single continuous handheld GoPro-style POV medium shot inside (s1)'s cozy gaming bedroom. Walking smoothly across the wooden floor while holding the wide-angle camera at arm's length, (s1) shows off her glowing dual-monitor desk setup with a smug, playful expression as the camera sways naturally with her steps.
@@ -100,7 +100,7 @@ subject_definitions:
 <Subject 1> is the woman with exact face, age, body, hair, hairstyle, skin-tone, body-size, and sheer black stockings from <Picture 1>, characters are brought to life.
 <Subject 2> is (s1)'s wet juicy pussy, defined glistening pussy-lips, and anus from <Picture 2>.
 
-Photorealistic, warm dim bedside lamp light, high res, detailed, real-life footage, realistic skin texture, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, natural skin compression, and realistic body movement.
+Photorealistic, warm dim bedside lamp light, high res, detailed, real-life footage, real living person. Anatomically consistent adult characters, natural human proportions, realistic skeletal structure, accurate joint articulation, physically believable weight distribution, subtle muscle contractions, natural skin compression, and realistic body movement.
 
 For the target video, at 0.00 seconds into the target video, (s1) and (s2) are fully referenced.
 
