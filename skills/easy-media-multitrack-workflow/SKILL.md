@@ -25,7 +25,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 
 ## 选路线
 
-1. **分页 + 规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片、片段 LoRA、专案名称、从第几段跑，以及用户要求的 Project 与 Editor 设置。规划格式见 [references/plan-file.md](references/plan-file.md)，分段与提示词写法见 [references/writing.md](references/writing.md)（通用写法 [references/craft.md](references/craft.md)，画风、运镜、影片类型的模块在 `references/modules/`），读分页、套用、执行、等待与纪录见 [references/automation.md](references/automation.md)。
+1. **分页 + 规划文件（默认）**：任务、秒数、提示词、参考素材、时间轴上的歌曲或影片、片段 LoRA、专案名称、从第几段跑，以及用户要求的 Project 与 Editor 设置。规划格式见 [references/plan-file.md](references/plan-file.md)，分段与提示词写法见 [references/writing.md](references/writing.md)（通用写法 [references/craft.md](references/craft.md)、拍摄模式与运镜 [references/camera.md](references/camera.md)，画风与影片类型的模块在 `references/modules/`），读分页、套用、执行、等待与纪录见 [references/automation.md](references/automation.md)。
 2. **直接改工作流文件**：用户要求修改某个工作流文件，或要做字幕、loader／attention 替换时。按下方「直接改工作流文件」。
 
 ## 自动循环
@@ -33,7 +33,7 @@ description: "Plan, build and run ComfyUI Easy Media MultiTrack (MiniMax H3) vid
 1. `plan_workflow.py tabs` 确认用哪个分页（用户没指定就问）；用户说的工作流没打开时用 `tabs --saved 关键字` 找。
 2. `plan_workflow.py read --tab 分页 -o current.json`：看 Project 与 Editor 的设置（`settings`，含 `project_save`、采样、分辨率）、影音轨、输出节点、目前的规划，以及每段已存结果是否还跟内容相符（`status`）。分页内容跟专案纪录对不上时先问用户，要还原就 `apply --from-run last`。
 3. `plan_workflow.py probe` 读出歌曲、影片长度，据此分段。
-4. 在 `current.json` 上改出规划（空白分页就新写）；分段与提示词按 [references/writing.md](references/writing.md) 与 [references/craft.md](references/craft.md)，选用相符的模块（writing.md「模块」），提示词用对应 mode 的 H3 指南写。
+4. 在 `current.json` 上改出规划（空白分页就新写）；分段与提示词按 [references/writing.md](references/writing.md)、[references/craft.md](references/craft.md) 与 [references/camera.md](references/camera.md)，选用相符的模块（writing.md「模块」），提示词用对应 mode 的 H3 指南写。
 5. `plan_workflow.py apply 规划 --tab 分页 --project-name 名称`（用户要求改设置时加 `--set`）：有错误就修正规划或设置再套用；确认警告、每段的标签对应（`labels`）、每段的 `status` 与要跑的范围。
 6. 用户授权执行后：`submit_workflow.py --tab 分页 --until-done`（放后台）或 `--wait 540`。
 7. `plan_workflow.py project --name 名称` 确认每段用哪一版、怎么生成的、接在哪一版后面、有没有备用方式；（可选）`review_frames.py --project 名称 --tasks 重跑的段落`。

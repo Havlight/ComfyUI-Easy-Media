@@ -1,8 +1,8 @@
-内容：10Eros-Max Beta 7（含 Fix1）的提示词写法（省去官方固定栏位与 `<Subject N>` 转址，分 default 与 ref 两种模式）；不默认的原因：仅适用于 TenStrip 10Eros Beta 7 系列模型，与原生 H3 官方栏位格式不同
+内容：[旧版备查] 10Eros-Max Beta 7 极简无栏位三段式提示词写法；不默认的原因：常规 H3／Singularity／10Eros 流程默认采用官方栏位格式，本文件仅在用户主动点名「用 beta7 极简写法」时才启用（勿主动推荐）
 
 # 10Eros Beta 7 提示词写法
 
-用本文件时，提示词格式以本文件取代 [prompts/base.md](../prompts/base.md) 与 [prompts/ref.md](../prompts/ref.md) 的固定栏位；分镜分工照 [craft.md](../craft.md)，标签编号照 `apply` 报告的 `tasks[].labels`。
+用本文件时，提示词格式以本文件取代 [prompts/base.md](../prompts/base.md) 与 [prompts/ref.md](../prompts/ref.md) 的固定栏位；分镜与运镜照 [craft.md](../craft.md)、[camera.md](../camera.md)，标签编号照 `apply` 报告的 `tasks[].labels`。
 
 ## 共通规则
 
@@ -11,7 +11,7 @@
 - 单镜片段不写 `[Shot N]` 与时间戳；只有同一段内确需硬切多镜时，才加 `[Shot 2] At MM:SS.mmm, the camera cuts to …`。
 - 台词直接给说话角色标 `(S1)` 并用 `<d>[Language] …</d>`；不要背景音乐时，末尾写明 `with no background music`（防模型自行配乐）。
 - 光线写柔和具体的光源（如 `soft diffused indoor light`、`warm dim bedside lamp light`），少写强烈发光词以防过曝；环境底噪与细微声响加 `soft`、`subtle` 等克制形容词。
-- **NSFW 场景词汇禁委婉化**：上方「克制形容词」仅限光影与环境底噪；凡拍成人亲密与性爱镜头，性器官、口手奉仕、插入抽送与体液质感**必须使用直白、精确的英文词汇**（见 [modules/type-adult.md](../modules/type-adult.md)「直白精确英文词汇表」），严禁用 `intimate act`、`member`、`oral attention` 等委婉词替代，否则接触部位易模糊变形。
+- **NSFW 场景词汇禁委婉化**：上方「克制形容词」仅限光影与环境底噪；凡拍成人亲密与性爱镜头，性器官、口手奉仕、插入抽送与体液质感**必须使用直白、精确的英文词汇**（见 [modules/type-nsfw.md](../modules/type-nsfw.md)），严禁用 `intimate act`、`member`、`oral attention` 等委婉词替代，否则接触部位易模糊变形。
 
 ## 模式一：`default`（首帧 I2V ／ 纯文字 T2V）
 

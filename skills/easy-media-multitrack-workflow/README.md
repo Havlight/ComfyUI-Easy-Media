@@ -135,19 +135,18 @@ easy-media-multitrack-workflow/
 ├── assets/templates/v1.3.0-blank-workflow.json
 ├── references/
 │   ├── automation.md
+│   ├── camera.md
 │   ├── continuity-values.md
 │   ├── craft.md
 │   ├── multitrack-schema.md
 │   ├── execution-api.md
 │   ├── modules/
 │   │   ├── 2d-anime.md
-│   │   ├── camera-one-take.md
-│   │   ├── camera-pov.md
-│   │   ├── type-adult.md
-│   │   └── type-vlog.md
+│   │   └── type-nsfw.md
 │   ├── optional/
-│   │   ├── camera.md
+│   │   ├── A-nsfw-sluttygirl-focus.md
 │   │   ├── effects-and-props.md
+│   │   ├── eros-beta7.md
 │   │   └── lighting.md
 │   ├── plan-file.md
 │   ├── prompts/
