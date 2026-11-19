@@ -16,13 +16,13 @@
 
 - 角色参考图写得很硬：`whose exact appearance is fully defined by <Picture 1>`。`ref` 模式写在 `subject_definitions`（`<Subject 1> is the girl in <Picture 1>, whose exact appearance is fully defined by <Picture 1>.`），正文用 `<Subject 1> (S1)`。
 - 几个人时之后用看得到的特征区分（`the black-haired girl`、`the black-haired boy`）。
-- 有音色参考时，正文说话前写 `Her voice timbre is referenced from <Audio 1>.`
+- 有音色参考时，仅在包含 `<d>` 台词的段落挂载 `<Audio N>`，并在说话前写 `Her voice timbre is referenced from <Audio 1>.`
 
 ## 表演与台词
 
 - 情绪写成看得到的身体变化：眉头收紧、下颚绷紧、眼眶泛泪、嘴唇几乎不动、手按胸口、歪头。
 - 每句台词前写语气：`in a low, controlled, angry voice`、`murmurs softly to herself, almost swallowed by the rain`。
-- 台词拆成短句，每句一个 `<d>`，中间写一个小动作或停顿（`She pauses, eyes still on the distance.`、`A faint breath.`）。全部台词写完后可以加一句 `No other dialogue.`。
+- 台词拆成短句，每句一个 `<d>`，中间写一个小动作或停顿（`She pauses, eyes still on the distance.`、`A faint breath.`）。最后一句 `<d>` 说完后若还有剩余时间，写明闭上嘴唇（`closes her lips`）与环境声收尾（勿写含否定词的 `No other dialogue.`）。
 - 日文台词照原文：`<d>[Japanese] 雨、やまないね。</d>`。
 
 ## 分镜
@@ -36,11 +36,11 @@
 ## 声音
 
 - 环境声写成跟着动作的具体声音（`the tiny squeak of her fingertip sliding on wet glass`），人声远近也写出来（`close and intimate`）。
-- 配乐写乐器与速度，再写它在哪个剧情时间点起伏、怎么结束，结束在这段的确切秒数：`rises slightly with her whispered line, and fades on a soft unresolved note at 7.000 seconds`、`cuts off sharply at 7.000 seconds`。
+- 配乐写乐器与速度，再写它在哪个剧情时间点起伏、怎么结束，结束在这段对齐帧格后的确切秒数：`rises slightly with her whispered line, and fades on a soft unresolved note at 7.290 seconds`、`cuts off sharply at 7.290 seconds`。
 
 ## 范例
 
-`ref` 模式，7 秒，两镜，角色参考图 `<Picture 1>`、音色参考 `<Audio 1>`：
+`ref` 模式，对齐帧格 `7.29s`，两镜，角色参考图 `<Picture 1>`、音色参考 `<Audio 1>`：
 
 ```text
 subject_definitions:
@@ -52,16 +52,16 @@ summary:
 
 retention_analysis:
 <Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - her face, hair and outfit follow <Picture 1>.
-<Audio 1>: reference - her voice follows the timbre of <Audio 1> without copying its words.
+<Audio 1>: reference - her voice follows the timbre of <Audio 1> as a pure vocal characteristic reference.
 
 detailed_description:
 2D anime style, delicate slice-of-life, a rainy afternoon in a dim bedroom. Rain streams down the window; cool gray-blue light fills the room.
 [Shot 1] A medium close-up frames <Subject 1> (S1) sitting sideways on the windowsill, one knee drawn up, shoulder resting against the frame. She watches the rain, breathing slowly.
-[Shot 2] At 00:04.000, the shot cuts to a closer three-quarter profile from the same side. She lowers her gaze and traces a raindrop on the glass with one fingertip. Her voice timbre is referenced from <Audio 1>. <Subject 1> (S1) murmurs softly to herself, almost swallowed by the rain: <d>[Japanese] 雨、やまないね。</d> A faint breath. <d>[Japanese] ……私、ここにいていいのかな。</d> Her lips barely move; her eyes glisten. The frame ends at 7.000 seconds on her fingertip resting against the cold glass. No other dialogue.
+[Shot 2] At 00:04.000, the shot cuts to a closer three-quarter profile from the same side. She lowers her gaze and traces a raindrop on the glass with one fingertip. Her voice timbre is referenced from <Audio 1>. <Subject 1> (S1) murmurs softly to herself, almost swallowed by the rain: <d>[Japanese] 雨、やまないね。</d> A faint breath. <d>[Japanese] ……私、ここにいていいのかな。</d> She closes her lips softly; her eyes glisten. The frame ends at 7.290 seconds on her fingertip resting against the cold glass.
 
 overall_soundscape:
 Steady rain tapping and streaming against the window, distant low thunder, quiet bedroom room tone, her soft breathing, and the tiny squeak of her fingertip sliding on wet glass. Her voice is close and intimate.
 
 non_diegetic_music:
-A sparse piano melody over sustained strings at a very slow tempo. It stays under the rain, rises slightly with her whispered line, and fades on a soft unresolved note at 7.000 seconds.
+A sparse piano melody over sustained strings at a very slow tempo. It stays under the rain, rises slightly with her whispered line, and fades on a soft unresolved note at 7.290 seconds.
 ```
