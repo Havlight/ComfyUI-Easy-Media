@@ -15,11 +15,11 @@
   - *情境破题与前戏奉仕*：视线试探／贴身耳语 → 拥吻揉胸与掀起／推高衣物 → 手交套弄（`handjob`）、口交／深喉吞吐（`blowjob / deepthroat`）、乳交夹滑（`paizuri / titjob`）或腿间磨蹭（`intercrural`）；
   - *主体位展开与换位*：正常位／压腿深顶（`missionary / mating press`）、正／反向女上位骑乘（`cowgirl / reverse cowgirl`）、四足后背位／趴卧压身（`doggy style / prone bone`）、站立后入或侧卧抱腿后入（`standing rear / spooning`）；
   - *冲刺收尾与余韵*：加快抽送频率与躯干撞击 → 拔出射精（颜射、胸射、舌上／嘴边）或体内深顶中出溢出（`creampie`）→ 事后微喘痉挛与眼神余韵。
-- **同调过渡与锚定防滥用**：含日常铺陈的影片前后保持同一套摄影质感与环境光色，非剧情需要不跨房间瞬移。同一波互动／同体位演进可用 `context_anchor`（段内可照常切表情或局部近景），但单条连续锚定链控制在 **`1–3 段`（最多不超过 `5 段`）**，避免无限串接或单段重抽牵连全片；进入下一桥段、切换新体位（省略起身换位与重新对准过程）、省略穿脱时间跳跃或拍事后余韵时，用 `shot` 干脆硬切开新段，直接从新状态就位稳态开拍。
+- **同调过渡与锚定防滥用**：含日常铺陈的影片前后保持同一套摄影质感与环境光色，非剧情需要不跨房间瞬移。同波互动演进可用 `context_anchor`（段内可照常切表情或局部近景），单条锚定链控制在 **`1–3 段`（最多不超过 `5 段`）** 防无限串接或重抽牵连全片；换桥段、大跨度换体位、时间跳跃或事后余韵时可用 `shot` 开新段。
 
 ## 二、接触状态锁定与多组合防崩坏
 
-- **Frame-0 稳态常驻、黏着衣态与正向避脸**：接触与插入镜直接从稳定支撑面（床垫、沙发、桌面、墙面、地板）与已接触姿态开拍；裸体男角出场时从第 0 秒即明写勃起状态常驻（如 `his thick erect penis / cock`），防中途凭空突变。已掀开、推高、拨开（`skirt bunched at her waist`、`panties pulled aside`）或全裸（`completely nude and unclothed from head to toe`）的衣物状态具黏着性，后续每镜／每段都须重申防自动穿回。需要某角色避脸或拍局部特写时，借 `POV`、高低差或取景范围将头脸正向留在画框外（严禁写 `headless`、`no face`）。
+- **支撑面、勃起常驻与黏着衣态**：写明稳固的身体支撑面（床垫、沙发、桌面、墙面、地板）；裸体男角出场即明写勃起常驻（如 `his thick erect penis / cock`）防中途突变；已掀开、推高、拨开（`skirt bunched at her waist`、`panties pulled aside`）或全裸（`completely nude and unclothed from head to toe`）具黏着性，后续每镜／每段须重申防自动穿回；角色避脸或局部特写时借取景正向将头脸留在画外（严禁写 `headless`、`no face`）。
 - **背身四足躯干锁定**：趴卧或四足背对镜头时，双肩与胸脊全程朝前锁死，张力写在塌腰弧度、抓床单手指与蜷曲脚趾；回头仅限微侧下巴过肩（`turns her chin slightly over one shoulder while her chest and spine stay facing forward`），防上半身扭成正向麻花。
 - **特殊人数防呆（多人／单人／女女）**：多男同场（MMF）以固定画面左右侧（`the first man on screen-left`、`the second man on screen-right`）锁死各自接触部位防融合；双女一男（FFM）避免排成「男→女A→女B」同向平行叠排往前顶（易令中间女角跨下复制出男根），让另一人采面对面、侧身依偎或上半身互动拉开朝向；单女自慰或女女互动（Solo / FF）必写明实际接触或进入的手指、舌面或第 0 秒即锚定握持的器具（如 `her own index and middle fingers`、`her partner's flattened tongue`、`clear glass dildo`）并点明画框内仅有该单人或双女，防模型脑补悬空假肉棒。
 
