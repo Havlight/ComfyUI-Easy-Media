@@ -15,17 +15,12 @@
   - *情境破题与前戏奉仕*：视线试探／贴身耳语 → 拥吻揉胸与掀起／推高衣物 → 手交套弄（`handjob`）、口交／深喉吞吐（`blowjob / deepthroat`）、乳交夹滑（`paizuri / titjob`）或腿间磨蹭（`intercrural`）；
   - *主体位展开与换位*：正常位／压腿深顶（`missionary / mating press`）、正／反向女上位骑乘（`cowgirl / reverse cowgirl`）、四足后背位／趴卧压身（`doggy style / prone bone`）、站立后入或侧卧抱腿后入（`standing rear / spooning`）；
   - *冲刺收尾与余韵*：加快抽送频率与躯干撞击 → 拔出射精（颜射、胸射、舌上／嘴边）或体内深顶中出溢出（`creampie`）→ 事后微喘痉挛与眼神余韵。
-- **同调过渡与 `shot`／`context_anchor` 衔接**：含日常铺陈的影片前后保持同一套摄影质感、焦段与环境光色，非剧情需要不无故跨房间瞬移。换体位、换服装设定板或硬切局部特写时用 `shot` 新开一段（从已建立接触的稳态起拍）；同一体位内的快慢深浅演进，优先在起始 `shot` 后接 **`1–3 段`（最多不超过 `5 段`）`context_anchor`**，且接续段的 `[Shot 1]` 直接从上一段末帧正在进行的插入／接触姿态、手部抓握与运动方向续写，不在开头重摆入场准备。
+- **同调过渡与分段衔接**：含日常铺陈的影片前后保持同一套摄影质感与环境光色，非剧情需要不跨房间瞬移。同场互动延续可用 `context_anchor`（单条锚定链建议 `1–3 段`、最多不超过 `5 段` 防画质累积偏移；段内可照常切近景或换角度）；在更换参考素材（如换服装板、单挂局部特写图）或独立开镜切换新体位时可用 `shot`（省略中间起身换位的笨拙过程，直接从新体位就位开拍）。
 
-## 二、男女角色配置、接触锁定与防崩坏
+## 二、接触状态锁定与多组合防崩坏
 
-- **男女角色参考与无参考图伴侣跨段固定**：
-  - 男女皆有参考图时分设 `<Subject 1>`、`<Subject 2>`；
-  - **仅挂女角参考图、男伴无参考图**（常见配置）时，男伴不设 `<Subject N>`，但**全片各段必须复用同一组固定的英文体格、肤色与衣着／裸身短语**（如 `a lean muscular adult man with warm tan skin and bare torso`），防切段后男伴体型与肤色乱跳。仅在需要避脸、采用无五官躯干板或拍局部特写时，才借 `POV`、高低差或景别取景将头脸正向留在画框外（严禁写 `headless`、`no face`）。
-- **Frame-0 状态常驻与黏着衣态**：接触与插入镜直接从稳定支撑面（床垫、沙发、桌面、墙面、地板）与已接触姿态开拍；裸体男角出场时从第 0 秒即明写勃起状态常驻（如 `his thick erect penis / cock`），防中途凭空突变。已掀开、推高、拨开（`skirt bunched at her waist`、`panties pulled aside`）或全裸（`completely nude and unclothed from head to toe`）的衣物状态具黏着性，后续每镜／每段都须重申，防切镜后衣物自动穿回。
-- **背身锁定、镜面玻璃与危险视角规避**：
-  - 趴卧或四足背对镜头时，双肩与胸口全程朝前锁死，张力写在塌腰弧度、抓床单手指与蜷曲脚趾；回头仅限微侧下巴过肩（`turns her chin slightly over one shoulder while her chest and spine stay facing forward`）或借前方镜面反射（明确区分前景真实背臀与仅在镜框内可见的正脸晃乳，防画成两个面对面真人）。贴玻璃挤压（`pressed flush against clear glass`）写明摄影机在玻璃内侧或外侧穿透拍摄及软组织压平形变。
-  - 赤裸小腿靠近茶几、矮凳等及膝高度家具易穿模，优先从大腿中段（`Mid-Thigh`）以上取景或写明隔开一步距离；无论男女，避免采用「第一人称低头越过自身胸部垂直往下看双人纠缠手臂躯干」的角度（易将对方手臂嫁接到自身躯干，改用客观高角度贴身俯拍）。
+- **Frame-0 稳态常驻、黏着衣态与正向避脸**：接触与插入镜直接从稳定支撑面（床垫、沙发、桌面、墙面、地板）与已接触姿态开拍；裸体男角出场时从第 0 秒即明写勃起状态常驻（如 `his thick erect penis / cock`），防中途凭空突变。已掀开、推高、拨开（`skirt bunched at her waist`、`panties pulled aside`）或全裸（`completely nude and unclothed from head to toe`）的衣物状态具黏着性，后续每镜／每段都须重申防自动穿回。需要某角色避脸或拍局部特写时，借 `POV`、高低差或取景范围将头脸正向留在画框外（严禁写 `headless`、`no face`）。
+- **背身四足躯干锁定**：趴卧或四足背对镜头时，双肩与胸脊全程朝前锁死，张力写在塌腰弧度、抓床单手指与蜷曲脚趾；回头仅限微侧下巴过肩（`turns her chin slightly over one shoulder while her chest and spine stay facing forward`），防上半身扭成正向麻花。
 - **特殊人数防呆（多人／单人／女女）**：多男同场（MMF）以固定画面左右侧（`the first man on screen-left`、`the second man on screen-right`）锁死各自接触部位防融合；双女一男（FFM）避免排成「男→女A→女B」同向平行叠排往前顶（易令中间女角跨下复制出男根），让另一人采面对面、侧身依偎或上半身互动拉开朝向；单女自慰或女女互动（Solo / FF）必写明实际接触或进入的手指、舌面或第 0 秒即锚定握持的器具（如 `her own index and middle fingers`、`her partner's flattened tongue`、`clear glass dildo`）并点明画框内仅有该单人或双女，防模型脑补悬空假肉棒。
 
 ## 三、景别解剖粒度与双穴空间定位
@@ -40,7 +35,7 @@
 - **用词直白准确，不委婉、不浮夸加戏**：禁用 `intimate act`、`lovemaking`、`oral attention`、`member`、`manhood`、`private parts` 等委婉词（会导致接触部位模糊融化）；直接使用准确直白的英文词汇，但动作轻重、表情幅度与声音大小**严格照场景设定如实描写，不无故夸大煽情**：
   - *器官与软组织*：`erect penis`、`thick erect cock`、`slick shaft`、`mushroom-shaped glans and coronal ridge`、`balls / testicles`、`wet pussy / vagina`、`parted labia`、`clitoris / clit`、`anus`、`bare natural / pendulous breasts`、`pink / erect nipples`、`rounded glutes`。
   - *口手乳足与插入微动作*：`lips sealed tightly around his wet shaft`、`hollowed cheeks`、`visible throat bulge`、`flattened tongue licking along the underside vein`、`fingers wrapped firmly around the shaft pumping up and down`、`squeezing her soft bare breasts tightly around the slick shaft`、`hips driving forward and back along the shaft axis`。
-- **写实／2D 双轨表情与成人声音配合**：真人写实与 3D CG 用自然生理微表情（半阖泛泪眼、咬下唇、微张嘴喘息）防五官扭曲；叠加 [2d-anime.md](2d-anime.md) 拍 2D 动画时可放开使用吐舌阿嘿颜、爱心眼等高张力表现。声音遵循 [craft.md](../craft.md)「声音三层职责分离」：口部含覆或深吻期间严禁放对嘴 `<d>` 台词（心声改用闭嘴画外音）；**无 `<d>` 台词的纯实战喘息段不挂 `<Audio N>` 音色参考**，由正文动作句与 `overall_soundscape` 依动作轻重同步生成呼吸、娇喘、吸吮水声与肉体拍击声。
+- **写实／2D 双轨表情与口部占用防呆**：真人写实与 3D CG 用自然生理微表情（半阖泛泪眼、咬下唇、微张嘴喘息）防五官扭曲；叠加 [2d-anime.md](2d-anime.md) 拍 2D 动画时可放开使用吐舌阿嘿颜、爱心眼等高张力表现。声音遵循 [craft.md](../craft.md)「声音三层职责分离」；口部含覆或深吻期间严禁放对嘴 `<d>` 台词（心声改用闭嘴画外音）。
 - **射精与潮吹离散物理（防白漆块、防悬空水柱、防闭眼白内障）**：
   - *射精三要素*：必同时写明 **① 前端起点**（`from the swollen tip / glans of his erect penis`）、**② 离散条索状**（`thick white ropes of cum`、`multiple separate rope-like strands of pearlescent semen`，**严禁写 `arc` 或 `stream` 以防画成悬空喷泉水柱**；若拍中出溢出则写 `thick white semen welling out from her parted labia and trickling down`）、**③ 依序落点表面**（如 `spurting across her lower cheek, parted lips, chin, and bare breasts`；若角色闭眼，落点避开闭合眼皮防画成睁眼白内障）。
   - *潮吹物理*：同样避开 `stream`，写透明液体脉冲喷溅并浸湿床单（`clear transparent squirt liquid jetting outward in rapid pulses from her wet pussy and soaking the dark sheets`）。
@@ -48,15 +43,13 @@
 ## 五、素材弹性适配与 `Ref2VA`／`I2VA` 切换
 
 - **依手头素材灵活选配**：只有单张穿衣立绘／写真时，直接标 `partially_preserved` 并在各段文字锁死半脱或全裸黏着状态即可开拍；制作多场次长片且需更高跨段稳定度时，可按穿搭剥离阶段准备对应角色设定板。单人张腿私处参考图**仅挂在脸部出画的纯局部大特写或单女展示镜**，双人／多人交合中近景严禁混挂（防贴错骨盆）。
-- **一致性与复杂构图权衡**：常规镜头优先直接用「角色图＋环境图」跑 `Ref2VA`，跨段五官、肤色与光影一致性最高；遇到纯文字易穿模的高难度交缠、特殊镜面或隔桌分割构图时，向用户确认采用 **① 拆拍稳定的近景角度**、**② 末位加挂骨盆自然贴合（严禁侧面留悬空缝隙桥接）的无五官 3D 灰模作 `weak_reference`**，或 **③ 先生成写实首帧图锚定第 0 秒结构**——注意：若任务改为 `mode: "default"`（纯首帧 `I2VA`），提示词须切换为 [prompts/base.md](../prompts/base.md) 的 `integrated_multimodal_description` 格式（不写 `subject_definitions`、`<Subject N>` 与 `retention_analysis`）；若仍在 `mode: "ref"` 下同时挂首帧图与角色／音色参考，则按 [prompts/ref.md](../prompts/ref.md) 标 `[keyframe completion + reference generation]`。若环境装有 `adult-kb` 技能，可按其 `SKILL.md` 查阅体位支撑几何或角色特征标签，并全部转译为纯英文自然语言。
+- **一致性与复杂构图权衡**：常规镜头优先直接用「角色图＋环境图」跑 `Ref2VA`，跨段五官、肤色与光影一致性最高；遇到纯文字易穿模的高难度交缠或隔桌分割构图时，向用户确认采用 **① 拆拍稳定的近景角度**、**② 末位加挂骨盆自然贴合（严禁侧面留悬空缝隙桥接）的无五官 3D 灰模作 `weak_reference`**，或 **③ 先生成写实首帧图锚定第 0 秒结构**（纯首帧切 `mode: "default"` 按 [writing.md](../writing.md) 换用 `base.md` 格式；若在 `ref` 下并挂首帧与角色／音色参考则标 `[keyframe completion + reference generation]`）。若环境装有 `adult-kb` 技能，可按其 `SKILL.md` 查阅体位支撑几何或角色特征标签，并全部转译为纯英文自然语言。
 
 ## 六、标准提示词范例（覆盖三种结构档位）
 
 实作时末段时间戳与对齐秒数一律以 `apply` 报告的实际帧格秒数为准：短促单一律动段照**范例 1** 直写连续动作（不切时间窗）；单镜内含多阶段快慢／停顿演进照**范例 2** 切 `At MM:SS.mmm-MM:SS.mmm,`；高张力实战多镜推进与射精收尾照**范例 3** 搭配 `[Shot N]` 与时间窗。
 
 ### 范例 1：常规短段（单一持续动作 · 无时间窗 · 6.58s）
-
-*（注：若下一段以 `context_anchor` 接续同一体位加速，下一段的 `[Shot 1]` 直接承接本段末帧的插入姿态、手部抓握与男伴固定体态短语续写，不重摆开场。）*
 
 ```text
 subject_definitions:
