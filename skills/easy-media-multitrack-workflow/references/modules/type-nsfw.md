@@ -34,8 +34,10 @@
 
 - **用词直白准确，不委婉、不浮夸加戏**：禁用 `intimate act`、`lovemaking`、`oral attention`、`member`、`manhood`、`private parts` 等委婉词（会导致接触部位模糊融化）；直接使用准确直白的英文词汇，但动作轻重、表情幅度与声音大小**严格照场景设定如实描写，不无故夸大煽情**：
   - *器官与软组织*：`erect penis`、`thick erect cock`、`slick shaft`、`mushroom-shaped glans and coronal ridge`、`balls / testicles`、`wet pussy / vagina`、`parted labia`、`clitoris / clit`、`anus`、`bare natural / pendulous breasts`、`pink / erect nipples`、`rounded glutes`。
-  - *口手乳足与插入微动作*：`lips sealed tightly around his wet shaft`、`hollowed cheeks`、`visible throat bulge`、`flattened tongue licking along the underside vein`、`fingers wrapped firmly around the shaft pumping up and down`、`squeezing her soft bare breasts tightly around the slick shaft`、`hips driving forward and back along the shaft axis`。
-- **写实／2D 双轨表情与口部占用防呆**：真人写实与 3D CG 用自然生理微表情（半阖泛泪眼、咬下唇、微张嘴喘息）防五官扭曲；叠加 [2d-anime.md](2d-anime.md) 拍 2D 动画时可放开使用吐舌阿嘿颜、爱心眼等高张力表现。声音遵循 [craft.md](../craft.md)「声音三层职责分离」；口部含覆或深吻期间严禁放对嘴 `<d>` 台词（心声改用闭嘴画外音）。
+  - *口手乳足与插入微动作*：`lips sealed tightly around his wet shaft`、`hollowed cheeks`、`visible throat bulge`、`flattened tongue licking along the underside vein`、`fingers wrapped firmly around the shaft pumping up and down`、`pressing her chest forward so his erect penis stays upright toward her chin while her hands squeeze her bare breasts together around the slick shaft moving up and down`、`hips driving forward and back along the shaft axis`。
+- **写实／2D 双轨表情、实战语气与口部防呆**：真人写实与 3D CG 用自然生理微表情（半阖泛泪眼、咬下唇、微张嘴喘息）防五官扭曲；叠加 [2d-anime.md](2d-anime.md) 拍 2D 动画时可放开使用吐舌阿嘿颜、爱心眼等高张力表现。声音遵循 [craft.md](../craft.md)「声音三层职责分离」：
+  - *实战 `<d>` 台词防播音腔*：亲密高张力中开口说 `<d>` 台词时，在 `<d>` 前写明快感冲击下的破碎发声状态（如 `in a breathless, trembling delivery, barely able to speak through pleasure`、`moans out in an overwhelmed, aroused voice`），防模型念成平静播音腔；口部含覆或深吻期间严禁放对嘴 `<d>` 台词（心声改用闭嘴画外音）。
+  - *阶段性口水与接触声效*：口交深喉与肢体摩擦随阶段细化（如初含无声吞吐 `gags silently around the shaft` → 加速带黏腻吸吮与喉音 `sticky suction sounds and audible gagging`；区分湿滑抽送水声与干爽软组织摩擦 `soft skin-on-skin breast contact`，男伴不讲台词时可按需点缀低沉闷哼 `low muttered male groans`）。
 - **射精与潮吹离散物理（防白漆块、防悬空水柱、防闭眼白内障）**：
   - *射精三要素*：必同时写明 **① 前端起点**（`from the swollen tip / glans of his erect penis`）、**② 离散条索状**（`thick white ropes of cum`、`multiple separate rope-like strands of pearlescent semen`，**严禁写 `arc` 或 `stream` 以防画成悬空喷泉水柱**；若拍中出溢出则写 `thick white semen welling out from her parted labia and trickling down`）、**③ 依序落点表面**（如 `spurting across her lower cheek, parted lips, chin, and bare breasts`；若角色闭眼，落点避开闭合眼皮防画成睁眼白内障）。
   - *潮吹物理*：同样避开 `stream`，写透明液体脉冲喷溅并浸湿床单（`clear transparent squirt liquid jetting outward in rapid pulses from her wet pussy and soaking the dark sheets`）。
@@ -45,36 +47,28 @@
 - **依手头素材灵活选配**：只有单张穿衣立绘／写真时，直接标 `partially_preserved` 并在各段文字锁死半脱或全裸黏着状态即可开拍；制作多场次长片且需更高跨段稳定度时，可按穿搭剥离阶段准备对应角色设定板。单人张腿私处参考图**仅挂在脸部出画的纯局部大特写或单女展示镜**，双人／多人交合中近景严禁混挂（防贴错骨盆）。
 - **一致性与复杂构图权衡**：常规镜头优先直接用「角色图＋环境图」跑 `Ref2VA`，跨段五官、肤色与光影一致性最高；遇到纯文字易穿模的高难度交缠或隔桌分割构图时，向用户确认采用 **① 拆拍稳定的近景角度**、**② 末位加挂骨盆自然贴合（严禁侧面留悬空缝隙桥接）的无五官 3D 灰模作 `weak_reference`**，或 **③ 先生成写实首帧图锚定第 0 秒结构**（纯首帧切 `mode: "default"` 按 [writing.md](../writing.md) 换用 `base.md` 格式；若在 `ref` 下并挂首帧与角色／音色参考则标 `[keyframe completion + reference generation]`）。若环境装有 `adult-kb` 技能，可按其 `SKILL.md` 查阅体位支撑几何或角色特征标签，并全部转译为纯英文自然语言。
 
-## 六、标准提示词范例（覆盖三种结构档位）
+## 六、标准提示词范例（覆盖非 `ref` 与 `Ref2VA` 实战档位）
 
-实作时末段时间戳与对齐秒数一律以 `apply` 报告的实际帧格秒数为准：短促单一律动段照**范例 1** 直写连续动作（不切时间窗）；单镜内含多阶段快慢／停顿演进照**范例 2** 切 `At MM:SS.mmm-MM:SS.mmm,`；高张力实战多镜推进与射精收尾照**范例 3** 搭配 `[Shot N]` 与时间窗。
+实作时末段时间戳与对齐秒数一律以 `apply` 报告的实际帧格秒数为准（`4–6 秒` 单一持续动作短段照 [craft.md](../craft.md) 直接写连续英文句子即可，不必硬切时间窗）：**范例 1** 示范非 `ref` 三栏位格式与近身拨衣进入推进；**范例 2** 示范 `Ref2VA` 单镜多阶段微动与停顿变速；**范例 3** 示范 `Ref2VA` 段内三镜硬切、快感破碎语气 `<d>` 台词与条索状射精收尾。
 
-### 范例 1：常规短段（单一持续动作 · 无时间窗 · 6.58s）
+### 范例 1：非 `ref` 三栏位 · 近身拨衣进入与盘腿冲刺（Sandpie 实测原文 · 10.125s）
 
 ```text
-subject_definitions:
-<Subject 1> is the young woman in <Picture 1>, whose facial structure, hair, skin tone, and body proportions follow <Picture 1>, wearing an unbuttoned white silk blouse parted open over bare breasts with her black skirt bunched high around her waist.
-<Subject 2> is the warm lamp-lit bedroom in <Picture 2>, featuring a dark upholstered headboard and grey linen bedding.
-
-summary:
-[reference generation] In <Subject 2>, <Subject 1> lies back against the pillows with her unbuttoned blouse parted open while a lean muscular adult man kneels between her thighs in steady missionary thrusting.
-
-retention_analysis:
-<Subject 1> (appears in [Shot 1]): partially_preserved - her facial identity, hair, skin tone, and body build from <Picture 1> are retained with her blouse unbuttoned and skirt bunched at her waist.
-<Subject 2> (appears in [Shot 1]): fully_preserved - the dark headboard, grey linen sheets, and warm bedside lamp light are retained.
-
-detailed_description:
-The target video uses a photorealistic indoor style lit by warm dim bedside lamp light with soft skin highlights.
-[Shot 1] The camera holds a static medium-close shot from the side of the bed in <Subject 2>, framing <Subject 1> — keeping her exact face, hair, skin tone, and body proportions from <Picture 1> with her white silk blouse parted open and black skirt bunched at her waist — lying on her back against the grey pillows while a lean muscular adult man with warm tan skin and a bare torso kneels steady between her parted thighs, cropped from shoulders to knees. His thick erect penis stays buried inside her wet pussy with his hips pressing flush against her bare thighs on each forward stroke, his hands planted firmly on the mattress beside her ribs while her hands grip his shoulders, her bare breasts swaying gently with every impact as her half-lidded eyes hold on his face and soft breathy moans part her glossy lips.
+integrated_multimodal_description:
+[Shot 1] Wide 16:9 horizontal medium shot inside a steamy frameless glass walk-in shower, framed by clear glass panes beaded with condensation, dark slate wall tiles, and an overhead brass rainfall showerhead pouring warm streams. The scene is lit by warm flickering orange candlelight casting deep soft shadows, graded in Euphoria-style deep electric violet and indigo tones with shimmering warm gold skin highlights.
+The woman, wearing a tight cropped white tennis polo shirt unbuttoned low at the chest, an ultra-short white pleated tennis micro-skirt, white crew socks, and a sporty sun visor, starts glistening with water droplets as she rises from the wet floor. Her skin has a wet sheen, and soap foam clings to her arms and torso as she moves.
+At 00:00.000-00:03.400, she climbs smoothly up onto a plush teak sunbed placed within the shower space, her white pleated skirt hiked up around her thighs. She reclines back on her elbows, arching her spine slightly as wisps of white steam curl upward into the amber light above her.
+At 00:03.400-00:06.800, she pulls the side tie of her damp bikini bottom completely aside, revealing her bare wet hips. Her male partner kneels smoothly between her bare wet thighs, his lower torso and thick erect penis visible in the center of the frame. He sinks deep inside her vagina, his left hand gripping her right hip firmly while his right hand braces against the teak surface beside her head. Her eyes roll back in breathless ecstasy, her jaw dropping open as he begins rhythmic thrusts.
+At 00:06.800-00:10.125, she wraps both wet calves cleanly around his waist, locking him in place through surging rhythmic missionary thrusts. His hips drive forward and backward with increasing speed and depth, covering the full length of his thick erect shaft. Her natural breasts move naturally with the impact, glistening under the candlelight. Finally, he holds his hips flush, burying his erect penis all the way to the root inside her vagina as she trembles and gasps, her hands clutching the teak bed tightly.
 
 overall_soundscape:
-Quiet bedroom room tone layered with steady rhythmic skin-on-skin hip slaps, subtle wet squelching, light linen sheet rustling, and soft breathy feminine moans.
+Warm echoing marble bathroom tone layered with steady rainfall shower spray and soft resonant water drips, combined with the wet slap of skin-on-skin contact, the rustle of wet fabric being pulled aside, and the woman's breathless gasps and moans intensifying as the thrusts accelerate.
 
 non_diegetic_music:
 N/A
 ```
 
-### 范例 2：单镜多阶段节奏与停顿控制（Sandpie 实测结构 · 5 段时间窗 · 对齐帧格 14.38s）
+### 范例 2：`Ref2VA` 单镜多阶段节奏与停顿控制（Sandpie 实测原文 · 5 段时间窗 · 对齐帧格 14.21s）
 
 ```text
 subject_definitions:
@@ -93,7 +87,7 @@ At 00:00.000-00:03.000, <Subject 1> moves almost imperceptibly, lifting and lowe
 At 00:03.000-00:06.000, she settles into a steady seated hold over his hips, keeping her pelvis pressed down while gentle breathing lifts her chest. Her gaze drops downward, her eyelids grow heavy, and her lips part slightly with a quiet exhale.
 At 00:06.000-00:09.000, she resumes a slow deliberate vertical riding rhythm with each full hip cycle lasting two seconds, lifting her hips three centimeters and sinking back in a controlled grind against his upper thighs. Her right hand presses against his chest while her left hand rests near his shoulder, gaze lowered, eyes half-closed, and her breath growing heavier with each sink.
 At 00:09.000-00:11.500, the riding rhythm accelerates to one full cycle per second, her hips sinking deeper along the vertical shaft axis while her ribcage lowers and she leans forward. Both hands press firmly onto his upper chest as her eyelids droop nearly shut and soft breathless moans rise with wet skin contact.
-At 00:11.500-00:14.380, her pace tapers smoothly back to a slow two-second grind with continuous pelvic contact and flowing hip motion, her eyelids staying heavy and soft breathy sighs lingering through the final frame.
+At 00:11.500-00:14.210, her pace tapers smoothly back to a slow two-second grind with continuous pelvic contact and flowing hip motion, her eyelids staying heavy and soft breathy sighs lingering through the final frame.
 
 overall_soundscape:
 Quiet natural bedroom room tone with light cotton bedding rustling, subtle wet skin-on-skin contact, and continuous soft feminine breathing.
@@ -102,7 +96,7 @@ non_diegetic_music:
 N/A
 ```
 
-### 范例 3：高张力实战多镜推进与条索状射精收尾（1v1 异性恋三镜硬切＋时间窗 · 15.08s）
+### 范例 3：`Ref2VA` 高张力多镜推进、快感语气 `<d>` 与条索状射精（1v1 三镜硬切 · 15.08s）
 
 ```text
 subject_definitions:
@@ -110,7 +104,7 @@ subject_definitions:
 <Subject 2> is the modern softly lit hotel suite bedroom in <Picture 2>, featuring dark walnut wall paneling and crisp white cotton bedding.
 
 summary:
-[reference generation] Across three cuts in <Subject 2>, completely nude <Subject 1> performs deep rhythmic oral service on a muscular adult man, transitions into vigorous doggy-style thrusting on the bed, and receives thick ropes of semen across her parted lips, chin, and bare breasts.
+[reference generation] Across three cuts in <Subject 2>, completely nude <Subject 1> performs deep rhythmic oral service on a muscular adult man, cries out in breathless pleasure during vigorous doggy-style thrusting on the bed, and receives thick ropes of semen across her parted lips, chin, and bare breasts.
 
 retention_analysis:
 <Subject 1> (appears in [Shot 1], [Shot 2], [Shot 3]): partially_preserved - her facial structure, hair, skin tone, and body proportions from <Picture 1> are retained in a completely nude state across all three shots.
@@ -119,14 +113,14 @@ retention_analysis:
 detailed_description:
 The target video uses a photorealistic indoor style in <Subject 2> under warm recessed hotel lighting with glossy skin highlights.
 [Shot 1] A static high-angle medium-close shot frames completely nude <Subject 1> — keeping her exact face, hair, skin tone, and body proportions from <Picture 1> — kneeling on the white cotton mattress of <Subject 2> in front of a tall muscular adult man with medium tan skin and a bare torso standing at the edge of the bed, cropped from lower abs to thighs, her lips sealed tightly around his thick wet shaft while her right hand wraps around the base.
-At 00:00.000-00:05.000, <Subject 1> bobs her head forward and back in deep rhythmic oral strokes along his erect cock, her cheeks hollowing and throat bulge working visibly as glistening saliva coats her chin and his shaft, her bare breasts swaying beneath her collarbone while her watery upturned eyes hold directly on the lens and wet muffled throat sounds rise.
+At 00:00.000-00:05.000, <Subject 1> bobs her head forward and back in deep rhythmic oral strokes along his erect cock, her cheeks hollowing and throat bulge working visibly as glistening saliva coats her chin and his shaft, her bare breasts swaying beneath her collarbone while her watery upturned eyes hold directly on the lens with sticky suction sounds and audible gagging.
 [Shot 2] At 00:05.000, the camera cuts hard to a three-quarter side medium shot across the white bed against the dark walnut wall. Completely nude <Subject 1> kneels on all fours with her chest and shoulders facing forward, spine arched low and bare rounded glutes lifted high, while the same muscular tan-skinned man kneels close behind her with both hands gripping her bare hips firmly and his erect cock buried deep inside her wet pussy, his pelvis pressing flush against her glutes.
-At 00:05.000-00:10.500, he drives rapid, forceful full-length thrusts along the shaft axis into her pussy, his hips slapping solidly against her bare glutes on every forward impact; <Subject 1>'s bare breasts swing briskly beneath her ribcage while her fingers clutch the white sheet tight and sharp, breathless cries spill from her parted lips as her chin turns slightly toward her right shoulder.
+At 00:05.000-00:10.500, he drives rapid, forceful full-length thrusts along the shaft axis into her pussy, his hips slapping solidly against her bare glutes on every forward impact; <Subject 1>'s bare breasts swing briskly beneath her ribcage while her fingers clutch the white sheet tight, and turning her chin slightly over her right shoulder, <Subject 1>, with a soft breathy mid-high voice, moans out in a trembling, overwhelmed delivery barely speaking through pleasure (S1): <d>[English] Right there—harder!</d> followed by sharp breathless gasps.
 [Shot 3] At 00:10.500, the camera cuts hard to a tight close-up centered on completely nude <Subject 1>'s upturned face, parted glossy lips, and bare upper chest kneeling against the edge of the white bed under warm light, while the muscular tan-skinned man stands close at screen-left gripping his slick erect penis aimed just above her chin and bare cleavage.
 At 00:10.500-00:15.080, his hand strokes rapidly along the slick shaft and swollen mushroom-shaped glans as <Subject 1> tilts her chin up with half-lidded eyes and protruding pink tongue, and multiple thick white ropes of cum spurt in rapid pulses from the swollen tip of his penis, landing sequentially across her lower cheek, parted lips, chin, and bare breasts while she breathes heavily with a flushed expression.
 
 overall_soundscape:
-Warm quiet hotel bedroom room tone layered with wet rhythmic oral sucking, rapid skin-on-skin hip slaps, crisp cotton sheet rustling, heated feminine gasps and moans, and thick semen splashing onto bare skin.
+Warm quiet hotel bedroom room tone layered with wet rhythmic oral sucking, rapid skin-on-skin hip slaps, crisp cotton sheet rustling, low muttered male groans, heated feminine gasps and moans, and thick semen splashing onto bare skin.
 
 non_diegetic_music:
 N/A
