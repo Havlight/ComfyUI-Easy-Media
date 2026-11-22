@@ -1,8 +1,8 @@
-# 拍摄模式、运镜与切镜衔接
+# 拍摄模式与运镜
 
-不分画风、类型都成立的机位与运镜指南。官方基础运镜词表（`Push In`、`Pull Out`、`Pan`、`Truck`、`Tilt`、`Pedestal`、`Arc Shot`、`Tracking Shot`、`Static Shot`、`Shake`、`POV`、`Roll` 及幅度／速度修饰）见 [prompts/base.md](prompts/base.md) 第 4.3 节；本文件补充常用拍摄模式组合、防退化写法与跨镜衔接规则。
+不分画风、类型都成立的机位与运镜指南。官方基础运镜词表（`Push In`、`Pull Out`、`Pan`、`Truck`、`Tilt`、`Pedestal`、`Arc Shot`、`Tracking Shot`、`Static Shot`、`Shake`、`POV`、`Roll` 及幅度／速度修饰）见 [prompts/base.md](prompts/base.md) 第 4.3 节；本文件补充常用拍摄模式组合与运镜防退化写法。
 
-**基本原则**：没有明确的运镜目的时，优先使用稳定的固定机位（`holds a static [size] shot`）或自然的轻微手持呼吸感（`handheld with subtle breathing sway`），不要为了炫技每镜都塞推拉环绕；凡加运镜，单镜只保留**一个主运动轴**（推、绕、仰、变焦叠在同一镜必晃），且运镜起止与人物动作节点同步落定。
+**基本原则**：没有明确的运镜目的时，优先使用稳定的固定机位（`holds a static [size] shot`）或轻微手持呼吸感（`handheld with subtle breathing sway`），可在主体走位或姿态高低变化较大时顺势跟摇保框，不为炫技每镜塞推拉环绕；单镜只保留**一个主运动轴**（推、绕、仰、变焦叠在同一镜必晃），起止与动作同步落定。
 
 ## 一、五种常用拍摄模式（可单片锁定一种，或按场次混搭）
 
@@ -33,7 +33,7 @@ H3 在运镜词写得笼统时常退化成另一种运动，需补上决定性�
 | **环绕（`Arc Shot`）** | 退化成原地摇镜或人物自己转圈 | 写明沿哪一侧绕行（`arcs slowly round her left side`）、保持等距并对准主体、背景产生横向视差；**控制在半圈 `≤180°` 内停于可见面** |
 | **垂直升降（`Pedestal / Crane`）** | 退化成原地低头／仰头（`Tilt`） | 写明整台摄影机随人物蹲跪／起身垂直升降并保持水平视角，或升起后退同时展露更大范围地面／环境 |
 | **移焦（`Rack Focus`）** | 变成切镜或前后景同时清楚 | 写明机位高度与距离不变，约 2 秒内焦点由清晰的前景物平滑转移至后景人物，两者外形保持不变 |
-| **侧跟／前导（`Tracking / Leading`）** | 人物走出画框或变成静止全景 | 写明机位与人物保持同等步速在侧边平行移动（`tracks alongside`）或在正前方倒退引导（`backs away ahead of her`），维持主体在框内占比 |
+| **跟拍／前导（`Tracking / Leading`）** | 人物走出画框或变成静止全景 | 写明机位与人物保持同等步速在背后跟随（`tracks behind`）、侧边平行移动（`tracks alongside`）或在正前方倒退引导（`backs away ahead of her`），维持主体在框内占比 |
 
 - **慎用的高危运镜**：整圈 `360°` 环绕、子弹时间、希区柯克变焦（`Dolly Zoom`）与大倾角荷兰角单靠文字极易退化或扭曲，未挂载对应专用运镜 LoRA 时不主动排入分镜。
 - **常用焦段体感**：`24–35mm` 广角具临场空间纵深（适合 POV、自拍、跟拍、一镜到底）；`50mm` 接近自然人眼透视；`85–100mm` 压缩背景并强化浅景深人像与局部特写。
