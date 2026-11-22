@@ -25,7 +25,7 @@
 
 ## 三、景别解剖粒度与双穴空间定位
 
-- **景别与局部细节严格配对**：
+- **聚焦互动主体，景别与解剖粒度配对**：依看点适时切近或收紧画框（将无关四肢与多余背景裁出画外），并按景别匹配细节：
   - *微距与近景（`ECU / CU`）*：拆开「胸上表情、接吻、口交吞吐」与「脸部出画的性器交合、揉胸抓臀特写」。只有在真正的近景／特写中，才细致描写阴唇撑开紧包轴身（`glistening labia parted and stretched tautly around the entering shaft`）或冠状沟吞吐；**已插入抽送时龟头在体内不可见，禁写龟头外观**（口手乳奉仕或拔出外射镜才写龟头与冠状沟）。
   - *中景与大腿中段（`MS / Mid-Thigh`）*：同时呈现躯干联动并将易滑步的小腿留在画外。此时局部像素有限，**聚焦描写双方骨盆紧贴无悬空缝隙（`hips pressing flush against her bare glutes`）与推进轴向，不在中远景硬塞微距阴唇褶皱或下垂睾丸词**（防低像素区糊成跨下肉球）。
 - **后庭与双穴同框坐标锚定**：拍肛交或跨下近距仰角等两处开口极接近的画面时，按当前机位写明上下相对坐标与空置状态（例如背身后入：`the head of his erect penis stays buried inside her anus, the higher opening nearer her lower back with the anal ring stretched tautly around the shaft, while her pussy sits lower toward the bed, visible and empty`），保持短行程深顶、中途不完全拔出（完全拔出仅用于收尾段）。
